@@ -386,12 +386,24 @@ mtunes cache status|clear
 - GUI (long-term likely; the Go core should stay cleanly separable from the
   CLI for a future Wails frontend).
 - Tagging, preview/audition, audio-content dedup.
-- **Source annotations**: a workspace-side, glob-keyed metadata layer over
-  the (still immutable) sources — e.g. `"sfm/808/**" → downmix = "left"` for
-  per-folder mono-folding taste. Resolution: source annotation → device
-  profile default; the resolved per-file value is recorded in the lockfile
-  like any transform param, so locks stay exact as annotations evolve. Same
-  mechanism later hosts vendor format-tree preferences and, eventually, tags.
+- **Source annotations**: a metadata cascade over the (still immutable)
+  sources, most-specific wins:
+  `device default → vendor profile → vendor group/era → pack override →
+  local annotation`. Split by who could have written each layer: vendor
+  facts (Splice layout rules; SFM era groups like "tape-era packs are
+  dual-mono"; which parallel format tree to prefer) are shareable data
+  about the product itself; local annotations are the user's taste and
+  exceptions, and always win. The resolved per-file value is pinned in the
+  lockfile like any transform param, so shared data evolving never changes
+  a restore.
+  - **Pack identity by content, not path**: packs are recognizable from
+    their file SHAs (already cataloged) — a vendor entry can match "these
+    hashes = 808 From Mars" regardless of folder names. Path globs are the
+    fallback for unfingerprinted packs.
+  - **Community vendor DB** is viable long-term: annotations are inert
+    data (no code execution), so a public contributions repo is low-risk.
+    House rules: schema-versioned files; facts only ("this pack's stereo
+    is dual-mono"), never taste ("sum sounds better") — taste is local.
 - **Dual-mono detection**: if L ≈ R, take one channel, skip the −3 dB pad —
   no decision needed and lossless by definition. Checkable at materialize
   time (file is already in cache), verdict cached in the catalog as derived

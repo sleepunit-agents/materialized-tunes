@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"os/exec"
@@ -25,7 +26,15 @@ func (s *SSH) Name() string { return s.name }
 
 func (s *SSH) command(ctx context.Context, remote string, stdin io.Reader) *exec.Cmd {
 	// BatchMode: fail fast instead of prompting for a password mid-scan.
-	cmd := exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", s.host, remote)
+	// ControlMaster multiplexing: scans issue one ssh exec per audio file
+	// for header reads — without connection reuse that is a full handshake
+	// each time, which turns a big scan from minutes into hours.
+	cmd := exec.CommandContext(ctx, "ssh",
+		"-o", "BatchMode=yes",
+		"-o", "ControlMaster=auto",
+		"-o", "ControlPath=~/.ssh/mtunes-%r@%h-%p",
+		"-o", "ControlPersist=120",
+		s.host, remote)
 	cmd.Stdin = stdin
 	return cmd
 }
@@ -136,6 +145,55 @@ func (s *SSH) HashAll(ctx context.Context, paths []string, progress func()) (map
 			s.host, len(sums), len(paths), strings.TrimSpace(stderr.String()))
 	}
 	return sums, nil
+}
+
+// ReadPrefixes streams the first n bytes of many files over ONE remote
+// invocation: a sh loop emits alternating path and base64-header lines.
+// At catalog scale (150k+ audio files) per-file round trips are the
+// difference between minutes and hours, even with connection reuse.
+// Paths containing newlines are not supported (List already assumes none).
+func (s *SSH) ReadPrefixes(ctx context.Context, paths []string, n int64, fn func(path string, data []byte)) error {
+	var stdin bytes.Buffer
+	for _, p := range paths {
+		stdin.WriteString(p)
+		stdin.WriteByte('\n')
+	}
+	// The remote loop is POSIX sh; the user's login shell may be fish, so
+	// wrap it in an explicit sh -c.
+	script := fmt.Sprintf(
+		`cd %s && while IFS= read -r f; do printf '%%s\n' "$f"; head -c %d -- "$f" 2>/dev/null | base64 | tr -d '\n'; printf '\n'; done`,
+		shellQuote(s.root), n)
+	cmd := s.command(ctx, "sh -c "+shellQuote(script), &stdin)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+
+	sc := bufio.NewScanner(out)
+	sc.Buffer(make([]byte, 0, 256*1024), 4*1024*1024)
+	for sc.Scan() {
+		path := sc.Text()
+		if !sc.Scan() {
+			break
+		}
+		data, err := base64.StdEncoding.DecodeString(sc.Text())
+		if err != nil {
+			continue // damaged frame; caller falls back to ReadPrefix
+		}
+		fn(path, data)
+	}
+	if err := sc.Err(); err != nil {
+		return err
+	}
+	if err := cmd.Wait(); err != nil {
+		return fmt.Errorf("ssh %s: batch header read: %w: %s", s.host, err, strings.TrimSpace(stderr.String()))
+	}
+	return nil
 }
 
 func (s *SSH) ReadPrefix(ctx context.Context, rel string, n int64) ([]byte, error) {

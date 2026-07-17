@@ -19,6 +19,63 @@ import (
 // 256 KiB clears every real-world case we care to chase.
 const headerPrefixBytes = 256 * 1024
 
+// batchHeaderBytes is the smaller per-file read used by the single-stream
+// batch path — nearly every header fits; the few that don't retry
+// individually at headerPrefixBytes.
+const batchHeaderBytes = 64 * 1024
+
+// batchPrefixReader is implemented by locations that can stream many file
+// headers in one remote invocation (the SSH backend).
+type batchPrefixReader interface {
+	ReadPrefixes(ctx context.Context, paths []string, n int64, fn func(path string, data []byte)) error
+}
+
+// batchPrefixes fetches headers for every audio file in one pass when the
+// location supports it. Returns nil when it doesn't (local disks don't
+// need batching).
+func batchPrefixes(ctx context.Context, loc location.Location, files []location.File, progress Progress) map[string][]byte {
+	br, ok := loc.(batchPrefixReader)
+	if !ok {
+		return nil
+	}
+	var audioPaths []string
+	for _, f := range files {
+		if audio.IsAudioPath(f.Path) {
+			audioPaths = append(audioPaths, f.Path)
+		}
+	}
+	if len(audioPaths) == 0 {
+		return nil
+	}
+	prefixes := make(map[string][]byte, len(audioPaths))
+	err := br.ReadPrefixes(ctx, audioPaths, batchHeaderBytes, func(p string, data []byte) {
+		prefixes[p] = data
+		if progress != nil {
+			progress("headers", len(prefixes), len(audioPaths))
+		}
+	})
+	if err != nil {
+		return nil // fall back to per-file reads
+	}
+	return prefixes
+}
+
+// parseWithFallback parses audio metadata from a batch-fetched prefix,
+// retrying with a larger individual read when the batch slice was too
+// short (or missing) for this file's header layout.
+func parseWithFallback(ctx context.Context, loc location.Location, path string, prefix []byte) (*audio.Meta, error) {
+	if len(prefix) > 0 {
+		if meta, err := audio.Parse(bytes.NewReader(prefix), path); err == nil {
+			return meta, nil
+		}
+	}
+	full, err := loc.ReadPrefix(ctx, path, headerPrefixBytes)
+	if err != nil {
+		return nil, err
+	}
+	return audio.Parse(bytes.NewReader(full), path)
+}
+
 type Result struct {
 	Total     int
 	Added     int
@@ -77,7 +134,10 @@ func Run(ctx context.Context, loc location.Location, catalogPath string, progres
 			return nil, fmt.Errorf("hashing %s: %w", loc.Name(), err)
 		}
 
-		for i, f := range toHash {
+		prefixes := batchPrefixes(ctx, loc, toHash, progress)
+
+		metaDone := 0
+		for _, f := range toHash {
 			e := catalog.Entry{
 				Path:      f.Path,
 				Size:      f.Size,
@@ -86,21 +146,18 @@ func Run(ctx context.Context, loc location.Location, catalogPath string, progres
 				ScannedAt: now,
 			}
 			if audio.IsAudioPath(f.Path) {
-				prefix, err := loc.ReadPrefix(ctx, f.Path, headerPrefixBytes)
+				meta, err := parseWithFallback(ctx, loc, f.Path, prefixes[f.Path])
 				if err != nil {
 					e.AudioErr = err.Error()
-				} else if meta, err := audio.Parse(bytes.NewReader(prefix), f.Path); err != nil {
-					e.AudioErr = err.Error()
+					res.AudioErrs++
 				} else {
 					e.Audio = meta
 				}
-				if e.AudioErr != "" {
-					res.AudioErrs++
-				}
 			}
 			entries[f.Path] = e
+			metaDone++
 			if progress != nil {
-				progress("meta", i+1, len(toHash))
+				progress("meta", metaDone, len(toHash))
 			}
 		}
 	}
