@@ -385,6 +385,13 @@ mtunes cache status|clear
   staging folder to Transfer.
 - GUI (long-term likely; the Go core should stay cleanly separable from the
   CLI for a future Wails frontend).
+  - **Device lens**: when building a collection for a device, filter the
+    entire browse view to only what CAN materialize for it — too long,
+    untranscodable, wrong-shaped stuff just disappears. This is the plan
+    engine's eligibility predicates run as a live filter; everything needed
+    (duration/channels/rate/format) is already in the catalog, so it costs
+    nothing to evaluate. A CLI precursor (`catalog ls --device syntakt`)
+    would be nearly free to add.
 - Tagging, preview/audition, audio-content dedup.
 - **Source annotations**: a metadata cascade over the (still immutable)
   sources, most-specific wins:
