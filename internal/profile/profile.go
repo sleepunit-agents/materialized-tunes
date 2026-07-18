@@ -45,7 +45,8 @@ type Filesystem struct {
 }
 
 type Delivery struct {
-	Mode string `toml:"mode"` // "card" | "staged"
+	Mode   string `toml:"mode"`   // "card" | "staged"
+	Layout string `toml:"layout"` // "mirror" (default) | "flatten" — flat devices (Syntakt: 64 slots, no folders)
 }
 
 func LoadDevice(workspaceRoot, name string) (*Device, error) {
@@ -82,6 +83,12 @@ func LoadDevice(workspaceRoot, name string) (*Device, error) {
 	}
 	if d.Delivery.Mode != "card" && d.Delivery.Mode != "staged" {
 		return nil, fmt.Errorf("device %s: delivery.mode must be card or staged", name)
+	}
+	if d.Delivery.Layout == "" {
+		d.Delivery.Layout = "mirror"
+	}
+	if d.Delivery.Layout != "mirror" && d.Delivery.Layout != "flatten" {
+		return nil, fmt.Errorf("device %s: delivery.layout must be mirror or flatten", name)
 	}
 	if d.Naming.AllowedChars != "" {
 		if _, err := d.Naming.DisallowedRe(); err != nil {

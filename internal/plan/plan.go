@@ -212,6 +212,11 @@ func Build(ws *workspace.Workspace, viewName string) (*Plan, error) {
 		p.Entries = p.Entries[:v.Limit]
 	}
 
+	if dev.Delivery.Layout == "flatten" {
+		flatten(p.Entries, dev.Naming.CaseSensitive)
+		sort.Slice(p.Entries, func(i, j int) bool { return p.Entries[i].OutPath < p.Entries[j].OutPath })
+	}
+
 	p.checkCollisions()
 	p.checkNaming()
 	p.checkFit()
@@ -229,6 +234,57 @@ func outputPath(inc view.Include, srcPath string) string {
 	}
 	ext := path.Ext(out)
 	return strings.TrimSuffix(out, ext) + ".wav"
+}
+
+// flatten rewrites every OutPath to a bare filename for devices with no
+// folder concept. Names that collide are disambiguated by prepending just
+// enough trailing parent directories ("KitA - Kick 01.wav"), one level at
+// a time, only for the names that need it — already-unique names stay
+// clean. Deterministic, so it pins in lockfiles like everything else.
+// Anything still colliding afterwards falls through to checkCollisions
+// and errors there.
+func flatten(entries []Entry, caseSensitive bool) {
+	segs := make([][]string, len(entries))
+	depth := make([]int, len(entries))
+	names := make([]string, len(entries))
+	for i, e := range entries {
+		dir, file := path.Split(e.OutPath)
+		segs[i] = strings.FieldsFunc(dir, func(r rune) bool { return r == '/' })
+		names[i] = file
+	}
+	fold := func(s string) string {
+		if caseSensitive {
+			return s
+		}
+		return strings.ToLower(s)
+	}
+	for range 64 { // bounded by deepest realistic tree
+		groups := map[string][]int{}
+		for i := range entries {
+			groups[fold(names[i])] = append(groups[fold(names[i])], i)
+		}
+		progressed := false
+		for _, idxs := range groups {
+			if len(idxs) < 2 {
+				continue
+			}
+			for _, i := range idxs {
+				if depth[i] < len(segs[i]) {
+					depth[i]++
+					parents := segs[i][len(segs[i])-depth[i]:]
+					_, base := path.Split(entries[i].OutPath)
+					names[i] = strings.Join(parents, " - ") + " - " + base
+					progressed = true
+				}
+			}
+		}
+		if !progressed {
+			break
+		}
+	}
+	for i := range entries {
+		entries[i].OutPath = names[i]
+	}
 }
 
 func (p *Plan) checkCollisions() {

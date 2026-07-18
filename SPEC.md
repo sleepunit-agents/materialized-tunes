@@ -109,8 +109,10 @@ max_duration_seconds = 5.0    # hard device limit; Transfer silently trims
                               # past 5s — we surface it instead (see plan)
 
 [delivery]
-mode = "staged"               # output is a folder you drag into Elektron
+mode   = "staged"             # output is a folder you drag into Elektron
                               # Transfer; no card, no filesystem constraints
+layout = "flatten"            # the Syntakt has no folders: 64 flat slots.
+                              # Found on first hardware contact 2026-07-17.
 ```
 
 ```toml
@@ -245,8 +247,12 @@ glob = "**/*.asd"
   by output-path sort — deterministic against a pinned catalog, so it locks
   cleanly. The quota-device pattern: "fill the remaining slots from this
   selection."
-- Output layout v0: **mirror** the source-relative path under the include's
-  `as` prefix. Flatten/templating is post-v0.
+- Output layout is a device property (`delivery.layout`): **mirror**
+  (default — source-relative paths under the include's `as` prefix) or
+  **flatten** (bare filenames for folderless devices). Flatten
+  disambiguates colliding names by prepending just enough trailing parent
+  dirs ("KitA - Kick 01.wav"), only where needed; still-identical names
+  fall through to the collision error. Templating layouts remain post-v0.
 - Excludes apply across all includes.
 
 ## 7. Plan (pre-flight)

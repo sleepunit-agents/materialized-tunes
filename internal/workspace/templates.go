@@ -21,7 +21,9 @@ downmix              = "sum-3db"   # sum-3db | sum | left | right
 max_duration_seconds = 5.0         # device hard limit; longer sources are excluded
 
 [delivery]
-mode = "staged"   # materialize writes a folder you drag into Elektron Transfer
+mode   = "staged"    # materialize writes a folder you drag into Elektron Transfer
+layout = "flatten"   # the Syntakt has no folders — 64 flat slots; colliding
+                     # names get parent-dir prefixes automatically
 `,
 	"devices/octatrack.toml": `# Elektron Octatrack. 44.1kHz is the only rate it loads; 16-bit keeps
 # every file usable by both static and flex machines (static is 16-bit only).

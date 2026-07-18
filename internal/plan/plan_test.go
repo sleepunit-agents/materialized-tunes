@@ -70,6 +70,9 @@ max_duration_seconds = 5.0
 mode = "staged"
 `
 
+const flatDevice = syntaktDevice + `layout = "flatten"
+`
+
 const quotaStorage = `name = "sq"
 kind = "quota"
 capacity_bytes = 33554432
@@ -225,6 +228,77 @@ glob="**"
 	}
 	if p.UsableBytes != 92160 || !p.Fits {
 		t.Errorf("usable=%d fits=%v", p.UsableBytes, p.Fits)
+	}
+}
+
+func TestFlattenDisambiguation(t *testing.T) {
+	ws := testWorkspace(t, []catalog.Entry{
+		wavEntry("packs/KitA/Kick 01.wav", 1, 48000, 16, 1000),
+		wavEntry("packs/KitB/Kick 01.wav", 1, 48000, 16, 1000),
+		wavEntry("packs/KitA/Snare 01.wav", 1, 48000, 16, 1000),
+	}, nil)
+	writeProfile(t, ws, "devices/syntakt.toml", flatDevice)
+	writeProfile(t, ws, "storage/sq.toml", `name="sq"
+kind="quota"
+capacity_bytes=33554432
+max_files=64
+`)
+	writeView(t, ws, "v", `name="v"
+device="syntakt"
+storage="sq"
+[[include]]
+location="src"
+glob="packs/**"
+`)
+
+	p, err := Build(ws, "v")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Errors) != 0 {
+		t.Fatalf("unexpected errors: %v", p.Errors)
+	}
+	var got []string
+	for _, e := range p.Entries {
+		got = append(got, e.OutPath)
+	}
+	want := []string{"KitA - Kick 01.wav", "KitB - Kick 01.wav", "Snare 01.wav"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("out[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestFlattenTrueCollisionStillErrors(t *testing.T) {
+	// Identical relative paths can't collide within one location, but the
+	// same basename in the SAME directory under different case can.
+	ws := testWorkspace(t, []catalog.Entry{
+		wavEntry("packs/KitA/Kick.wav", 1, 48000, 16, 1000),
+		wavEntry("packs/kita/KICK.wav", 1, 48000, 16, 1000),
+	}, nil)
+	writeProfile(t, ws, "devices/syntakt.toml", flatDevice)
+	writeProfile(t, ws, "storage/sq.toml", `name="sq"
+kind="quota"
+capacity_bytes=33554432
+max_files=64
+`)
+	writeView(t, ws, "v", `name="v"
+device="syntakt"
+storage="sq"
+[[include]]
+location="src"
+glob="packs/**"
+`)
+	p, err := Build(ws, "v")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Collisions) == 0 {
+		t.Errorf("case-folded identical flat names must still collide, got entries %+v", p.Entries)
 	}
 }
 
