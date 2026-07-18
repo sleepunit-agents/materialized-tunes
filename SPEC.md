@@ -421,6 +421,18 @@ mtunes cache status|clear
     data (no code execution), so a public contributions repo is low-risk.
     House rules: schema-versioned files; facts only ("this pack's stereo
     is dual-mono"), never taste ("sum sounds better") — taste is local.
+- **Display-aware naming** (found on hardware 2026-07-17: Syntakt's list
+  view crops names, so `BD A 808 Decay A 01..06` all display identically —
+  the distinguishing digits are past the crop). Escalating ideas, none
+  built yet:
+  1. `display_length` heuristic per device + plan warning when multiple
+     output names share their first N chars (cheap, high value).
+  2. Opt-in "distinguishing-first" rename policy (move discriminating
+     tokens to the front). Taste-adjacent; wants GUI preview.
+  3. Common-token compression: tokens shared by EVERY name in a flat
+     export carry zero information — strip them deterministically,
+     maximizing distinguishing info per visible character (git-style
+     unique abbreviation, but for sample names).
 - **Dual-mono detection**: if L ≈ R, take one channel, skip the −3 dB pad —
   no decision needed and lossless by definition. Checkable at materialize
   time (file is already in cache), verdict cached in the catalog as derived
