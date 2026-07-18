@@ -359,14 +359,20 @@ explicit choice between `restore` (exactly as it was) and `materialize`
 mtunes init <dir>                 # scaffold a workspace (offers git init)
 mtunes location add|list|remove
 mtunes scan [<location>]          # build/refresh catalog (remote-hashes ssh locations)
-mtunes catalog status             # per-location counts, sizes, last-scan, missing files
-mtunes plan <view>
+mtunes catalog status [--json]    # per-location counts, sizes, last-scan
+mtunes catalog ls [--device D] [--ineligible] [--location L] [--glob G] [--json]
+                                  # --device = the device lens: only what can ride
+mtunes plan <view> [--json]
 mtunes materialize <view> --to <path> [--force]
 mtunes restore <lock> --to <path>
 mtunes verify --card <path>
-mtunes diff <lock>
+mtunes diff <lock> [--json]
 mtunes cache status|clear
 ```
+
+`--json` everywhere is the machine interface: the future GUI (and any
+script) consumes the same structs the human reports render, so CLI and
+GUI can never disagree about what a plan says.
 
 ## 10. Implementation notes (Go)
 
@@ -428,7 +434,10 @@ mtunes cache status|clear
   1. `display_length` heuristic per device + plan warning when multiple
      output names share their first N chars (cheap, high value).
   2. Opt-in "distinguishing-first" rename policy (move discriminating
-     tokens to the front). Taste-adjacent; wants GUI preview.
+     tokens to the front). PREFERRED DIRECTION (2026-07-17), and it slots
+     into the vendor annotation layer: a vendor's naming grammar is a fact
+     ("SFM: trailing take number → front"), so the rule ships with the
+     vendor profile and applies everywhere that vendor appears.
   3. Common-token compression: tokens shared by EVERY name in a flat
      export carry zero information — strip them deterministically,
      maximizing distinguishing info per visible character (git-style

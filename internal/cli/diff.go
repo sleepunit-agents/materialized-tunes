@@ -49,6 +49,16 @@ var diffCmd = &cobra.Command{
 		}
 
 		d := lock.Compute(l, p, shaByLoc)
+		if diffJSON {
+			return emitJSON(struct {
+				Lock    string     `json:"lock"`
+				View    string     `json:"view"`
+				Created string     `json:"created"`
+				Files   int        `json:"files"`
+				InSync  bool       `json:"in_sync"`
+				Diff    *lock.Diff `json:"diff"`
+			}{lockPath, l.View, l.Created.UTC().Format("2006-01-02T15:04:05Z"), l.Totals.Files, d.Clean(), d})
+		}
 		fmt.Printf("lock %s (%s, %d files) vs recipe today:\n",
 			l.View, l.Created.Local().Format("2006-01-02 15:04"), l.Totals.Files)
 		if d.Clean() {
@@ -73,6 +83,9 @@ var diffCmd = &cobra.Command{
 	},
 }
 
+var diffJSON bool
+
 func init() {
+	diffCmd.Flags().BoolVar(&diffJSON, "json", false, "emit JSON")
 	rootCmd.AddCommand(diffCmd)
 }

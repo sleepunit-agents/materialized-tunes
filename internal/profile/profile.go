@@ -16,37 +16,37 @@ import (
 )
 
 type Device struct {
-	Name       string     `toml:"name"`
-	Audio      Audio      `toml:"audio"`
-	Naming     Naming     `toml:"naming"`
-	Filesystem Filesystem `toml:"filesystem"`
-	Delivery   Delivery   `toml:"delivery"`
+	Name       string     `toml:"name" json:"name"`
+	Audio      Audio      `toml:"audio" json:"audio"`
+	Naming     Naming     `toml:"naming" json:"naming"`
+	Filesystem Filesystem `toml:"filesystem" json:"filesystem"`
+	Delivery   Delivery   `toml:"delivery" json:"delivery"`
 }
 
 type Audio struct {
-	Format             string  `toml:"format"`
-	BitDepth           int     `toml:"bit_depth"`
-	SampleRate         int     `toml:"sample_rate"`
-	Channels           string  `toml:"channels"` // "mono" folds; "stereo" preserves source channels
-	Downmix            string  `toml:"downmix"`
-	MaxDurationSeconds float64 `toml:"max_duration_seconds"` // 0 = unlimited
+	Format             string  `toml:"format" json:"format"`
+	BitDepth           int     `toml:"bit_depth" json:"bit_depth"`
+	SampleRate         int     `toml:"sample_rate" json:"sample_rate"`
+	Channels           string  `toml:"channels" json:"channels"` // "mono" folds; "stereo" preserves source channels
+	Downmix            string  `toml:"downmix" json:"downmix"`
+	MaxDurationSeconds float64 `toml:"max_duration_seconds" json:"max_duration_seconds,omitempty"` // 0 = unlimited
 }
 
 type Naming struct {
-	MaxFilesPerDir    int    `toml:"max_files_per_dir"`   // 0 = unlimited
-	MaxFilenameLength int    `toml:"max_filename_length"` // warn-level; 0 = unlimited
-	AllowedChars      string `toml:"allowed_chars"`       // regex char class body; "" = anything
-	MaxPathLength     int    `toml:"max_path_length"`     // warn-level; 0 = unlimited
-	CaseSensitive     bool   `toml:"case_sensitive"`
+	MaxFilesPerDir    int    `toml:"max_files_per_dir" json:"max_files_per_dir,omitempty"`     // 0 = unlimited
+	MaxFilenameLength int    `toml:"max_filename_length" json:"max_filename_length,omitempty"` // warn-level; 0 = unlimited
+	AllowedChars      string `toml:"allowed_chars" json:"allowed_chars,omitempty"`             // regex char class body; "" = anything
+	MaxPathLength     int    `toml:"max_path_length" json:"max_path_length,omitempty"`         // warn-level; 0 = unlimited
+	CaseSensitive     bool   `toml:"case_sensitive" json:"case_sensitive"`
 }
 
 type Filesystem struct {
-	Type string `toml:"type"`
+	Type string `toml:"type" json:"type,omitempty"`
 }
 
 type Delivery struct {
-	Mode   string `toml:"mode"`   // "card" | "staged"
-	Layout string `toml:"layout"` // "mirror" (default) | "flatten" — flat devices (Syntakt: 64 slots, no folders)
+	Mode   string `toml:"mode" json:"mode"`     // "card" | "staged"
+	Layout string `toml:"layout" json:"layout"` // "mirror" (default) | "flatten" — flat devices (Syntakt: 64 slots, no folders)
 }
 
 func LoadDevice(workspaceRoot, name string) (*Device, error) {
@@ -104,12 +104,12 @@ func (n Naming) DisallowedRe() (*regexp.Regexp, error) {
 }
 
 type Storage struct {
-	Name          string `toml:"name"`
-	Kind          string `toml:"kind"` // "filesystem" | "quota"
-	CapacityBytes int64  `toml:"capacity_bytes"`
-	Reserve       string `toml:"reserve"`       // "10%" or bytes; filesystem only
-	ClusterBytes  int64  `toml:"cluster_bytes"` // filesystem only
-	MaxFiles      int    `toml:"max_files"`     // quota only; 0 = unlimited
+	Name          string `toml:"name" json:"name"`
+	Kind          string `toml:"kind" json:"kind"` // "filesystem" | "quota"
+	CapacityBytes int64  `toml:"capacity_bytes" json:"capacity_bytes"`
+	Reserve       string `toml:"reserve" json:"reserve,omitempty"`             // "10%" or bytes; filesystem only
+	ClusterBytes  int64  `toml:"cluster_bytes" json:"cluster_bytes,omitempty"` // filesystem only
+	MaxFiles      int    `toml:"max_files" json:"max_files,omitempty"`         // quota only; 0 = unlimited
 }
 
 func LoadStorage(workspaceRoot, name string) (*Storage, error) {

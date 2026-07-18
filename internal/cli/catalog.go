@@ -15,6 +15,18 @@ var catalogCmd = &cobra.Command{
 	Short: "Inspect the source catalog",
 }
 
+type locationStatus struct {
+	Name       string         `json:"name"`
+	Files      int            `json:"files"`
+	Bytes      int64          `json:"bytes"`
+	LastScan   *time.Time     `json:"last_scan,omitempty"`
+	Formats    map[string]int `json:"formats,omitempty"`
+	AudioErrs  int            `json:"audio_errors,omitempty"`
+	NotScanned bool           `json:"not_scanned,omitempty"`
+}
+
+var catalogStatusJSON bool
+
 var catalogStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Per-location summary of what has been cataloged",
@@ -23,6 +35,40 @@ var catalogStatusCmd = &cobra.Command{
 		ws, err := openWorkspace()
 		if err != nil {
 			return err
+		}
+		if catalogStatusJSON {
+			var out []locationStatus
+			for _, lc := range ws.Config.Locations {
+				entries, err := catalog.Load(ws.CatalogPath(lc.Name))
+				if err != nil {
+					return err
+				}
+				st := locationStatus{Name: lc.Name, Files: len(entries), Formats: map[string]int{}}
+				if len(entries) == 0 {
+					st.NotScanned = true
+					st.Formats = nil
+				}
+				var last time.Time
+				for _, e := range entries {
+					st.Bytes += e.Size
+					if e.ScannedAt.After(last) {
+						last = e.ScannedAt
+					}
+					switch {
+					case e.Audio != nil:
+						st.Formats[e.Audio.Format]++
+					case e.AudioErr != "":
+						st.AudioErrs++
+					default:
+						st.Formats["other"]++
+					}
+				}
+				if !last.IsZero() {
+					st.LastScan = &last
+				}
+				out = append(out, st)
+			}
+			return emitJSON(out)
 		}
 		if len(ws.Config.Locations) == 0 {
 			fmt.Println("no locations yet — add one with `mtunes location add`")
@@ -89,5 +135,6 @@ func humanBytes(n int64) string {
 }
 
 func init() {
+	catalogStatusCmd.Flags().BoolVar(&catalogStatusJSON, "json", false, "emit JSON")
 	catalogCmd.AddCommand(catalogStatusCmd)
 }

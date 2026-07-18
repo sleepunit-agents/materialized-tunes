@@ -2,6 +2,9 @@
 package cli
 
 import (
+	"encoding/json"
+	"os"
+
 	"github.com/spf13/cobra"
 
 	"github.com/jbarket/materialized-tunes/internal/workspace"
@@ -32,4 +35,12 @@ func openWorkspace() (*workspace.Workspace, error) {
 		return nil, err
 	}
 	return workspace.Load(root)
+}
+
+// emitJSON writes v to stdout, indented — the machine interface for UIs
+// and scripts.
+func emitJSON(v any) error {
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(v)
 }

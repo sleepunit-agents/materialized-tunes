@@ -13,22 +13,22 @@ import (
 )
 
 type View struct {
-	Name    string    `toml:"name"`
-	Device  string    `toml:"device"`
-	Storage string    `toml:"storage"`
-	Limit   int       `toml:"limit"` // keep only the first N eligible files (by output path); 0 = all
-	Include []Include `toml:"include"`
-	Exclude []Exclude `toml:"exclude"`
+	Name    string    `toml:"name" json:"name"`
+	Device  string    `toml:"device" json:"device"`
+	Storage string    `toml:"storage" json:"storage"`
+	Limit   int       `toml:"limit" json:"limit,omitempty"` // keep only the first N eligible files (by output path); 0 = all
+	Include []Include `toml:"include" json:"include"`
+	Exclude []Exclude `toml:"exclude" json:"exclude,omitempty"`
 }
 
 type Include struct {
-	Location string `toml:"location"`
-	Glob     string `toml:"glob"`
-	As       string `toml:"as"` // optional output prefix replacing the glob's static root
+	Location string `toml:"location" json:"location"`
+	Glob     string `toml:"glob" json:"glob"`
+	As       string `toml:"as" json:"as,omitempty"` // optional output prefix replacing the glob's static root
 }
 
 type Exclude struct {
-	Glob string `toml:"glob"`
+	Glob string `toml:"glob" json:"glob"`
 }
 
 func Load(workspaceRoot, name string) (*View, error) {

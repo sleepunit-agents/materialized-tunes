@@ -9,7 +9,10 @@ import (
 	"github.com/jbarket/materialized-tunes/internal/plan"
 )
 
-var planVerbose bool
+var (
+	planVerbose bool
+	planJSON    bool
+)
 
 var planCmd = &cobra.Command{
 	Use:   "plan <view>",
@@ -24,7 +27,13 @@ var planCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		p.Render(os.Stdout, planVerbose)
+		if planJSON {
+			if err := emitJSON(p); err != nil {
+				return err
+			}
+		} else {
+			p.Render(os.Stdout, planVerbose)
+		}
 		if len(p.Errors) > 0 {
 			return fmt.Errorf("plan has %d error(s)", len(p.Errors))
 		}
@@ -34,5 +43,6 @@ var planCmd = &cobra.Command{
 
 func init() {
 	planCmd.Flags().BoolVarP(&planVerbose, "verbose", "v", false, "list every output file")
+	planCmd.Flags().BoolVar(&planJSON, "json", false, "emit the full plan as JSON")
 	rootCmd.AddCommand(planCmd)
 }

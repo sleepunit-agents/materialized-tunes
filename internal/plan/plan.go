@@ -25,60 +25,78 @@ const wavHeaderBytes = 44 // canonical PCM header; materialize uses -bitexact to
 
 // Entry is one source file that will materialize into one output file.
 type Entry struct {
-	Location   string
-	SourcePath string
-	SHA256     string
-	SourceSize int64
+	Location   string `json:"location"`
+	SourcePath string `json:"source_path"`
+	SHA256     string `json:"sha256"`
+	SourceSize int64  `json:"source_size"`
 
-	OutPath     string
-	OutChannels int
-	OutRate     int
-	OutDepth    int
-	OutFrames   int64
-	OutBytes    int64
+	OutPath     string `json:"out_path"`
+	OutChannels int    `json:"out_channels"`
+	OutRate     int    `json:"out_rate"`
+	OutDepth    int    `json:"out_depth"`
+	OutFrames   int64  `json:"out_frames"`
+	OutBytes    int64  `json:"out_bytes"`
 
-	InChannels int
-	InRate     int
-	InDepth    int
-	InFormat   string
-	DurationS  float64
+	InChannels int     `json:"in_channels"`
+	InRate     int     `json:"in_rate"`
+	InDepth    int     `json:"in_depth"`
+	InFormat   string  `json:"in_format"`
+	DurationS  float64 `json:"duration_s"`
 }
 
 type Skip struct {
-	Location string
-	Path     string
-	Reason   string
+	Location string `json:"location"`
+	Path     string `json:"path"`
+	Reason   string `json:"reason"`
 }
 
 type Collision struct {
-	OutPath string
-	Sources []string // "location:path"
+	OutPath string   `json:"out_path"`
+	Sources []string `json:"sources"` // "location:path"
 }
 
 type Plan struct {
-	View    *view.View
-	Device  *profile.Device
-	Storage *profile.Storage
+	View    *view.View       `json:"view"`
+	Device  *profile.Device  `json:"device"`
+	Storage *profile.Storage `json:"storage"`
 
-	Entries []Entry
+	Entries []Entry `json:"entries"`
 
-	Matched          int // selected by includes before any exclusion
-	ExcludedByGlob   int
-	LimitedFrom      int // eligible count before the view's limit truncated it (0 = no limit hit)
-	SkippedNonAudio  []Skip
-	SkippedDuration  []Skip
-	UnparseableAudio []Skip
+	Matched          int    `json:"matched"`                // selected by includes before any exclusion
+	ExcludedByGlob   int    `json:"excluded_by_glob"`       //
+	LimitedFrom      int    `json:"limited_from,omitempty"` // eligible count before the view's limit truncated it
+	SkippedNonAudio  []Skip `json:"skipped_non_audio,omitempty"`
+	SkippedDuration  []Skip `json:"skipped_duration,omitempty"`
+	UnparseableAudio []Skip `json:"unparseable_audio,omitempty"`
 
-	Collisions []Collision
-	Errors     []string // any error ⇒ materialize refuses
-	Warnings   []string
+	Collisions []Collision `json:"collisions,omitempty"`
+	Errors     []string    `json:"errors"` // any error ⇒ materialize refuses
+	Warnings   []string    `json:"warnings"`
 
-	TotalBytes   int64 // sum of exact output bytes
-	TotalOnDisk  int64 // after cluster rounding (filesystem kind; else == TotalBytes)
-	UsableBytes  int64
-	Fits         bool
-	SlotsUsed    int // quota kind
-	SlotsAllowed int // quota kind, 0 = unlimited
+	TotalBytes   int64 `json:"total_bytes"`   // sum of exact output bytes
+	TotalOnDisk  int64 `json:"total_on_disk"` // after cluster rounding (filesystem kind; else == TotalBytes)
+	UsableBytes  int64 `json:"usable_bytes"`
+	Fits         bool  `json:"fits"`
+	SlotsUsed    int   `json:"slots_used,omitempty"`    // quota kind
+	SlotsAllowed int   `json:"slots_allowed,omitempty"` // quota kind, 0 = unlimited
+}
+
+// Eligibility is the single definition of "can this cataloged file ride
+// for this device" — shared by plan building and the device-lens catalog
+// listing. Empty reason means eligible.
+func Eligibility(dev *profile.Device, ce catalog.Entry) (reason string) {
+	switch {
+	case ce.Audio == nil && ce.AudioErr != "":
+		return "unparseable audio: " + ce.AudioErr
+	case ce.Audio == nil:
+		return "not an audio file"
+	case ce.Audio.Channels > 2:
+		return fmt.Sprintf("%d channels — samplers speak mono/stereo", ce.Audio.Channels)
+	}
+	if max := dev.Audio.MaxDurationSeconds; max > 0 && ce.Audio.DurationS > max+1e-9 {
+		return fmt.Sprintf("%.1fs > %.1fs limit", ce.Audio.DurationS, max)
+	}
+	return ""
 }
 
 // Build computes the plan for a view against the current catalogs.
@@ -159,22 +177,16 @@ func Build(ws *workspace.Workspace, viewName string) (*Plan, error) {
 	for _, pk := range selection {
 		ce := pk.ce
 		loc := pk.inc.Location
-		switch {
-		case ce.Audio == nil && ce.AudioErr != "":
-			p.UnparseableAudio = append(p.UnparseableAudio, Skip{loc, ce.Path, ce.AudioErr})
-			continue
-		case ce.Audio == nil:
-			p.SkippedNonAudio = append(p.SkippedNonAudio, Skip{loc, ce.Path, "not an audio file"})
-			continue
-		}
-		if ce.Audio.Channels > 2 {
-			p.UnparseableAudio = append(p.UnparseableAudio,
-				Skip{loc, ce.Path, fmt.Sprintf("%d channels — samplers speak mono/stereo", ce.Audio.Channels)})
-			continue
-		}
-		if max := dev.Audio.MaxDurationSeconds; max > 0 && ce.Audio.DurationS > max+1e-9 {
-			p.SkippedDuration = append(p.SkippedDuration,
-				Skip{loc, ce.Path, fmt.Sprintf("%.1fs > %.1fs limit", ce.Audio.DurationS, max)})
+		if reason := Eligibility(dev, ce); reason != "" {
+			skip := Skip{loc, ce.Path, reason}
+			switch {
+			case ce.Audio == nil && ce.AudioErr == "":
+				p.SkippedNonAudio = append(p.SkippedNonAudio, skip)
+			case ce.Audio != nil && ce.Audio.Channels <= 2:
+				p.SkippedDuration = append(p.SkippedDuration, skip)
+			default:
+				p.UnparseableAudio = append(p.UnparseableAudio, skip)
+			}
 			continue
 		}
 

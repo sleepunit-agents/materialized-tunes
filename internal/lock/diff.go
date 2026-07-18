@@ -8,11 +8,11 @@ import (
 // Diff is the staleness surface: what a re-run of the recipe today would
 // do differently than the locked materialization.
 type Diff struct {
-	Added        []string // location:path — selected now, absent from lock
-	Deselected   []string // in lock, source still exists, recipe no longer picks it
-	GoneFromSrc  []string // in lock, source no longer in the catalog at all
-	ContentDrift []string // same source path, different sha (source was touched)
-	NewTransform []string // same source, same bytes, different ffmpeg args (profile changed)
+	Added        []string `json:"added,omitempty"`            // location:path — selected now, absent from lock
+	Deselected   []string `json:"deselected,omitempty"`       // in lock, source still exists, recipe no longer picks it
+	GoneFromSrc  []string `json:"gone_from_source,omitempty"` // in lock, source no longer in the catalog at all
+	ContentDrift []string `json:"content_drift,omitempty"`    // same source path, different sha (source was touched)
+	NewTransform []string `json:"new_transform,omitempty"`    // same source, same bytes, different ffmpeg args (profile changed)
 }
 
 func (d *Diff) Clean() bool {
