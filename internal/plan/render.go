@@ -16,6 +16,9 @@ func (p *Plan) Render(w io.Writer, verbose bool) {
 		p.View.Name, d.Name, d.Audio.BitDepth, d.Audio.SampleRate, ch, s.Name)
 
 	fmt.Fprintf(w, "  %d files selected", len(p.Entries))
+	if p.LimitedFrom > 0 {
+		fmt.Fprintf(w, "   (limit %d of %d eligible)", len(p.Entries), p.LimitedFrom)
+	}
 	if p.ExcludedByGlob > 0 {
 		fmt.Fprintf(w, "   (%d excluded by pattern)", p.ExcludedByGlob)
 	}

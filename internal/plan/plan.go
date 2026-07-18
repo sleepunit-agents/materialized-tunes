@@ -64,6 +64,7 @@ type Plan struct {
 
 	Matched          int // selected by includes before any exclusion
 	ExcludedByGlob   int
+	LimitedFrom      int // eligible count before the view's limit truncated it (0 = no limit hit)
 	SkippedNonAudio  []Skip
 	SkippedDuration  []Skip
 	UnparseableAudio []Skip
@@ -205,6 +206,11 @@ func Build(ws *workspace.Workspace, viewName string) (*Plan, error) {
 		})
 	}
 	sort.Slice(p.Entries, func(i, j int) bool { return p.Entries[i].OutPath < p.Entries[j].OutPath })
+
+	if v.Limit > 0 && len(p.Entries) > v.Limit {
+		p.LimitedFrom = len(p.Entries)
+		p.Entries = p.Entries[:v.Limit]
+	}
 
 	p.checkCollisions()
 	p.checkNaming()

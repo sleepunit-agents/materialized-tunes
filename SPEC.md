@@ -241,6 +241,10 @@ glob = "**/*.asd"
 
 - Selection is path-based (doublestar globs), evaluated against the catalog —
   not against the live filesystem.
+- `limit = N` (view-level, optional) keeps only the first N *eligible* files
+  by output-path sort — deterministic against a pinned catalog, so it locks
+  cleanly. The quota-device pattern: "fill the remaining slots from this
+  selection."
 - Output layout v0: **mirror** the source-relative path under the include's
   `as` prefix. Flatten/templating is post-v0.
 - Excludes apply across all includes.

@@ -16,6 +16,7 @@ type View struct {
 	Name    string    `toml:"name"`
 	Device  string    `toml:"device"`
 	Storage string    `toml:"storage"`
+	Limit   int       `toml:"limit"` // keep only the first N eligible files (by output path); 0 = all
 	Include []Include `toml:"include"`
 	Exclude []Exclude `toml:"exclude"`
 }
