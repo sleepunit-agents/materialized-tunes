@@ -401,6 +401,18 @@ GUI can never disagree about what a plan says.
   staging folder to Transfer.
 - GUI (long-term likely; the Go core should stay cleanly separable from the
   CLI for a future Wails frontend).
+  - **Pack-first browsing**: packs are the mental unit, so the browser
+    groups by pack — a derived presentation layer over catalog paths, no
+    storage change. Three tiers: (1) known vendor → pack grammar in the
+    vendor profile ("SFM: top-level dirs are packs, WAV/ is canonical,
+    sibling zip is the archival original"); (2) unknown vendor → heuristic
+    inference (audio critical mass, docs/artwork at dir root, sibling-zip
+    pattern, shallow depth), cached as correctable annotations; (3) no
+    idea → top-level dirs pose as packs, honest degraded mode. Content-SHA
+    pack identity makes declared/inferred packs recognizable across users.
+    API: `catalog packs [--device D] --json` — pack summaries with
+    per-device eligible counts and converted sizes, computed from the
+    catalog alone.
   - **Device lens**: when building a collection for a device, filter the
     entire browse view to only what CAN materialize for it — too long,
     untranscodable, wrong-shaped stuff just disappears. This is the plan
