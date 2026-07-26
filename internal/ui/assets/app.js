@@ -23,7 +23,7 @@ const S = {
   pf: null, pfBusy: false, disabled: new Set(),
   run: { status: 'idle' }, runLog: ['[idle] no run started this session'],
   selCard: 0, locks: [], diff: null, diffBusy: false,
-  packOpen: null, pd: null, pdFolder: '', pdDesc: '',
+  packOpen: null, pd: null, pdFolder: '', pdDesc: '', descOpen: false,
   player: null,  // {path, name, dur, playing}
   toast: '',
 };
@@ -63,7 +63,7 @@ async function loadPreflight() {
 }
 
 async function openPack(p) {
-  S.packOpen = p; S.pd = null; S.pdFolder = ''; S.pdDesc = '';
+  S.packOpen = p; S.pd = null; S.pdFolder = ''; S.pdDesc = ''; S.descOpen = false;
   render();
   const q = new URLSearchParams({ location: p.location, dir: p.dir });
   if (S.lens) q.set('device', S.lens);
@@ -85,6 +85,13 @@ async function loadPdFolder() {
   if (S.lens) q.set('device', S.lens);
   const d = await api('/api/pack?' + q);
   S.pd.folders = d.folders; S.pd.files = d.files; S.pd.total = d.total; S.pd.shown = d.shown;
+}
+
+function stopPlayback() {
+  if (!S.player) return;
+  audio.pause();
+  audio.removeAttribute('src');
+  S.player = null;
 }
 
 function playFile(path, name, dur) {
@@ -200,7 +207,8 @@ function renderLibrary() {
   const q = S.search.toLowerCase();
   const rows = S.packs.filter(p =>
     (!S.locFilter || p.location === S.locFilter) &&
-    (!q || p.name.toLowerCase().includes(q) || (p.provider || '').toLowerCase().includes(q)));
+    (!q || p.name.toLowerCase().includes(q) || (p.provider || '').toLowerCase().includes(q)))
+    .slice().sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
 
   let sum;
   if (S.lens) {
@@ -295,7 +303,7 @@ function renderPackDetail() {
   const lensLine = S.lens && po.eligible != null
     ? `<span style="font:500 11px var(--mono);color:var(--teal)">${esc(S.lens)}: ${n(po.eligible)} of ${n(po.files)} eligible · ${fmtB(po.converted_bytes || 0)} converted</span>` : '';
   const desc = S.pdDesc
-    ? `<div style="font:400 12px/1.55 var(--sans);color:#b6bcc2;max-width:680px">${esc(S.pdDesc)}</div>`
+    ? `<div id="pd-desc" data-act="toggle-desc" title="click to expand" style="font:400 12px/1.55 var(--sans);color:#b6bcc2;max-width:680px;cursor:pointer;${S.descOpen ? '' : 'display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden'}">${esc(S.pdDesc)}</div>`
     : po.slug ? '' : `<div style="font:400 11.5px var(--mono);color:var(--fg-faint)">no annotation for this source — folder indexed from ${esc(po.location)}</div>`;
   const urlChip = po.url ? `<a href="${esc(po.url)}" target="_blank" style="font:500 10.5px var(--mono);color:var(--fg-dim);border:1px solid var(--bord-raise);border-radius:4px;padding:2px 8px;text-decoration:none">${esc(po.url.replace('https://', ''))} ↗</a>` : '';
 
@@ -569,7 +577,7 @@ function wire() {
   $app.querySelectorAll('[data-act]').forEach(el => {
     el.addEventListener('click', (e) => {
       const act = el.dataset.act;
-      if (act === 'tab') { S.screen = el.dataset.k; if (S.screen === 'cards') { S.locks = []; } render(); }
+      if (act === 'tab') { stopPlayback(); S.screen = el.dataset.k; if (S.screen === 'cards') { S.locks = []; } render(); }
       if (act === 'clear-lens') { S.lens = null; loadPacks().then(render); }
       if (act === 'toggle-menu') { S.lensMenu = !S.lensMenu; render(); }
       if (act === 'close-menu') { S.lensMenu = false; render(); }
@@ -590,8 +598,9 @@ function wire() {
         const row = S.packs.find(x => x.location === el.dataset.loc && x.dir === el.dataset.dir);
         if (row) openPack(row);
       }
-      if (act === 'close-pack') { S.packOpen = null; S.pd = null; render(); }
+      if (act === 'close-pack') { stopPlayback(); S.packOpen = null; S.pd = null; render(); }
       if (act === 'pd-folder') { S.pdFolder = el.dataset.f; loadPdFolder().then(render); }
+      if (act === 'toggle-desc') { S.descOpen = !S.descOpen; render(); }
       if (act === 'pd-up') {
         const i = S.pdFolder.lastIndexOf('/');
         S.pdFolder = i > 0 ? S.pdFolder.slice(0, i) : '';
@@ -644,7 +653,7 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   const map = { 1: 'library', 2: 'recipe', 3: 'run', 4: 'cards' };
-  if (e.key === 'Escape' && S.packOpen) { S.packOpen = null; S.pd = null; render(); return; }
+  if (e.key === 'Escape' && S.packOpen) { stopPlayback(); S.packOpen = null; S.pd = null; render(); return; }
   if (map[e.key]) { S.screen = map[e.key]; if (S.screen === 'cards') S.locks = []; render(); }
   if (e.key === 'l' || e.key === 'L') {
     const order = [null, ...S.devices.filter(d => S.owned[d.name]).map(d => d.name)];

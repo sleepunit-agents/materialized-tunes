@@ -480,19 +480,37 @@ func (s *Server) blurb(w http.ResponseWriter, r *http.Request) {
 	}
 	path := s.cachePath("blurb", u) + ".json"
 	if _, err := os.Stat(path); err != nil {
-		data, err := fetchURL(u)
-		if err != nil {
-			w.WriteHeader(502)
-			return
-		}
-		og := func(prop string) string {
-			re := regexp.MustCompile(`<meta property="og:` + prop + `" content="([^"]*)"`)
-			if m := re.FindSubmatch(data); m != nil {
-				return html.UnescapeString(string(m[1]))
+		title, desc := "", ""
+		// Shopify stores expose the FULL product description as public
+		// JSON at <product-url>.js — og:description is truncated by the
+		// platform (~320 chars, mid-sentence). Try the JSON first.
+		if data, err := fetchURL(u + ".js"); err == nil {
+			var prod struct {
+				Title       string `json:"title"`
+				Description string `json:"description"`
 			}
-			return ""
+			if json.Unmarshal(data, &prod) == nil && prod.Description != "" {
+				title = prod.Title
+				txt := regexp.MustCompile(`<[^>]+>`).ReplaceAllString(prod.Description, " ")
+				desc = strings.TrimSpace(regexp.MustCompile(`\s+`).ReplaceAllString(html.UnescapeString(txt), " "))
+			}
 		}
-		blob, _ := json.Marshal(map[string]string{"title": og("title"), "description": og("description")})
+		if desc == "" {
+			data, err := fetchURL(u)
+			if err != nil {
+				w.WriteHeader(502)
+				return
+			}
+			og := func(prop string) string {
+				re := regexp.MustCompile(`<meta property="og:` + prop + `" content="([^"]*)"`)
+				if m := re.FindSubmatch(data); m != nil {
+					return html.UnescapeString(string(m[1]))
+				}
+				return ""
+			}
+			title, desc = og("title"), og("description")
+		}
+		blob, _ := json.Marshal(map[string]string{"title": title, "description": desc})
 		os.MkdirAll(filepath.Dir(path), 0o755)
 		os.WriteFile(path, blob, 0o644)
 	}
