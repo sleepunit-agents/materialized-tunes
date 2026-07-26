@@ -73,18 +73,28 @@ func pullOnce(ctx context.Context, loc location.Location, relPath, wantSHA, objP
 	if err != nil {
 		return err
 	}
-	defer src.Close()
-
 	tmp, err := os.CreateTemp(filepath.Dir(objPath), ".pull-*")
 	if err != nil {
+		src.Close()
 		return err
 	}
 	defer os.Remove(tmp.Name())
 
 	h := sha256.New()
-	if _, err := io.Copy(io.MultiWriter(tmp, h), src); err != nil {
+	_, copyErr := io.Copy(io.MultiWriter(tmp, h), src)
+	// Close before judging the bytes: for remote sources Close reaps the
+	// transport and returns its exit status, which is the only way to tell
+	// a stream that was cut short (clean EOF mid-file) from one that
+	// completed. Without it, a failed session gets misreported below as a
+	// catalog mismatch.
+	closeErr := src.Close()
+	if copyErr != nil {
 		tmp.Close()
-		return fmt.Errorf("pulling %s: %w", relPath, err)
+		return fmt.Errorf("pulling %s: %w", relPath, copyErr)
+	}
+	if closeErr != nil {
+		tmp.Close()
+		return fmt.Errorf("pulling %s: %w", relPath, closeErr)
 	}
 	if err := tmp.Close(); err != nil {
 		return err

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -56,6 +57,50 @@ func TestEnsureRetriesTransientCorruption(t *testing.T) {
 	got, _ := hashFile(path)
 	if got != shaOf(good) {
 		t.Errorf("cached object hash = %s, want the clean content", got)
+	}
+}
+
+// cutStream is what a dead ssh session looks like: some bytes, a clean
+// EOF, and the failure only visible in Close's error (the exit status).
+type cutStream struct {
+	io.Reader
+	closeErr error
+}
+
+func (c *cutStream) Close() error { return c.closeErr }
+
+type cutLoc struct {
+	flakyLoc
+	closeErr error
+}
+
+func (c *cutLoc) Open(ctx context.Context, p string) (io.ReadCloser, error) {
+	rc, err := c.flakyLoc.Open(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	return &cutStream{Reader: rc, closeErr: c.closeErr}, nil
+}
+
+func TestEnsureReportsCutStreamAsTransferFailure(t *testing.T) {
+	full := []byte("the full sample bytes")
+	loc := &cutLoc{
+		flakyLoc: flakyLoc{payloads: [][]byte{full[:5]}}, // truncated every attempt
+		closeErr: errors.New("ssh one: cat a.wav: exit status 255: session request failed"),
+	}
+
+	_, err := Ensure(context.Background(), loc, "a.wav", shaOf(full), t.TempDir())
+	if err == nil {
+		t.Fatal("cut stream must fail")
+	}
+	if loc.opens != pullAttempts {
+		t.Errorf("opens = %d, want %d (transport failures are transient — retry)", loc.opens, pullAttempts)
+	}
+	if strings.Contains(err.Error(), "does not match cataloged sha") {
+		t.Errorf("a dead session must not be misdiagnosed as catalog corruption: %v", err)
+	}
+	if !strings.Contains(err.Error(), "session request failed") {
+		t.Errorf("error should carry the transport failure: %v", err)
 	}
 }
 
