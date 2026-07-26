@@ -5,6 +5,12 @@
 
 const $app = document.getElementById('app');
 const blurbCache = {};
+const audio = new Audio();
+audio.addEventListener('ended', () => { if (S.player) { S.player.playing = false; render(); } });
+audio.addEventListener('timeupdate', () => {
+  const f = document.getElementById('wavefill');
+  if (f && audio.duration) f.style.width = (audio.currentTime / audio.duration * 100) + '%';
+});
 
 const S = {
   screen: 'library',
@@ -17,6 +23,8 @@ const S = {
   pf: null, pfBusy: false, disabled: new Set(),
   run: { status: 'idle' }, runLog: ['[idle] no run started this session'],
   selCard: 0, locks: [], diff: null, diffBusy: false,
+  packOpen: null, pd: null, pdFolder: '', pdDesc: '',
+  player: null,  // {path, name, dur, playing}
   toast: '',
 };
 
@@ -52,6 +60,44 @@ async function loadPreflight() {
   S.pf = await api('/api/preflight', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ view: S.view, disabled: [...S.disabled] }) });
   S.pfBusy = false; render();
+}
+
+async function openPack(p) {
+  S.packOpen = p; S.pd = null; S.pdFolder = ''; S.pdDesc = '';
+  render();
+  const q = new URLSearchParams({ location: p.location, dir: p.dir });
+  if (S.lens) q.set('device', S.lens);
+  const d = await api('/api/pack?' + q);
+  S.pd = d;
+  const canon = (d.folders || []).find(f => /^(WAV|Samples|AUDIO)$/i.test(f.name));
+  if (canon) { S.pdFolder = canon.name; await loadPdFolder(); }
+  render();
+  if (p.url) {
+    if (!blurbCache[p.url]) { try { blurbCache[p.url] = await api('/api/blurb?u=' + encodeURIComponent(p.url)); } catch (e) { blurbCache[p.url] = {}; } }
+    S.pdDesc = blurbCache[p.url].description || '';
+    render();
+  }
+}
+
+async function loadPdFolder() {
+  const p = S.packOpen;
+  const q = new URLSearchParams({ location: p.location, dir: p.dir, folder: S.pdFolder });
+  if (S.lens) q.set('device', S.lens);
+  const d = await api('/api/pack?' + q);
+  S.pd.folders = d.folders; S.pd.files = d.files; S.pd.total = d.total; S.pd.shown = d.shown;
+}
+
+function playFile(path, name, dur) {
+  if (S.player && S.player.path === path) {
+    if (S.player.playing) { audio.pause(); S.player.playing = false; }
+    else { audio.play(); S.player.playing = true; }
+    render(); return;
+  }
+  const p = S.packOpen;
+  audio.src = '/api/preview?' + new URLSearchParams({ location: p.location, path });
+  audio.play();
+  S.player = { path, name, dur, playing: true };
+  render();
 }
 
 async function loadCards() {
@@ -150,6 +196,7 @@ function badgeFor(p) {
 const artHue = (s) => { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) % 360; return h; };
 
 function renderLibrary() {
+  if (S.packOpen) return renderPackDetail();
   const q = S.search.toLowerCase();
   const rows = S.packs.filter(p =>
     (!S.locFilter || p.location === S.locFilter) &&
@@ -221,13 +268,112 @@ function renderLibrary() {
           ? `<div class="stats lens">${n(p.eligible)} <span class="of">of ${n(p.files)}</span> · ${fmtB(p.converted_bytes || 0)}</div>`
           : `<div class="stats">${n(p.files)} files · ${fmtB(p.bytes)}</div>`;
         const link = p.url ? `<a class="link" href="${esc(p.url)}" target="_blank" title="product page">↗</a>` : '';
-        return `<div class="pack" data-blurb="${esc(p.url)}">${art}
+        return `<div class="pack" data-blurb="${esc(p.url)}" data-act="open-pack" data-loc="${esc(p.location)}" data-dir="${esc(p.dir)}">${art}
           <div class="body">
             <div class="name" title="${esc(p.dir)}">${esc(p.name)}</div>
             <div class="vline"><span class="vendor">${esc(vendor)}</span>${badgeFor(p)}</div>
             ${stats}
           </div>${link}</div>`;
       }).join('')}
+    </div>`;
+}
+
+function fmtDur(s) {
+  if (!s) return '—';
+  if (s < 10) return s.toFixed(2) + 's';
+  const m = Math.floor(s / 60);
+  return m ? `${m}:${String(Math.round(s % 60)).padStart(2, '0')}` : Math.round(s) + 's';
+}
+
+function renderPackDetail() {
+  const po = S.packOpen, pd = S.pd;
+  const art = po.image
+    ? `<div class="pd-art"><img src="/api/art?u=${encodeURIComponent(po.image)}"></div>`
+    : po.slug
+      ? `<div class="pd-art" style="background:linear-gradient(135deg,hsl(${artHue(po.name)},38%,42%),hsl(${artHue(po.name)},45%,24%))">${esc(po.name[0] || '?')}</div>`
+      : `<div class="pd-art none">/</div>`;
+  const lensLine = S.lens && po.eligible != null
+    ? `<span style="font:500 11px var(--mono);color:var(--teal)">${esc(S.lens)}: ${n(po.eligible)} of ${n(po.files)} eligible · ${fmtB(po.converted_bytes || 0)} converted</span>` : '';
+  const desc = S.pdDesc
+    ? `<div style="font:400 12px/1.55 var(--sans);color:#b6bcc2;max-width:680px">${esc(S.pdDesc)}</div>`
+    : po.slug ? '' : `<div style="font:400 11.5px var(--mono);color:var(--fg-faint)">no annotation for this source — folder indexed from ${esc(po.location)}</div>`;
+  const urlChip = po.url ? `<a href="${esc(po.url)}" target="_blank" style="font:500 10.5px var(--mono);color:var(--fg-dim);border:1px solid var(--bord-raise);border-radius:4px;padding:2px 8px;text-decoration:none">${esc(po.url.replace('https://', ''))} ↗</a>` : '';
+
+  let body = `<div style="font:400 11px var(--mono);color:var(--fg-faint);padding:20px">loading…</div>`;
+  if (pd) {
+    const here = S.pdFolder ? S.pdFolder + '/' : '';
+    const up = S.pdFolder ? `
+      <div class="pd-folder" data-act="pd-up">
+        <span style="font:500 11.5px var(--mono);color:var(--fg-dim);flex:1">..</span>
+      </div>` : '';
+    const folders = `
+      <div style="font:500 10px var(--mono);color:var(--fg-faint);padding:2px 10px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(here || '/')}">/${esc(here)}</div>
+      ${up}` + (pd.folders || []).map(f => `
+      <div class="pd-folder" data-act="pd-folder" data-f="${esc(S.pdFolder ? S.pdFolder + '/' + f.name : f.name)}">
+        <span style="font:500 11.5px var(--mono);color:var(--fg-dim);flex:1">${esc(f.name)}/</span>
+        <span style="font:400 10.5px var(--mono);color:var(--fg-faint)">${n(f.count)}</span>
+      </div>`).join('');
+    const rows = (pd.files || []).map(fl => {
+      const isPlaying = S.player && S.player.path === fl.path;
+      const fmt = fl.format ? `${fl.format} ${fl.depth || '?'}/${fl.rate ? (fl.rate / 1000).toFixed(1) : '?'}k ${fl.channels === 1 ? 'mono' : fl.channels === 2 ? 'st' : (fl.channels || '') + 'ch'}` : '—';
+      const lensTxt = S.lens ? (fl.ineligible ? fl.ineligible : fl.converted ? '→ ' + fmtB(fl.converted) : '') : '';
+      const lensColor = fl.ineligible ? 'var(--warn)' : 'var(--fg-faint)';
+      const playable = !!fl.format;
+      return `<div class="pd-row ${isPlaying ? 'playing' : ''}" ${playable ? `data-act="play" data-p="${esc(fl.path)}" data-n="${esc(fl.name)}" data-d="${fl.duration || 0}"` : ''}>
+        <span style="font:400 9.5px var(--sans);color:${isPlaying ? 'var(--teal)' : playable ? 'var(--fg-faint)' : '#33393f'}">${isPlaying && S.player.playing ? '❚❚' : playable ? '▷' : '·'}</span>
+        <span style="font:400 11px var(--mono);color:var(--fg-num);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(fl.name)}</span>
+        <span style="font:400 10.5px var(--mono);color:var(--fg-log)">${esc(fmt)}</span>
+        <span style="font:400 10.5px var(--mono);color:var(--fg-log)">${fmtDur(fl.duration)}</span>
+        <span style="font:400 10.5px var(--mono);color:var(--fg-log)">${fmtB(fl.size)}</span>
+        <span style="font:500 10.5px var(--mono);color:${lensColor};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(lensTxt)}</span>
+      </div>`;
+    }).join('');
+    const more = pd.total > pd.shown ? `<div style="font:400 10.5px var(--mono);color:var(--fg-faint);padding:8px 12px">… and ${n(pd.total - pd.shown)} more in this folder</div>` : '';
+    body = `<div class="pd-grid">
+      <div style="border-right:1px solid var(--bord);padding:10px 8px;overflow:auto">${folders}</div>
+      <div style="min-width:0;display:flex;flex-direction:column">
+        <div class="pd-cols"><span></span><span>FILE</span><span>FORMAT</span><span>LENGTH</span><span>SIZE</span><span>${S.lens ? esc(S.lens.toUpperCase()) + ' LENS' : ''}</span></div>
+        <div style="overflow:auto;flex:1">${rows}${more}</div>
+      </div>
+    </div>`;
+  }
+
+  const pl = S.player;
+  const bars = pl ? Array.from({ length: 90 }, (_, i) => {
+    let h = 0; for (const c of pl.path) h = (h * 31 + c.charCodeAt(0) + i * 7) % 97;
+    return `<span style="height:${4 + (h % 20)}px"></span>`;
+  }).join('') : '';
+  const playerBar = pl ? `
+    <div class="player">
+      <span class="play-btn" data-act="toggle-play">${pl.playing ? '❚❚' : '▶'}</span>
+      <span style="font:500 11px var(--mono);color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:320px">${esc(pl.name)}</span>
+      <div class="wave">${bars}<div class="fill" id="wavefill"></div></div>
+      <span style="font:400 10.5px var(--mono);color:var(--fg-dim)">${fmtDur(pl.dur)}</span>
+      <span style="font:400 10px var(--sans);color:var(--fg-ghost)">preview streams from source — nothing is written</span>
+    </div>` : '';
+
+  return `
+    <div style="display:flex;flex-direction:column;min-height:100%">
+    <div style="display:flex;align-items:center;gap:10px;padding:10px 18px;border-bottom:1px solid var(--bord)">
+      <span class="crumb-btn" data-act="close-pack">← Library</span>
+      <span style="font:400 11px var(--mono);color:var(--fg-faint)">library / ${esc(po.provider || po.location)} / ${esc(po.name)}</span>
+      <div style="flex:1"></div>${lensLine}
+    </div>
+    <div class="pd-head">
+      ${art}
+      <div style="min-width:0;flex:1;display:flex;flex-direction:column;gap:6px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font:700 18px var(--sans)">${esc(po.name)}</span>${badgeFor(po)}
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font:400 11.5px var(--sans);color:var(--fg-dim)">${esc(po.provider || po.location)}</span>${urlChip}
+        </div>
+        ${desc}
+        <div style="font:500 11px var(--mono);color:var(--fg-faint);margin-top:2px">${n(po.files)} files · ${fmtB(po.bytes)}${po.samples_listed ? ` · vendor lists ${n(po.samples_listed)} samples` : ''}</div>
+      </div>
+    </div>
+    ${body}
+    ${playerBar}
     </div>`;
 }
 
@@ -439,6 +585,20 @@ function wire() {
         localStorage.setItem('mtunes.onlyOwned', JSON.stringify(S.onlyOwned)); render();
       }
       if (act === 'loc') { S.locFilter = el.dataset.l; render(); }
+      if (act === 'open-pack') {
+        if (e.target.closest('a')) return; // product link stays a link
+        const row = S.packs.find(x => x.location === el.dataset.loc && x.dir === el.dataset.dir);
+        if (row) openPack(row);
+      }
+      if (act === 'close-pack') { S.packOpen = null; S.pd = null; render(); }
+      if (act === 'pd-folder') { S.pdFolder = el.dataset.f; loadPdFolder().then(render); }
+      if (act === 'pd-up') {
+        const i = S.pdFolder.lastIndexOf('/');
+        S.pdFolder = i > 0 ? S.pdFolder.slice(0, i) : '';
+        loadPdFolder().then(render);
+      }
+      if (act === 'play') { playFile(el.dataset.p, el.dataset.n, +el.dataset.d); }
+      if (act === 'toggle-play') { if (S.player) playFile(S.player.path, S.player.name, S.player.dur); }
       if (act === 'rule') {
         const i = +el.dataset.i;
         S.disabled.has(i) ? S.disabled.delete(i) : S.disabled.add(i);
@@ -484,6 +644,7 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   const map = { 1: 'library', 2: 'recipe', 3: 'run', 4: 'cards' };
+  if (e.key === 'Escape' && S.packOpen) { S.packOpen = null; S.pd = null; render(); return; }
   if (map[e.key]) { S.screen = map[e.key]; if (S.screen === 'cards') S.locks = []; render(); }
   if (e.key === 'l' || e.key === 'L') {
     const order = [null, ...S.devices.filter(d => S.owned[d.name]).map(d => d.name)];

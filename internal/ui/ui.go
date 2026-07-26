@@ -25,7 +25,9 @@ import (
 
 	"github.com/jbarket/materialized-tunes/internal/annotations"
 	"github.com/jbarket/materialized-tunes/internal/browse"
+	"github.com/jbarket/materialized-tunes/internal/cache"
 	"github.com/jbarket/materialized-tunes/internal/catalog"
+	"github.com/jbarket/materialized-tunes/internal/location"
 	"github.com/jbarket/materialized-tunes/internal/lock"
 	"github.com/jbarket/materialized-tunes/internal/materialize"
 	"github.com/jbarket/materialized-tunes/internal/plan"
@@ -73,6 +75,8 @@ func Handler(ws *workspace.Workspace) http.Handler {
 	mux.HandleFunc("/api/diff", s.diff)
 	mux.HandleFunc("/api/art", s.art)
 	mux.HandleFunc("/api/blurb", s.blurb)
+	mux.HandleFunc("/api/pack", s.packDetail)
+	mux.HandleFunc("/api/preview", s.preview)
 	return mux
 }
 
@@ -494,4 +498,137 @@ func (s *Server) blurb(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	http.ServeFile(w, r, path)
+}
+
+// ---- pack detail: the drill-in view. Folder rail + file table straight ----
+// ---- from the catalog; per-file device lens via the plan predicates.   ----
+
+func (s *Server) packDetail(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	locName, dir, folder := q.Get("location"), q.Get("dir"), q.Get("folder")
+	var dev *profile.Device
+	if d := q.Get("device"); d != "" {
+		var err error
+		if dev, err = profile.LoadDevice(s.ws.Root, d); err != nil {
+			jsonErr(w, 400, err)
+			return
+		}
+	}
+	entries, err := catalog.Load(s.ws.CatalogPath(locName))
+	if err != nil {
+		jsonErr(w, 404, err)
+		return
+	}
+
+	type file struct {
+		Path      string  `json:"path"` // catalog path (location-relative)
+		Name      string  `json:"name"`
+		Format    string  `json:"format,omitempty"`
+		Channels  int     `json:"channels,omitempty"`
+		Rate      int     `json:"rate,omitempty"`
+		Depth     int     `json:"depth,omitempty"`
+		Duration  float64 `json:"duration,omitempty"`
+		Size      int64   `json:"size"`
+		Reason    string  `json:"ineligible,omitempty"` // device lens: why it can't ride
+		Converted int64   `json:"converted,omitempty"`
+	}
+	// folder is a path WITHIN the pack ("WAV", "WAV/Acid Synths", ...);
+	// the response describes that level: its child dirs and its own files.
+	cur := dir + "/"
+	if folder != "" {
+		cur += folder + "/"
+	}
+	folderCount := map[string]int{}
+	total := 0
+	var paths []string
+	byPath := map[string]catalog.Entry{}
+	for _, ce := range entries {
+		if !strings.HasPrefix(ce.Path, cur) {
+			continue
+		}
+		rest := ce.Path[len(cur):]
+		top, _, nested := strings.Cut(rest, "/")
+		if nested {
+			folderCount[top]++ // recursive count under this child
+			continue
+		}
+		total++
+		paths = append(paths, ce.Path)
+		byPath[ce.Path] = ce
+	}
+	var files []file
+	sort.Strings(paths)
+	const cap = 400
+	shown := paths
+	if len(shown) > cap {
+		shown = shown[:cap]
+	}
+	for _, p := range shown {
+		ce := byPath[p]
+		f := file{Path: ce.Path, Name: p[strings.LastIndex(p, "/")+1:], Size: ce.Size}
+		if ce.Audio != nil {
+			f.Format = ce.Audio.Format
+			f.Channels, f.Rate, f.Depth = ce.Audio.Channels, ce.Audio.SampleRate, ce.Audio.BitDepth
+			f.Duration = ce.Audio.DurationS
+		}
+		if dev != nil {
+			if reason := plan.Eligibility(dev, ce); reason != "" {
+				f.Reason = reason
+			} else {
+				f.Converted = plan.ConvertedBytes(dev, ce)
+			}
+		}
+		files = append(files, f)
+	}
+	type foldOut struct {
+		Name  string `json:"name"`
+		Count int    `json:"count"`
+	}
+	var folds []foldOut
+	for name, c := range folderCount {
+		folds = append(folds, foldOut{name, c})
+	}
+	sort.Slice(folds, func(i, j int) bool { return folds[i].Name < folds[j].Name })
+	jsonOut(w, map[string]any{"folders": folds, "files": files, "total": total, "shown": len(files)})
+}
+
+// preview streams one cataloged source file: local sources in place,
+// remote ones through the same content-addressed cache materialize uses
+// (a preview warms the cache; nothing is ever written to a target).
+func (s *Server) preview(w http.ResponseWriter, r *http.Request) {
+	locName, path := r.URL.Query().Get("location"), r.URL.Query().Get("path")
+	lc, ok := s.ws.Location(locName)
+	if !ok {
+		jsonErr(w, 404, fmt.Errorf("unknown location %q", locName))
+		return
+	}
+	entries, err := catalog.Load(s.ws.CatalogPath(locName))
+	if err != nil {
+		jsonErr(w, 500, err)
+		return
+	}
+	ce, ok := entries[path]
+	if !ok {
+		jsonErr(w, 404, fmt.Errorf("not in catalog: %s", path))
+		return
+	}
+	loc, err := location.New(lc)
+	if err != nil {
+		jsonErr(w, 500, err)
+		return
+	}
+	local, err := cache.Ensure(r.Context(), loc, path, ce.SHA256, filepath.Join(s.ws.Root, "cache", "objects"))
+	if err != nil {
+		jsonErr(w, 502, err)
+		return
+	}
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".wav":
+		w.Header().Set("Content-Type", "audio/wav")
+	case ".aif", ".aiff":
+		w.Header().Set("Content-Type", "audio/aiff")
+	case ".flac":
+		w.Header().Set("Content-Type", "audio/flac")
+	}
+	http.ServeFile(w, r, local)
 }
