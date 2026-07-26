@@ -22,11 +22,12 @@ type Row struct {
 	Name     string `json:"name"`
 	Tier     string `json:"tier"` // "vendor" | "top-level-dirs"
 
-	Slug          string `json:"slug,omitempty"`
-	URL           string `json:"url,omitempty"`
-	Image         string `json:"image,omitempty"`
-	Provider      string `json:"provider,omitempty"`
-	SamplesListed int    `json:"samples_listed,omitempty"`
+	Slug          string   `json:"slug,omitempty"`
+	URL           string   `json:"url,omitempty"`
+	Image         string   `json:"image,omitempty"`
+	Provider      string   `json:"provider,omitempty"`
+	SamplesListed int      `json:"samples_listed,omitempty"`
+	Tags          []string `json:"tags,omitempty"`
 
 	Files int   `json:"files"`
 	Bytes int64 `json:"bytes"`
@@ -76,6 +77,7 @@ func Rows(ws *workspace.Workspace, dev *profile.Device, location string) ([]Row,
 					row.Image = p.Meta.Image
 					row.Provider = p.Provider
 					row.SamplesListed = p.SamplesListed
+					row.Tags = p.Tags
 					shas := make(map[string]bool, len(ces))
 					for _, ce := range ces {
 						if isAudioPath(ce.Path) {

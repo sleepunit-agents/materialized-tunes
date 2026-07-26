@@ -42,8 +42,9 @@ var assets embed.FS
 type Server struct {
 	ws *workspace.Workspace
 
-	mu  sync.Mutex
-	run *runState // at most one materialization at a time
+	mu   sync.Mutex
+	run  *runState // at most one materialization at a time
+	meta map[string]map[string]fileMeta
 }
 
 type runState struct {
@@ -549,6 +550,10 @@ func (s *Server) packDetail(w http.ResponseWriter, r *http.Request) {
 		Size      int64   `json:"size"`
 		Reason    string  `json:"ineligible,omitempty"` // device lens: why it can't ride
 		Converted int64   `json:"converted,omitempty"`
+		BPM       int     `json:"bpm,omitempty"`
+		Key       string  `json:"key,omitempty"`
+		Chord     string  `json:"chord,omitempty"`
+		Cat       string  `json:"cat,omitempty"`
 	}
 	// folder is a path WITHIN the pack ("WAV", "WAV/Acid Synths", ...);
 	// the response describes that level: its child dirs and its own files.
@@ -581,9 +586,13 @@ func (s *Server) packDetail(w http.ResponseWriter, r *http.Request) {
 	if len(shown) > cap {
 		shown = shown[:cap]
 	}
+	meta := s.loadMeta(locName)
 	for _, p := range shown {
 		ce := byPath[p]
 		f := file{Path: ce.Path, Name: p[strings.LastIndex(p, "/")+1:], Size: ce.Size}
+		if mr, ok := meta[ce.SHA256]; ok {
+			f.BPM, f.Key, f.Chord, f.Cat = mr.BPM, mr.Key, mr.Chord, mr.Category
+		}
 		if ce.Audio != nil {
 			f.Format = ce.Audio.Format
 			f.Channels, f.Rate, f.Depth = ce.Audio.Channels, ce.Audio.SampleRate, ce.Audio.BitDepth
@@ -649,4 +658,43 @@ func (s *Server) preview(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "audio/flac")
 	}
 	http.ServeFile(w, r, local)
+}
+
+// ---- local per-file metadata (annotations-cache/meta/<location>.jsonl) ----
+// Harvested vendor data (bpm, key, tags), keyed by content SHA — proprietary
+// vendor databases stay in the workspace, never in the annotations repo.
+
+type fileMeta struct {
+	SHA      string   `json:"sha"`
+	BPM      int      `json:"bpm,omitempty"`
+	Key      string   `json:"key,omitempty"`
+	Chord    string   `json:"chord,omitempty"`
+	Category string   `json:"category,omitempty"`
+	Tags     []string `json:"tags,omitempty"`
+}
+
+func (s *Server) loadMeta(location string) map[string]fileMeta {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.meta == nil {
+		s.meta = map[string]map[string]fileMeta{}
+	}
+	if m, ok := s.meta[location]; ok {
+		return m
+	}
+	m := map[string]fileMeta{}
+	f, err := os.Open(filepath.Join(s.ws.Root, "annotations-cache", "meta", location+".jsonl"))
+	if err == nil {
+		defer f.Close()
+		dec := json.NewDecoder(f)
+		for {
+			var r fileMeta
+			if dec.Decode(&r) != nil {
+				break
+			}
+			m[r.SHA] = r
+		}
+	}
+	s.meta[location] = m
+	return m
 }

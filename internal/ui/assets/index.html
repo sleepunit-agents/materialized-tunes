@@ -93,6 +93,7 @@
   .badge.complete { color: var(--green); border-color: rgba(87,196,138,.35); }
   .badge.partial { color: var(--warn); border-color: rgba(224,182,79,.35); }
   .badge.subset { color: var(--fg-faint); border-color: var(--bord-raise); font-weight: 500; }
+  .tagchip { font: 500 10px var(--mono); color: var(--fg-dim); background: var(--bg-raise); border: 1px solid var(--bord-raise); border-radius: 3px; padding: 1px 7px; }
   .pack .stats { font: 500 11px var(--mono); color: var(--fg-dim); margin-top: 2px; white-space: nowrap; }
   .pack .stats.lens { color: var(--fg-num); }
   .pack .stats .of { color: var(--fg-faint); }
@@ -176,8 +177,8 @@
   .pd-folder { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 5px; cursor: pointer; }
   .pd-folder:hover { background: var(--bg-raise); }
   .pd-folder.sel { background: var(--bg-sel); }
-  .pd-cols { display: grid; grid-template-columns: 26px minmax(0, 1fr) 110px 64px 76px 160px; gap: 8px; padding: 7px 12px; border-bottom: 1px solid var(--bord-card); font: 600 9px var(--sans); letter-spacing: .09em; color: var(--fg-faint); }
-  .pd-row { display: grid; grid-template-columns: 26px minmax(0, 1fr) 110px 64px 76px 160px; gap: 8px; align-items: center; padding: 4.5px 12px; border-bottom: 1px solid #16191c; cursor: pointer; }
+  .pd-cols { display: grid; grid-template-columns: 26px minmax(0, 1fr) 110px 64px 86px 76px 160px; gap: 8px; padding: 7px 12px; border-bottom: 1px solid var(--bord-card); font: 600 9px var(--sans); letter-spacing: .09em; color: var(--fg-faint); }
+  .pd-row { display: grid; grid-template-columns: 26px minmax(0, 1fr) 110px 64px 86px 76px 160px; gap: 8px; align-items: center; padding: 4.5px 12px; border-bottom: 1px solid #16191c; cursor: pointer; }
   .pd-row:hover { background: var(--bg-card); }
   .pd-row.playing { background: var(--bg-sel); }
   .player { position: sticky; bottom: 0; display: flex; align-items: center; gap: 14px; padding: 9px 18px; background: var(--bg-deep); border-top: 1px solid var(--bord-card); }

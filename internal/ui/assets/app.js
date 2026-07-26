@@ -342,6 +342,7 @@ function renderPackDetail() {
         <span style="font:400 11px var(--mono);color:var(--fg-num);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(fl.name)}</span>
         <span style="font:400 10.5px var(--mono);color:var(--fg-log)">${esc(fmt)}</span>
         <span style="font:400 10.5px var(--mono);color:var(--fg-log)">${fmtDur(fl.duration)}</span>
+        <span style="font:400 10.5px var(--mono);color:var(--fg-log)">${fl.key ? esc(fl.key.toUpperCase() + (fl.chord === 'minor' ? 'm' : '')) : ''}${fl.bpm ? (fl.key ? ' · ' : '') + fl.bpm : ''}</span>
         <span style="font:400 10.5px var(--mono);color:var(--fg-log)">${fmtB(fl.size)}</span>
         <span style="font:500 10.5px var(--mono);color:${lensColor};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(lensTxt)}</span>
       </div>`;
@@ -350,7 +351,7 @@ function renderPackDetail() {
     body = `<div class="pd-grid">
       <div style="border-right:1px solid var(--bord);padding:10px 8px;overflow:auto">${folders}</div>
       <div style="min-width:0;display:flex;flex-direction:column">
-        <div class="pd-cols"><span></span><span>FILE</span><span>FORMAT</span><span>LENGTH</span><span>SIZE</span><span>${S.lens ? esc(S.lens.toUpperCase()) + ' LENS' : ''}</span></div>
+        <div class="pd-cols"><span></span><span>FILE</span><span>FORMAT</span><span>LENGTH</span><span>KEY · BPM</span><span>SIZE</span><span>${S.lens ? esc(S.lens.toUpperCase()) + ' LENS' : ''}</span></div>
         <div style="overflow:auto;flex:1">${rows}${more}</div>
       </div>
     </div>`;
@@ -387,6 +388,7 @@ function renderPackDetail() {
           <span style="font:400 11.5px var(--sans);color:var(--fg-dim)">${esc(po.provider || po.location)}</span>${urlChip}
         </div>
         ${desc}
+        ${(po.tags || []).length ? `<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:2px">${po.tags.map(tg => `<span class="tagchip">${esc(tg)}</span>`).join('')}</div>` : ''}
         <div style="font:500 11px var(--mono);color:var(--fg-faint);margin-top:2px">${n(po.files)} files · ${fmtB(po.bytes)}${po.samples_listed ? ` · vendor lists ${n(po.samples_listed)} samples` : ''}</div>
       </div>
     </div>

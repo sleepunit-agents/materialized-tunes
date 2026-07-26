@@ -41,6 +41,7 @@ type Pack struct {
 	URL           string   `toml:"url" json:"url,omitempty"`
 	Provider      string   `toml:"provider" json:"provider,omitempty"`             // distributor vendors: the label the pack is BY
 	SamplesListed int      `toml:"samples_listed" json:"samples_listed,omitempty"` // vendor's own count; honest denominator for partial copies
+	Tags          []string `toml:"tags" json:"tags,omitempty"`                     // canonical tags (see tags.toml in the annotations repo)
 	Archives      []string `toml:"archives" json:"archives,omitempty"`
 
 	Meta     Meta     `json:"meta,omitempty"`
@@ -157,6 +158,7 @@ func loadVendor(dir string) (*Vendor, error) {
 				URL           string   `toml:"url"`
 				Provider      string   `toml:"provider"`
 				SamplesListed int      `toml:"samples_listed"`
+				Tags          []string `toml:"tags"`
 				Archives      []string `toml:"archives"`
 			} `toml:"pack"`
 			Meta     Meta     `toml:"meta"`
@@ -173,7 +175,7 @@ func loadVendor(dir string) (*Vendor, error) {
 		v.Packs = append(v.Packs, Pack{
 			Name: f.Pack.Name, Slug: f.Pack.Slug, Dir: f.Pack.Dir,
 			URL: f.Pack.URL, Provider: f.Pack.Provider, SamplesListed: f.Pack.SamplesListed,
-			Archives: f.Pack.Archives,
+			Tags: f.Pack.Tags, Archives: f.Pack.Archives,
 			Meta: f.Meta, Identity: f.Identity, Dirs: f.Dir,
 		})
 	}
