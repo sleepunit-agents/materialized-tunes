@@ -264,6 +264,7 @@ function renderLibrary() {
     <div class="screen-head">
       <h1>Library</h1><span class="sum">${sum}</span>
       <div style="flex:1"></div>
+      ${locs.map(l => `<span class="chip ${S.locFilter === l ? 'active' : ''}" data-act="loc" data-l="${esc(l)}" title="${S.locFilter === l ? 'click to clear' : 'only ' + esc(l)}">${esc(l)}${S.locFilter === l ? ' ✕' : ''}</span>`).join('')}
       <div class="search">⌕ <input id="search" placeholder="Search packs…" value="${esc(S.search)}"><span class="kbd">⌘K</span></div>
       <div style="position:relative">
         <div class="lens-btn ${S.lens ? 'on' : ''}" data-act="toggle-menu">
@@ -272,12 +273,7 @@ function renderLibrary() {
         ${menu}
       </div>
     </div>
-    <div class="filterbar">
-      <span class="chip ${!S.locFilter ? 'active' : ''}" data-act="loc" data-l="">All locations</span>
-      ${locs.map(l => `<span class="chip ${S.locFilter === l ? 'active' : ''}" data-act="loc" data-l="${esc(l)}">${esc(l)}</span>`).join('')}
-      <div style="flex:1"></div>
-      ${S.lens ? '<span class="lens-note">eligible counts · converted sizes</span>' : ''}
-    </div>
+
     <div class="grid">
       ${rows.map(p => {
         const art = p.image
@@ -606,7 +602,7 @@ function wire() {
         S.onlyOwned = !S.onlyOwned;
         localStorage.setItem('mtunes.onlyOwned', JSON.stringify(S.onlyOwned)); render();
       }
-      if (act === 'loc') { S.locFilter = el.dataset.l; render(); }
+      if (act === 'loc') { S.locFilter = (S.locFilter === el.dataset.l) ? '' : el.dataset.l; render(); }
       if (act === 'open-pack') {
         if (e.target.closest('a')) return; // product link stays a link
         const row = S.packs.find(x => x.location === el.dataset.loc && x.dir === el.dataset.dir);
