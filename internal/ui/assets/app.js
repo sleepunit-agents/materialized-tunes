@@ -71,6 +71,13 @@ async function openPack(p) {
   S.pd = d;
   const canon = (d.folders || []).find(f => /^(WAV|Samples|AUDIO)$/i.test(f.name));
   if (canon) { S.pdFolder = canon.name; await loadPdFolder(); }
+  // land the user on sounds, not scaffolding: descend into the largest
+  // child until this level actually has files
+  for (let hops = 0; hops < 8 && !(S.pd.files || []).length && (S.pd.folders || []).length; hops++) {
+    const big = S.pd.folders.reduce((a, b) => b.count > a.count ? b : a);
+    S.pdFolder = S.pdFolder ? S.pdFolder + '/' + big.name : big.name;
+    await loadPdFolder();
+  }
   render();
   if (p.url) {
     if (!blurbCache[p.url]) { try { blurbCache[p.url] = await api('/api/blurb?u=' + encodeURIComponent(p.url)); } catch (e) { blurbCache[p.url] = {}; } }
@@ -158,6 +165,7 @@ function render() {
     ${statusbar()}
   `;
   wire();
+  document.querySelector('.pd-row.playing')?.scrollIntoView({ block: 'nearest' });
 }
 
 function titlebar() {
@@ -188,15 +196,21 @@ function statusbar() {
 
 /* ---------- library ---------- */
 
+// Having the whole pack is the silent default — a badge only appears
+// when the local copy is a subset.
 function badgeFor(p) {
-  if (p.match === 'exact') {
-    if (p.samples_listed && p.files < p.samples_listed) {
-      const pct = Math.round(p.files / p.samples_listed * 100);
-      return `<span class="badge partial">${pct}% OF PACK</span>`;
-    }
-    return `<span class="badge complete">COMPLETE</span>`;
+  const pct = (x) => {
+    const v = x * 100;
+    if (v >= 1) return Math.round(v) + '%';
+    if (v >= 0.1) return v.toFixed(1) + '%';
+    return '<0.1%';
+  };
+  if (p.match === 'exact' && p.samples_listed && p.files < p.samples_listed) {
+    return `<span class="badge subset">${pct(p.files / p.samples_listed)}</span>`;
   }
-  if (p.match === 'partial') return `<span class="badge partial">${Math.round(p.match_fraction * 100)}% OF PACK</span>`;
+  if (p.match === 'partial' && p.match_fraction < 1) {
+    return `<span class="badge subset">${pct(p.match_fraction)}</span>`;
+  }
   return '';
 }
 
@@ -305,7 +319,7 @@ function renderPackDetail() {
   const desc = S.pdDesc
     ? `<div id="pd-desc" data-act="toggle-desc" title="click to expand" style="font:400 12px/1.55 var(--sans);color:#b6bcc2;max-width:680px;cursor:pointer;${S.descOpen ? '' : 'display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden'}">${esc(S.pdDesc)}</div>`
     : po.slug ? '' : `<div style="font:400 11.5px var(--mono);color:var(--fg-faint)">no annotation for this source — folder indexed from ${esc(po.location)}</div>`;
-  const urlChip = po.url ? `<a href="${esc(po.url)}" target="_blank" style="font:500 10.5px var(--mono);color:var(--fg-dim);border:1px solid var(--bord-raise);border-radius:4px;padding:2px 8px;text-decoration:none">${esc(po.url.replace('https://', ''))} ↗</a>` : '';
+  const urlChip = po.url ? `<a href="${esc(po.url)}" target="_blank" title="${esc(po.url)}" style="font:600 10.5px var(--sans);color:var(--teal);border:1px solid rgba(61,196,207,.35);border-radius:4px;padding:2px 9px;text-decoration:none">product page ↗</a>` : '';
 
   let body = `<div style="font:400 11px var(--mono);color:var(--fg-faint);padding:20px">loading…</div>`;
   if (pd) {
@@ -577,7 +591,7 @@ function wire() {
   $app.querySelectorAll('[data-act]').forEach(el => {
     el.addEventListener('click', (e) => {
       const act = el.dataset.act;
-      if (act === 'tab') { stopPlayback(); S.screen = el.dataset.k; if (S.screen === 'cards') { S.locks = []; } render(); }
+      if (act === 'tab') { stopPlayback(); S.packOpen = null; S.pd = null; S.screen = el.dataset.k; if (S.screen === 'cards') { S.locks = []; } render(); }
       if (act === 'clear-lens') { S.lens = null; loadPacks().then(render); }
       if (act === 'toggle-menu') { S.lensMenu = !S.lensMenu; render(); }
       if (act === 'close-menu') { S.lensMenu = false; render(); }
@@ -654,6 +668,17 @@ window.addEventListener('keydown', (e) => {
   }
   const map = { 1: 'library', 2: 'recipe', 3: 'run', 4: 'cards' };
   if (e.key === 'Escape' && S.packOpen) { stopPlayback(); S.packOpen = null; S.pd = null; render(); return; }
+  if (S.packOpen && (e.key === 'ArrowDown' || e.key === 'ArrowUp') && S.pd?.files?.length) {
+    e.preventDefault();
+    const files = S.pd.files.filter(f => f.format);
+    if (!files.length) return;
+    let i = S.player ? files.findIndex(f => f.path === S.player.path) : -1;
+    const j = e.key === 'ArrowDown' ? Math.min(i + 1, files.length - 1) : Math.max(i - 1, 0);
+    if (j === i) return; // at the edge of the list — keep playing
+    const f = files[j];
+    playFile(f.path, f.name, f.duration || 0);
+    return;
+  }
   if (map[e.key]) { S.screen = map[e.key]; if (S.screen === 'cards') S.locks = []; render(); }
   if (e.key === 'l' || e.key === 'L') {
     const order = [null, ...S.devices.filter(d => S.owned[d.name]).map(d => d.name)];
