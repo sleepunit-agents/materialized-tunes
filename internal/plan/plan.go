@@ -119,6 +119,13 @@ func Build(ws *workspace.Workspace, viewName string) (*Plan, error) {
 	if err != nil {
 		return nil, err
 	}
+	return BuildView(ws, v)
+}
+
+// BuildView computes the plan for an in-memory view — the UI's preflight
+// preview builds these with rules toggled off, without touching the recipe
+// file on disk.
+func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 	dev, err := profile.LoadDevice(ws.Root, v.Device)
 	if err != nil {
 		return nil, err
@@ -136,7 +143,7 @@ func Build(ws *workspace.Workspace, viewName string) (*Plan, error) {
 			continue
 		}
 		if _, ok := ws.Location(inc.Location); !ok {
-			return nil, fmt.Errorf("view %s: unknown location %q", viewName, inc.Location)
+			return nil, fmt.Errorf("view %s: unknown location %q", v.Name, inc.Location)
 		}
 		entries, err := catalog.Load(ws.CatalogPath(inc.Location))
 		if err != nil {

@@ -535,3 +535,19 @@ bytes of the 32GB CF card (`diskutil info` when mounted).
   audio file compatibility: static = 16-bit 44.1 kHz wav/aiff mono/stereo;
   flex = 16/24-bit 44.1 kHz wav/aiff mono/stereo; audio pool folder max
   1,024 files.
+
+## 14. UI (v0.4)
+
+`mtunes ui` serves the browser UI from the binary (go:embed, localhost
+only, no toolchain): Library (pack browser, device lens, identity badges,
+artwork from annotation image URLs), Recipe (per-rule match stats, live
+pre-flight with fit meter/reserve/issues — rule toggles are previews, the
+recipe file is never modified from the UI), Materialize (real runs with
+live progress, resumed/skipped surfaced as first-class outcomes), Cards
+(lock history per view, staleness via the diff engine, restore as a
+copied command). Design imported from the claude.ai/design prototype;
+implemented as an embedded server + vanilla JS so Wails can wrap the same
+assets later. Deliberate deviations from the prototype: no pull/transcode/
+write phase pills (the pipeline is per-file concurrent, not phased — a
+single honest progress bar instead), restore copies the CLI command
+rather than writing to a target picked in a browser.

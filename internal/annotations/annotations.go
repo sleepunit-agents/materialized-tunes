@@ -35,11 +35,13 @@ type Category struct {
 }
 
 type Pack struct {
-	Name     string   `toml:"name" json:"name"`
-	Slug     string   `toml:"slug" json:"slug"`
-	Dir      string   `toml:"dir" json:"dir"`
-	URL      string   `toml:"url" json:"url,omitempty"`
-	Archives []string `toml:"archives" json:"archives,omitempty"`
+	Name          string   `toml:"name" json:"name"`
+	Slug          string   `toml:"slug" json:"slug"`
+	Dir           string   `toml:"dir" json:"dir"`
+	URL           string   `toml:"url" json:"url,omitempty"`
+	Provider      string   `toml:"provider" json:"provider,omitempty"`             // distributor vendors: the label the pack is BY
+	SamplesListed int      `toml:"samples_listed" json:"samples_listed,omitempty"` // vendor's own count; honest denominator for partial copies
+	Archives      []string `toml:"archives" json:"archives,omitempty"`
 
 	Meta     Meta     `json:"meta,omitempty"`
 	Identity Identity `json:"identity,omitempty"`
@@ -149,11 +151,13 @@ func loadVendor(dir string) (*Vendor, error) {
 	for _, pf := range packFiles {
 		var f struct {
 			Pack struct {
-				Name     string   `toml:"name"`
-				Slug     string   `toml:"slug"`
-				Dir      string   `toml:"dir"`
-				URL      string   `toml:"url"`
-				Archives []string `toml:"archives"`
+				Name          string   `toml:"name"`
+				Slug          string   `toml:"slug"`
+				Dir           string   `toml:"dir"`
+				URL           string   `toml:"url"`
+				Provider      string   `toml:"provider"`
+				SamplesListed int      `toml:"samples_listed"`
+				Archives      []string `toml:"archives"`
 			} `toml:"pack"`
 			Meta     Meta     `toml:"meta"`
 			Identity Identity `toml:"identity"`
@@ -168,7 +172,8 @@ func loadVendor(dir string) (*Vendor, error) {
 		}
 		v.Packs = append(v.Packs, Pack{
 			Name: f.Pack.Name, Slug: f.Pack.Slug, Dir: f.Pack.Dir,
-			URL: f.Pack.URL, Archives: f.Pack.Archives,
+			URL: f.Pack.URL, Provider: f.Pack.Provider, SamplesListed: f.Pack.SamplesListed,
+			Archives: f.Pack.Archives,
 			Meta: f.Meta, Identity: f.Identity, Dirs: f.Dir,
 		})
 	}

@@ -40,6 +40,7 @@ type Outcome struct {
 	LockPath string
 	Written  int
 	Bytes    int64
+	Resumed  int // of Written: reused in place via the size-match resume path
 	Warnings []string
 	Skipped  []Skip // failed after retries; NOT in the lock — diff reports the gap
 }
@@ -70,6 +71,7 @@ type done struct {
 	job
 	outSHA   string
 	outBytes int64
+	reused   bool // resume path: existing output reused, not rendered
 }
 
 // Materialize renders every plan entry into target and writes the lock.
@@ -112,6 +114,9 @@ func Materialize(ctx context.Context, ws *workspace.Workspace, p *plan.Plan, tar
 		l.Totals.Bytes += d.outBytes
 		out.Written++
 		out.Bytes += d.outBytes
+		if d.reused {
+			out.Resumed++
+		}
 		if d.outBytes != d.planned {
 			out.Warnings = append(out.Warnings, fmt.Sprintf(
 				"%s: actual %d bytes vs %d planned (resampler boundary — fit math was %+d bytes off)",
@@ -159,6 +164,9 @@ func Restore(ctx context.Context, ws *workspace.Workspace, l *lock.Lock, lockPat
 	for _, d := range results {
 		out.Written++
 		out.Bytes += d.outBytes
+		if d.reused {
+			out.Resumed++
+		}
 		if want := wantSHA[d.outRel]; want != d.outSHA {
 			out.Warnings = append(out.Warnings, fmt.Sprintf(
 				"%s: output differs from lock (locked with ffmpeg %s, now %s) — audio is equivalent, bytes are not",
@@ -267,7 +275,7 @@ func runOne(ctx context.Context, loc location.Location, j job, cacheDir, target 
 	// count, so resume applies there too and the lock-hash check still runs.
 	if info, err := os.Stat(outPath); err == nil && j.planned > 0 && info.Size() == j.planned {
 		if sum, err := cache.HashFile(outPath); err == nil {
-			return done{job: j, outSHA: sum, outBytes: info.Size()}, nil
+			return done{job: j, outSHA: sum, outBytes: info.Size(), reused: true}, nil
 		}
 	}
 
