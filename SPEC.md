@@ -405,6 +405,12 @@ mtunes catalog packs [--device D] [--location L] [--json]
 #   annotations/ checkout: names, urls, og meta, identity match exact/partial)
 #   and tier 3 (top-level dirs, honest fallback) are live; tier 2 heuristic
 #   inference for unknown vendors remains designed-for.
+#   Enrichment split (decided 2026-07-26): the annotations repo distributes
+#   FACTS AND POINTERS only (names, slugs, urls, image urls, hashes, counts);
+#   vendor prose (og:description) and image bytes are fetched by mtunes from
+#   the pack's url on demand and cached in the workspace (annotations-cache/,
+#   never committed, never redistributed). UI reads the cache; the repo
+#   stays legally boring. Fetch-on-demand is designed-for, not yet built.
 mtunes restore <lock> --to <path>
 mtunes verify --card <path>
 mtunes diff <lock> [--json]
