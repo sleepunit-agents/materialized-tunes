@@ -54,7 +54,7 @@ func Ensure(ctx context.Context, loc location.Location, relPath, wantSHA, cacheD
 			select {
 			case <-ctx.Done():
 				return "", ctx.Err()
-			case <-time.After(time.Duration(attempt-1) * 2 * time.Second):
+			case <-time.After(time.Duration(attempt-1) * pullBackoff):
 			}
 		}
 		if lastErr = pullOnce(ctx, loc, relPath, wantSHA, objPath); lastErr == nil {
@@ -65,6 +65,8 @@ func Ensure(ctx context.Context, loc location.Location, relPath, wantSHA, cacheD
 }
 
 const pullAttempts = 3
+
+var pullBackoff = 2 * time.Second // var so tests can zero it
 
 func pullOnce(ctx context.Context, loc location.Location, relPath, wantSHA, objPath string) error {
 	src, err := loc.Open(ctx, relPath)
