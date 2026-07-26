@@ -16,7 +16,8 @@ type View struct {
 	Name    string    `toml:"name" json:"name"`
 	Device  string    `toml:"device" json:"device"`
 	Storage string    `toml:"storage" json:"storage"`
-	Limit   int       `toml:"limit" json:"limit,omitempty"` // keep only the first N eligible files (by output path); 0 = all
+	Target  string    `toml:"target" json:"target,omitempty"` // default materialize destination; --to overrides. "~/" expands.
+	Limit   int       `toml:"limit" json:"limit,omitempty"`   // keep only the first N eligible files (by output path); 0 = all
 	Include []Include `toml:"include" json:"include"`
 	Exclude []Exclude `toml:"exclude" json:"exclude,omitempty"`
 }

@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"sync"
 	"time"
 
@@ -40,7 +41,20 @@ type Outcome struct {
 	Written  int
 	Bytes    int64
 	Warnings []string
+	Skipped  []Skip // failed after retries; NOT in the lock — diff reports the gap
 }
+
+// Skip is one entry that failed rendering after retries. The run continues
+// without it (capped — see maxSkips): one bad file must not kill a 47k-file
+// materialization, but the lock only ever pins bytes that were written.
+type Skip struct {
+	OutRel string
+	Err    string
+}
+
+// maxSkips is where per-file resilience flips to systemic failure — past
+// this, the card or the link is gone and continuing is denial.
+const maxSkips = 50
 
 type job struct {
 	loc      string
@@ -71,12 +85,12 @@ func Materialize(ctx context.Context, ws *workspace.Workspace, p *plan.Plan, tar
 		}
 	}
 
-	results, err := runJobs(ctx, ws, jobs, target, progress)
+	results, skips, err := runJobs(ctx, ws, jobs, target, progress)
 	if err != nil {
 		return nil, err
 	}
 
-	out := &Outcome{}
+	out := &Outcome{Skipped: skips}
 	l := &lock.Lock{
 		View:    p.View.Name,
 		Created: time.Now().UTC(),
@@ -132,12 +146,12 @@ func Restore(ctx context.Context, ws *workspace.Workspace, l *lock.Lock, lockPat
 			planned: e.Output.Bytes,
 		}
 	}
-	results, err := runJobs(ctx, ws, jobs, target, progress)
+	results, skips, err := runJobs(ctx, ws, jobs, target, progress)
 	if err != nil {
 		return nil, err
 	}
 
-	out := &Outcome{LockPath: lockPath}
+	out := &Outcome{LockPath: lockPath, Skipped: skips}
 	wantSHA := map[string]string{}
 	for _, e := range l.Entries {
 		wantSHA[e.Output.Path] = e.Output.SHA256
@@ -159,7 +173,7 @@ func Restore(ctx context.Context, ws *workspace.Workspace, l *lock.Lock, lockPat
 	return out, nil
 }
 
-func runJobs(ctx context.Context, ws *workspace.Workspace, jobs []job, target string, progress func(int, int)) ([]done, error) {
+func runJobs(ctx context.Context, ws *workspace.Workspace, jobs []job, target string, progress func(int, int)) ([]done, []Skip, error) {
 	locs := map[string]location.Location{}
 	for _, j := range jobs {
 		if _, ok := locs[j.loc]; ok {
@@ -167,11 +181,11 @@ func runJobs(ctx context.Context, ws *workspace.Workspace, jobs []job, target st
 		}
 		lc, ok := ws.Location(j.loc)
 		if !ok {
-			return nil, fmt.Errorf("location %q is not configured in this workspace", j.loc)
+			return nil, nil, fmt.Errorf("location %q is not configured in this workspace", j.loc)
 		}
 		l, err := location.New(lc)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		locs[j.loc] = l
 	}
@@ -188,6 +202,7 @@ func runJobs(ctx context.Context, ws *workspace.Workspace, jobs []job, target st
 	var (
 		mu       sync.Mutex
 		results  []done
+		skips    []Skip
 		firstErr error
 		count    int
 		wg       sync.WaitGroup
@@ -203,12 +218,16 @@ func runJobs(ctx context.Context, ws *workspace.Workspace, jobs []job, target st
 			for j := range ch {
 				d, err := runOne(cctx, locs[j.loc], j, cacheDir, target)
 				mu.Lock()
-				if err != nil {
-					if firstErr == nil {
-						firstErr = err
+				switch {
+				case err != nil && cctx.Err() != nil:
+					// aborting anyway; in-flight cancellation noise, not a skip
+				case err != nil:
+					skips = append(skips, Skip{OutRel: j.outRel, Err: err.Error()})
+					if len(skips) > maxSkips && firstErr == nil {
+						firstErr = fmt.Errorf("%d entries failed (last: %s: %v) — this is systemic, not per-file; aborting", len(skips), j.outRel, err)
 						cancel()
 					}
-				} else {
+				default:
 					results = append(results, d)
 					count++
 					if progress != nil {
@@ -228,17 +247,34 @@ func runJobs(ctx context.Context, ws *workspace.Workspace, jobs []job, target st
 	close(ch)
 	wg.Wait()
 	if firstErr != nil {
-		return nil, firstErr
+		return nil, nil, firstErr
 	}
-	return results, nil
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err // interrupted (^C): partial results must not write a lock
+	}
+	sort.Slice(skips, func(i, j int) bool { return skips[i].OutRel < skips[j].OutRel })
+	return results, skips, nil
 }
 
 func runOne(ctx context.Context, loc location.Location, j job, cacheDir, target string) (done, error) {
+	outPath := filepath.Join(target, filepath.FromSlash(j.outRel))
+
+	// Resume: a deterministic transcode hitting its exact planned byte size
+	// is almost surely a previous run's output — hash it into the lock
+	// instead of re-rendering. An interrupted write won't match (truncated),
+	// and entries whose first run warned actual≠planned re-render, which is
+	// only wasteful, never wrong. In Restore, planned is the locked byte
+	// count, so resume applies there too and the lock-hash check still runs.
+	if info, err := os.Stat(outPath); err == nil && j.planned > 0 && info.Size() == j.planned {
+		if sum, err := cache.HashFile(outPath); err == nil {
+			return done{job: j, outSHA: sum, outBytes: info.Size()}, nil
+		}
+	}
+
 	src, err := cache.Ensure(ctx, loc, j.srcPath, j.srcSHA, cacheDir)
 	if err != nil {
 		return done{}, err
 	}
-	outPath := filepath.Join(target, filepath.FromSlash(j.outRel))
 	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
 		return done{}, err
 	}

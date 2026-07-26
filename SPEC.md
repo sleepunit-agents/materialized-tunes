@@ -140,6 +140,12 @@ max_filename_length = 32       # warn above this
 allowed_chars       = "A-Za-z0-9 ._()-"   # ASCII-safe; violations are errors
 max_path_length     = 120      # full path from card root; warn above
 case_sensitive      = false    # FAT32: Kick.wav and KICK.WAV collide
+sanitize            = { "#" = "s" }  # char → replacement, applied to output
+                               # paths at plan time before allowed_chars is
+                               # checked; C#1 → Cs1 (note convention). A
+                               # rewrite that merges two names is a normal
+                               # collision error. First real use: SFM pitched
+                               # kits vs the OT's '#' allergy.
 
 [filesystem]
 type = "fat32"                 # drives cluster-overhead math + name rules
@@ -225,6 +231,12 @@ metadata with zero transcoding.
 name    = "dnb-2026"
 device  = "octatrack"
 storage = "octatrack-cf"
+target  = "~/Desktop/dnb-2026"    # optional default materialize destination
+                                  # ("~/" expands); --to overrides. Where the
+                                  # render LANDS is a view preference, not a
+                                  # device fact — flaky card USB taught us
+                                  # local staging + manual copy is a workflow,
+                                  # so the recipe gets to name it.
 
 [[include]]
 location = "workstation"
@@ -254,6 +266,13 @@ glob = "**/*.asd"
   dirs ("KitA - Kick 01.wav"), only where needed; still-identical names
   fall through to the collision error. Templating layouts remain post-v0.
 - Excludes apply across all includes.
+- **Auto vendor grouping** (idea, 2026-07-18): a layout option that prefixes
+  output with a vendor dir *conditionally* — vendors contributing multiple
+  packs group ("SFM/808 From Mars/…"), single-pack vendors stay flat
+  ("Jungle Jungle/…"). Wants the vendor-annotations pack layer (pack
+  identity answers "how many packs does this vendor have in this view");
+  until then, per-include `as` does it explicitly, which is how ot-florida
+  ships. Display names for locations (config `label`?) are part of this.
 
 ## 7. Plan (pre-flight)
 
@@ -298,8 +317,25 @@ mtunes materialize dnb-2026 --to /Volumes/OCTA
 
 1. Runs the plan; aborts on errors.
 2. Ensures every selected source is in the local cache (SFTP pull if remote;
-   SHA-verified on arrival).
+   SHA-verified on arrival). Failed pulls retry ×3 with backoff — a hash
+   mismatch on pull is far more often in-flight corruption than a stale
+   catalog (first observed 2026-07-18: server bytes re-hashed clean after a
+   pull mismatch aborted a 47k-file run at 44%). Only repeatable failures
+   surface.
 3. Transcodes per device profile (ffmpeg), writes outputs to `--to`.
+   **Resume**: an existing output at its exact planned byte size is reused —
+   hashed into the lock, not re-rendered. Deterministic transcodes make
+   size+path a strong identity; interrupted writes are truncated and never
+   match; the rare actual≠planned entries (resampler boundary) re-render
+   harmlessly. Restore resumes the same way against locked byte counts, and
+   its output-vs-lock hash check still runs on reused files.
+   **Skip-on-fail**: an entry that still fails after retries is skipped, the
+   run continues, and the skip list prints loudly at the end. The lock only
+   pins bytes actually written, so card and lock stay consistent and
+   `mtunes diff` reports skipped entries as the gap they are. Capped
+   (50): past that the failure is systemic — dead card, dead link — and
+   continuing would be denial, so the run aborts. A ^C still aborts without
+   writing a lock. **Decided 2026-07-18** after a 3×-flaky OT USB session.
 4. Writes the lockfile to `locks/dnb-2026/<timestamp>.lock.json`.
 5. Writes `.mtunes-card.json` at the target root.
 
@@ -363,7 +399,7 @@ mtunes catalog status [--json]    # per-location counts, sizes, last-scan
 mtunes catalog ls [--device D] [--ineligible] [--location L] [--glob G] [--json]
                                   # --device = the device lens: only what can ride
 mtunes plan <view> [--json]
-mtunes materialize <view> --to <path> [--force]
+mtunes materialize <view> [--to <path>] [--force]   # --to defaults to view target
 mtunes restore <lock> --to <path>
 mtunes verify --card <path>
 mtunes diff <lock> [--json]

@@ -43,6 +43,9 @@ max_filename_length = 32
 allowed_chars       = "A-Za-z0-9 ._()-"
 max_path_length     = 120
 case_sensitive      = false
+# Deterministic char rewrites applied to output paths at plan time, before
+# the allowed_chars check. '#' errors on the OT; Cs1 is the note convention.
+sanitize            = { "#" = "s", "&" = "and", "'" = "" }
 
 [filesystem]
 type = "fat32"
@@ -69,6 +72,7 @@ cluster_bytes  = 32768      # FAT32 allocation unit
 name    = "st-drums"
 device  = "syntakt"
 storage = "syntakt-plusdrive"
+target  = "~/Desktop/st-drums"   # optional: default materialize destination; --to overrides
 
 [[include]]
 location = "one"

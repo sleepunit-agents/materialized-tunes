@@ -315,3 +315,63 @@ func TestGlobRoot(t *testing.T) {
 		}
 	}
 }
+
+func TestSanitizeRewritesPathsAndSurvivesChecks(t *testing.T) {
+	ws := testWorkspace(t, []catalog.Entry{
+		wavEntry("arps/C#1.wav", 1, 48000, 16, 1000),
+		wavEntry("dr#ms/D#1.wav", 1, 48000, 16, 1000),
+	}, nil)
+	writeProfile(t, ws, "devices/syntakt.toml", syntaktDevice+`[naming]
+allowed_chars = "A-Za-z0-9 ._()-"
+sanitize = { "#" = "s" }
+`)
+	writeProfile(t, ws, "storage/sq.toml", quotaStorage)
+	writeView(t, ws, "v", `name="v"
+device="syntakt"
+storage="sq"
+[[include]]
+location="src"
+glob="**"
+`)
+
+	p, err := Build(ws, "v")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Errors) != 0 {
+		t.Fatalf("sanitized plan should have no errors, got %v", p.Errors)
+	}
+	// Directories get rewritten too, and entries stay sorted post-rewrite.
+	want := []string{"arps/Cs1.wav", "drsms/Ds1.wav"}
+	for i, w := range want {
+		if p.Entries[i].OutPath != w {
+			t.Errorf("entry %d OutPath = %q, want %q", i, p.Entries[i].OutPath, w)
+		}
+	}
+}
+
+func TestSanitizeMergeCollisionErrors(t *testing.T) {
+	ws := testWorkspace(t, []catalog.Entry{
+		wavEntry("x/C#1.wav", 1, 48000, 16, 1000),
+		wavEntry("x/Cs1.wav", 1, 48000, 16, 1000),
+	}, nil)
+	writeProfile(t, ws, "devices/syntakt.toml", syntaktDevice+`[naming]
+sanitize = { "#" = "s" }
+`)
+	writeProfile(t, ws, "storage/sq.toml", quotaStorage)
+	writeView(t, ws, "v", `name="v"
+device="syntakt"
+storage="sq"
+[[include]]
+location="src"
+glob="x/**"
+`)
+
+	p, err := Build(ws, "v")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Collisions) != 1 {
+		t.Fatalf("sanitize merging two names must collide, got %+v", p.Collisions)
+	}
+}

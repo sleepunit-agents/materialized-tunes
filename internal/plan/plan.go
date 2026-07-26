@@ -229,6 +229,11 @@ func Build(ws *workspace.Workspace, viewName string) (*Plan, error) {
 		sort.Slice(p.Entries, func(i, j int) bool { return p.Entries[i].OutPath < p.Entries[j].OutPath })
 	}
 
+	if len(dev.Naming.Sanitize) > 0 {
+		sanitizeNames(p.Entries, dev.Naming.Sanitize)
+		sort.Slice(p.Entries, func(i, j int) bool { return p.Entries[i].OutPath < p.Entries[j].OutPath })
+	}
+
 	p.checkCollisions()
 	p.checkNaming()
 	p.checkFit()
@@ -296,6 +301,27 @@ func flatten(entries []Entry, caseSensitive bool) {
 	}
 	for i := range entries {
 		entries[i].OutPath = names[i]
+	}
+}
+
+// sanitizeNames applies the device's naming.sanitize map to every OutPath,
+// directories and filenames alike — devices that reject a character reject
+// it anywhere in the path. Runs before the collision and naming checks, so
+// a rewrite that merges two names errors there, and a character the map
+// doesn't cover still fails allowed_chars.
+func sanitizeNames(entries []Entry, rules map[string]string) {
+	keys := make([]string, 0, len(rules))
+	for k := range rules {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	pairs := make([]string, 0, len(rules)*2)
+	for _, k := range keys {
+		pairs = append(pairs, k, rules[k])
+	}
+	r := strings.NewReplacer(pairs...)
+	for i := range entries {
+		entries[i].OutPath = r.Replace(entries[i].OutPath)
 	}
 }
 

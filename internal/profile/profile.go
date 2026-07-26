@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/BurntSushi/toml"
 )
@@ -33,11 +34,12 @@ type Audio struct {
 }
 
 type Naming struct {
-	MaxFilesPerDir    int    `toml:"max_files_per_dir" json:"max_files_per_dir,omitempty"`     // 0 = unlimited
-	MaxFilenameLength int    `toml:"max_filename_length" json:"max_filename_length,omitempty"` // warn-level; 0 = unlimited
-	AllowedChars      string `toml:"allowed_chars" json:"allowed_chars,omitempty"`             // regex char class body; "" = anything
-	MaxPathLength     int    `toml:"max_path_length" json:"max_path_length,omitempty"`         // warn-level; 0 = unlimited
-	CaseSensitive     bool   `toml:"case_sensitive" json:"case_sensitive"`
+	MaxFilesPerDir    int               `toml:"max_files_per_dir" json:"max_files_per_dir,omitempty"`     // 0 = unlimited
+	MaxFilenameLength int               `toml:"max_filename_length" json:"max_filename_length,omitempty"` // warn-level; 0 = unlimited
+	AllowedChars      string            `toml:"allowed_chars" json:"allowed_chars,omitempty"`             // regex char class body; "" = anything
+	MaxPathLength     int               `toml:"max_path_length" json:"max_path_length,omitempty"`         // warn-level; 0 = unlimited
+	CaseSensitive     bool              `toml:"case_sensitive" json:"case_sensitive"`
+	Sanitize          map[string]string `toml:"sanitize" json:"sanitize,omitempty"` // char → replacement, applied to output paths at plan time
 }
 
 type Filesystem struct {
@@ -93,6 +95,14 @@ func LoadDevice(workspaceRoot, name string) (*Device, error) {
 	if d.Naming.AllowedChars != "" {
 		if _, err := d.Naming.DisallowedRe(); err != nil {
 			return nil, fmt.Errorf("device %s: allowed_chars: %w", name, err)
+		}
+	}
+	for k, v := range d.Naming.Sanitize {
+		if utf8.RuneCountInString(k) != 1 || k == "/" {
+			return nil, fmt.Errorf("device %s: naming.sanitize key %q must be a single non-slash character", name, k)
+		}
+		if strings.Contains(v, "/") {
+			return nil, fmt.Errorf("device %s: naming.sanitize replacement %q must not contain '/'", name, v)
 		}
 	}
 	return &d, nil

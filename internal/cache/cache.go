@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/jbarket/materialized-tunes/internal/location"
 )
@@ -43,33 +44,53 @@ func Ensure(ctx context.Context, loc location.Location, relPath, wantSHA, cacheD
 		return "", err
 	}
 
+	// A failed pull is retried: a hash mismatch here is far more often
+	// in-flight corruption than a stale catalog (the same bytes hashing
+	// clean on the server proves nothing changed), and open/copy errors
+	// are transient network by nature. Only a repeatable failure surfaces.
+	var lastErr error
+	for attempt := 1; attempt <= pullAttempts; attempt++ {
+		if attempt > 1 {
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(time.Duration(attempt-1) * 2 * time.Second):
+			}
+		}
+		if lastErr = pullOnce(ctx, loc, relPath, wantSHA, objPath); lastErr == nil {
+			return objPath, nil
+		}
+	}
+	return "", fmt.Errorf("%w (after %d attempts)", lastErr, pullAttempts)
+}
+
+const pullAttempts = 3
+
+func pullOnce(ctx context.Context, loc location.Location, relPath, wantSHA, objPath string) error {
 	src, err := loc.Open(ctx, relPath)
 	if err != nil {
-		return "", err
+		return err
 	}
 	defer src.Close()
 
 	tmp, err := os.CreateTemp(filepath.Dir(objPath), ".pull-*")
 	if err != nil {
-		return "", err
+		return err
 	}
 	defer os.Remove(tmp.Name())
 
 	h := sha256.New()
 	if _, err := io.Copy(io.MultiWriter(tmp, h), src); err != nil {
 		tmp.Close()
-		return "", fmt.Errorf("pulling %s: %w", relPath, err)
+		return fmt.Errorf("pulling %s: %w", relPath, err)
 	}
 	if err := tmp.Close(); err != nil {
-		return "", err
+		return err
 	}
 	if got := hex.EncodeToString(h.Sum(nil)); got != wantSHA {
-		return "", fmt.Errorf("%s: pulled content does not match cataloged sha — rescan the location", relPath)
+		return fmt.Errorf("%s: pulled content does not match cataloged sha — transfer corruption, or rescan the location", relPath)
 	}
-	if err := os.Rename(tmp.Name(), objPath); err != nil {
-		return "", err
-	}
-	return objPath, nil
+	return os.Rename(tmp.Name(), objPath)
 }
 
 // Status reports object count and total bytes in the cache.
