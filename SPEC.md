@@ -400,6 +400,11 @@ mtunes catalog ls [--device D] [--ineligible] [--location L] [--glob G] [--json]
                                   # --device = the device lens: only what can ride
 mtunes plan <view> [--json]
 mtunes materialize <view> [--to <path>] [--force]   # --to defaults to view target
+mtunes catalog packs [--device D] [--location L] [--json]
+#   pack-first browsing (v0.3): tier 1 (location's `vendor` slug → workspace
+#   annotations/ checkout: names, urls, og meta, identity match exact/partial)
+#   and tier 3 (top-level dirs, honest fallback) are live; tier 2 heuristic
+#   inference for unknown vendors remains designed-for.
 mtunes restore <lock> --to <path>
 mtunes verify --card <path>
 mtunes diff <lock> [--json]

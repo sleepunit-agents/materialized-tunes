@@ -23,10 +23,11 @@ type Config struct {
 }
 
 type LocationConfig struct {
-	Name string `toml:"name"`
-	Type string `toml:"type"` // "local" | "ssh"
-	Root string `toml:"root"`
-	Host string `toml:"host,omitempty"` // ssh only; resolved via ~/.ssh/config
+	Name   string `toml:"name"`
+	Type   string `toml:"type"` // "local" | "ssh"
+	Root   string `toml:"root"`
+	Host   string `toml:"host,omitempty"`   // ssh only; resolved via ~/.ssh/config
+	Vendor string `toml:"vendor,omitempty"` // annotations vendor slug (workspace annotations/)
 }
 
 type Workspace struct {

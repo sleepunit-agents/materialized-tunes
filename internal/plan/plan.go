@@ -99,6 +99,20 @@ func Eligibility(dev *profile.Device, ce catalog.Entry) (reason string) {
 	return ""
 }
 
+// ConvertedBytes predicts the post-transform output size of an eligible
+// catalog entry on a device — the same math Build uses for fit, exported
+// so pack summaries can be computed from the catalog alone.
+func ConvertedBytes(dev *profile.Device, ce catalog.Entry) int64 {
+	outCh := ce.Audio.Channels
+	if dev.Audio.Channels == "mono" {
+		outCh = 1
+	}
+	outFrames := int64(math.Round(float64(ce.Audio.Frames) *
+		float64(dev.Audio.SampleRate) / float64(ce.Audio.SampleRate)))
+	dataBytes := outFrames * int64(outCh) * int64(dev.Audio.BitDepth) / 8
+	return wavHeaderBytes + dataBytes + dataBytes%2
+}
+
 // Build computes the plan for a view against the current catalogs.
 func Build(ws *workspace.Workspace, viewName string) (*Plan, error) {
 	v, err := view.Load(ws.Root, viewName)
@@ -196,8 +210,7 @@ func Build(ws *workspace.Workspace, viewName string) (*Plan, error) {
 		}
 		outFrames := int64(math.Round(float64(ce.Audio.Frames) *
 			float64(dev.Audio.SampleRate) / float64(ce.Audio.SampleRate)))
-		dataBytes := outFrames * int64(outCh) * int64(dev.Audio.BitDepth) / 8
-		outBytes := wavHeaderBytes + dataBytes + dataBytes%2
+		outBytes := ConvertedBytes(dev, ce)
 
 		p.Entries = append(p.Entries, Entry{
 			Location:    loc,
