@@ -4,6 +4,7 @@
 'use strict';
 
 const $app = document.getElementById('app');
+const blurbCache = {};
 
 const S = {
   screen: 'library',
@@ -211,7 +212,7 @@ function renderLibrary() {
     <div class="grid">
       ${rows.map(p => {
         const art = p.image
-          ? `<div class="art"><img src="${esc(p.image)}" loading="lazy" onerror="this.parentNode.classList.add('none');this.remove();this.textContent='/'"></div>`
+          ? `<div class="art"><img src="/api/art?u=${encodeURIComponent(p.image)}" loading="lazy" onerror="this.parentNode.classList.add('none');this.remove();this.textContent='/'"></div>`
           : p.slug
             ? `<div class="art" style="background:linear-gradient(135deg,hsl(${artHue(p.name)},38%,42%),hsl(${artHue(p.name)},45%,24%))">${esc(p.name[0] || '?')}</div>`
             : `<div class="art none">/</div>`;
@@ -220,7 +221,7 @@ function renderLibrary() {
           ? `<div class="stats lens">${n(p.eligible)} <span class="of">of ${n(p.files)}</span> · ${fmtB(p.converted_bytes || 0)}</div>`
           : `<div class="stats">${n(p.files)} files · ${fmtB(p.bytes)}</div>`;
         const link = p.url ? `<a class="link" href="${esc(p.url)}" target="_blank" title="product page">↗</a>` : '';
-        return `<div class="pack">${art}
+        return `<div class="pack" data-blurb="${esc(p.url)}">${art}
           <div class="body">
             <div class="name" title="${esc(p.dir)}">${esc(p.name)}</div>
             <div class="vline"><span class="vendor">${esc(vendor)}</span>${badgeFor(p)}</div>
@@ -453,6 +454,15 @@ function wire() {
         render(); setTimeout(() => { S.toast = ''; render(); }, 4000);
       }
     });
+  });
+  $app.querySelectorAll('[data-blurb]').forEach(el => {
+    const u = el.dataset.blurb;
+    if (!u) return;
+    el.addEventListener('mouseenter', async () => {
+      if (el.title) return;
+      if (!blurbCache[u]) { try { blurbCache[u] = await api('/api/blurb?u=' + encodeURIComponent(u)); } catch (e) { blurbCache[u] = {}; } }
+      if (blurbCache[u].description) el.title = blurbCache[u].description;
+    }, { once: false });
   });
   const search = document.getElementById('search');
   if (search) {

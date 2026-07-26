@@ -6,18 +6,24 @@ package ui
 
 import (
 	"context"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"html"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/jbarket/materialized-tunes/internal/annotations"
 	"github.com/jbarket/materialized-tunes/internal/browse"
 	"github.com/jbarket/materialized-tunes/internal/catalog"
 	"github.com/jbarket/materialized-tunes/internal/lock"
@@ -65,6 +71,8 @@ func Handler(ws *workspace.Workspace) http.Handler {
 	mux.HandleFunc("/api/run", s.runStatus)
 	mux.HandleFunc("/api/locks", s.locks)
 	mux.HandleFunc("/api/diff", s.diff)
+	mux.HandleFunc("/api/art", s.art)
+	mux.HandleFunc("/api/blurb", s.blurb)
 	return mux
 }
 
@@ -385,4 +393,105 @@ func (s *Server) diff(w http.ResponseWriter, r *http.Request) {
 	}
 	d := lock.Compute(l, p, shaByLoc)
 	jsonOut(w, map[string]any{"lock": filepath.Base(lockPath), "in_sync": d.Clean(), "diff": d})
+}
+
+// ---- enrichment cache: vendor prose and pixels live in the workspace, ----
+// ---- never in the annotations repo. Fetched once, cached, gitignored. ----
+
+// allowedURLs collects every image/product URL the annotation layer knows.
+// The art/blurb endpoints only ever fetch these — no open proxy.
+func (s *Server) allowedURLs() (images, pages map[string]bool) {
+	images, pages = map[string]bool{}, map[string]bool{}
+	vendors, err := annotations.Load(filepath.Join(s.ws.Root, "annotations"))
+	if err != nil {
+		return
+	}
+	for _, v := range vendors {
+		for _, p := range v.Packs {
+			if p.Meta.Image != "" {
+				images[p.Meta.Image] = true
+			}
+			if p.URL != "" {
+				pages[p.URL] = true
+			}
+		}
+	}
+	return
+}
+
+func (s *Server) cachePath(kind, url string) string {
+	sum := sha256.Sum256([]byte(url))
+	return filepath.Join(s.ws.Root, "annotations-cache", kind, hex.EncodeToString(sum[:8]))
+}
+
+func fetchURL(url string) ([]byte, error) {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "mtunes/0.4 (+local enrichment cache)")
+	c := &http.Client{Timeout: 15 * time.Second}
+	resp, err := c.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	return io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+}
+
+// art serves a pack's cover image from the workspace cache, fetching it
+// from the vendor CDN once. Only URLs present in annotations are allowed.
+func (s *Server) art(w http.ResponseWriter, r *http.Request) {
+	u := r.URL.Query().Get("u")
+	images, _ := s.allowedURLs()
+	if !images[u] {
+		w.WriteHeader(403)
+		return
+	}
+	path := s.cachePath("img", u)
+	if _, err := os.Stat(path); err != nil {
+		data, err := fetchURL(u)
+		if err != nil {
+			w.WriteHeader(502)
+			return
+		}
+		os.MkdirAll(filepath.Dir(path), 0o755)
+		os.WriteFile(path, data, 0o644)
+	}
+	w.Header().Set("Cache-Control", "max-age=86400")
+	http.ServeFile(w, r, path)
+}
+
+// blurb serves a pack's og title/description from the workspace cache,
+// scraped from its product page once. Vendor prose stays local.
+func (s *Server) blurb(w http.ResponseWriter, r *http.Request) {
+	u := r.URL.Query().Get("u")
+	_, pages := s.allowedURLs()
+	if !pages[u] {
+		w.WriteHeader(403)
+		return
+	}
+	path := s.cachePath("blurb", u) + ".json"
+	if _, err := os.Stat(path); err != nil {
+		data, err := fetchURL(u)
+		if err != nil {
+			w.WriteHeader(502)
+			return
+		}
+		og := func(prop string) string {
+			re := regexp.MustCompile(`<meta property="og:` + prop + `" content="([^"]*)"`)
+			if m := re.FindSubmatch(data); m != nil {
+				return html.UnescapeString(string(m[1]))
+			}
+			return ""
+		}
+		blob, _ := json.Marshal(map[string]string{"title": og("title"), "description": og("description")})
+		os.MkdirAll(filepath.Dir(path), 0o755)
+		os.WriteFile(path, blob, 0o644)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	http.ServeFile(w, r, path)
 }
