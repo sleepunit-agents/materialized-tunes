@@ -325,7 +325,7 @@ function renderPackDetail() {
         <span style="font:500 11.5px var(--mono);color:var(--fg-dim);flex:1">..</span>
       </div>` : '';
     const folders = `
-      <div style="font:500 10px var(--mono);color:var(--fg-faint);padding:2px 10px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(here || '/')}">/${esc(here)}</div>
+      <div style="font:500 10px var(--mono);color:var(--fg-faint);padding:2px 10px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc('/' + here)}">${esc(S.pdFolder ? (S.pdFolder.includes('/') ? '…/' : '/') + S.pdFolder.split('/').pop() + '/' : '/')}</div>
       ${up}` + (pd.folders || []).map(f => `
       <div class="pd-folder" data-act="pd-folder" data-f="${esc(S.pdFolder ? S.pdFolder + '/' + f.name : f.name)}">
         <span style="font:500 11.5px var(--mono);color:var(--fg-dim);flex:1">${esc(f.name)}/</span>
