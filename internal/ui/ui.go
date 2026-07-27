@@ -698,3 +698,10 @@ func (s *Server) loadMeta(location string) map[string]fileMeta {
 	s.meta[location] = m
 	return m
 }
+
+// Assets exposes the embedded frontend for alternative hosts (the Wails
+// desktop shell serves these same files natively).
+func Assets() fs.FS {
+	static, _ := fs.Sub(assets, "assets")
+	return static
+}

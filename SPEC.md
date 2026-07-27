@@ -551,3 +551,13 @@ assets later. Deliberate deviations from the prototype: no pull/transcode/
 write phase pills (the pipeline is per-file concurrent, not phased — a
 single honest progress bar instead), restore copies the CLI command
 rather than writing to a target picked in a browser.
+
+## 15. Desktop shell (Wails)
+
+`cmd/mtunes-desktop` wraps the identical embedded UI in a native window:
+Wails v2 serves ui.Assets() and falls through to the same /api/* handler
+`mtunes ui` uses, so browser and desktop can never drift. Build needs
+`-tags desktop,production` and (macOS, Wails 2.13) an explicit
+`CGO_LDFLAGS="-framework UniformTypeIdentifiers"`. The CLI `mtunes ui`
+remains the toolchain-free path; the desktop shell is presentation only —
+no bindings, no IPC, one HTTP contract.
