@@ -38,6 +38,8 @@ const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&l
 const api = (p, opt) => fetch(p, opt).then(r => r.json());
 
 async function boot() {
+  // Wails injects window.runtime; the browser build never has it
+  if (window.runtime) document.body.classList.add('in-wails');
   const [summary, devices, views] = await Promise.all([api('/api/summary'), api('/api/devices'), api('/api/views')]);
   S.summary = summary; S.devices = devices || []; S.views = views || [];
   if (!S.view && S.views.length) S.view = S.views[0].name;
