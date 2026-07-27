@@ -221,7 +221,7 @@ function renderLibrary() {
   const q = S.search.toLowerCase();
   const rows = S.packs.filter(p =>
     (!S.locFilter || p.location === S.locFilter) &&
-    (!q || p.name.toLowerCase().includes(q) || (p.provider || '').toLowerCase().includes(q)))
+    (!q || p.name.toLowerCase().includes(q) || (p.provider || '').toLowerCase().includes(q) || (p.tags || []).some(tg => tg.includes(q))))
     .slice().sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
 
   let sum;
