@@ -3,8 +3,9 @@
 // serves the frontend and falls through to the ui package's HTTP handler
 // for /api/*, so the two entry points can never drift apart.
 //
-// Build (macOS): CGO_LDFLAGS="-framework UniformTypeIdentifiers" \
-//   go build -tags desktop,production -o mtunes-desktop ./cmd/mtunes-desktop
+//	Build (macOS): CGO_LDFLAGS="-framework UniformTypeIdentifiers" \
+//	  go build -tags desktop,production -o mtunes-desktop ./cmd/mtunes-desktop
+//
 // (Wails v2.13 references UTType; recent SDKs need the framework linked
 // explicitly outside the wails CLI's own build.)
 // Dev:   wails dev (from this directory) for hot reload, if ever needed.
@@ -14,6 +15,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -25,9 +27,19 @@ import (
 )
 
 func main() {
+	// Finder launches don't inherit shell env, so fall back to the
+	// conventional workspace location when MTUNES_WORKSPACE is unset.
 	root := os.Getenv("MTUNES_WORKSPACE")
 	if root == "" {
-		fmt.Fprintln(os.Stderr, "mtunes-desktop: set MTUNES_WORKSPACE (same as the CLI)")
+		if home, err := os.UserHomeDir(); err == nil {
+			cand := filepath.Join(home, "mtunes-library")
+			if st, err := os.Stat(cand); err == nil && st.IsDir() {
+				root = cand
+			}
+		}
+	}
+	if root == "" {
+		fmt.Fprintln(os.Stderr, "mtunes-desktop: set MTUNES_WORKSPACE (no ~/mtunes-library found)")
 		os.Exit(1)
 	}
 	ws, err := workspace.Load(root)
