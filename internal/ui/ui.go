@@ -492,8 +492,14 @@ func (s *Server) blurb(w http.ResponseWriter, r *http.Request) {
 			}
 			if json.Unmarshal(data, &prod) == nil && prod.Description != "" {
 				title = prod.Title
-				txt := regexp.MustCompile(`<[^>]+>`).ReplaceAllString(prod.Description, " ")
-				desc = strings.TrimSpace(regexp.MustCompile(`\s+`).ReplaceAllString(html.UnescapeString(txt), " "))
+				// block-level tags become newlines so paragraphs survive
+				txt := regexp.MustCompile(`(?i)<(br|/p|/li|/h[1-6]|/div)[^>]*>`).ReplaceAllString(prod.Description, "\n")
+				txt = regexp.MustCompile(`<[^>]+>`).ReplaceAllString(txt, " ")
+				txt = html.UnescapeString(txt)
+				txt = regexp.MustCompile(`[ \t\r\f]+`).ReplaceAllString(txt, " ")
+				txt = regexp.MustCompile(` ?\n ?`).ReplaceAllString(txt, "\n")
+				txt = regexp.MustCompile(`\n{3,}`).ReplaceAllString(txt, "\n\n")
+				desc = strings.TrimSpace(txt)
 			}
 		}
 		if desc == "" {

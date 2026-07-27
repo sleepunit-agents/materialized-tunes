@@ -39,7 +39,25 @@ const api = (p, opt) => fetch(p, opt).then(r => r.json());
 
 async function boot() {
   // Wails injects window.runtime; the browser build never has it
-  if (window.runtime) document.body.classList.add('in-wails');
+  if (window.runtime) {
+    document.body.classList.add('in-wails');
+    // native Recipes menu → jump to that recipe
+    window.runtime.EventsOn('open-view', (name) => {
+      stopPlayback();
+      S.packOpen = null; S.pd = null;
+      S.view = name; S.disabled = new Set(); S.pf = null;
+      S.screen = 'recipe';
+      loadPreflight();
+    });
+    // native Go menu (⌘1–4) → main screens
+    window.runtime.EventsOn('open-screen', (k) => {
+      stopPlayback();
+      S.packOpen = null; S.pd = null;
+      S.screen = k;
+      if (k === 'cards') S.locks = [];
+      render();
+    });
+  }
   const [summary, devices, views] = await Promise.all([api('/api/summary'), api('/api/devices'), api('/api/views')]);
   S.summary = summary; S.devices = devices || []; S.views = views || [];
   if (!S.view && S.views.length) S.view = S.views[0].name;
@@ -315,7 +333,7 @@ function renderPackDetail() {
   const lensLine = S.lens && po.eligible != null
     ? `<span style="font:500 11px var(--mono);color:var(--teal)">${esc(S.lens)}: ${n(po.eligible)} of ${n(po.files)} eligible · ${fmtB(po.converted_bytes || 0)} converted</span>` : '';
   const desc = S.pdDesc
-    ? `<div id="pd-desc" data-act="toggle-desc" title="click to expand" style="font:400 12px/1.55 var(--sans);color:#b6bcc2;max-width:680px;cursor:pointer;${S.descOpen ? '' : 'display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden'}">${esc(S.pdDesc)}</div>`
+    ? `<div style="font:400 12px/1.55 var(--sans);color:#b6bcc2;max-width:680px;max-height:96px;overflow-y:auto;white-space:pre-line;padding-right:8px">${esc(S.pdDesc)}</div>`
     : po.slug ? '' : `<div style="font:400 11.5px var(--mono);color:var(--fg-faint)">no annotation for this source — folder indexed from ${esc(po.location)}</div>`;
   const urlChip = po.url ? `<a href="${esc(po.url)}" target="_blank" title="${esc(po.url)}" style="font:600 10.5px var(--sans);color:var(--teal);border:1px solid rgba(61,196,207,.35);border-radius:4px;padding:2px 9px;text-decoration:none">product page ↗</a>` : '';
 
@@ -614,7 +632,6 @@ function wire() {
       }
       if (act === 'close-pack') { stopPlayback(); S.packOpen = null; S.pd = null; render(); }
       if (act === 'pd-folder') { S.pdFolder = el.dataset.f; loadPdFolder().then(render); }
-      if (act === 'toggle-desc') { S.descOpen = !S.descOpen; render(); }
       if (act === 'pd-up') {
         const i = S.pdFolder.lastIndexOf('/');
         S.pdFolder = i > 0 ? S.pdFolder.slice(0, i) : '';
