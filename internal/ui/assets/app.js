@@ -24,6 +24,7 @@ const S = {
   run: { status: 'idle' }, runLog: ['[idle] no run started this session'],
   selCard: 0, locks: [], diff: null, diffBusy: false,
   locations: [], suggestions: [], scans: {}, addForm: null,
+  storages: [], presets: [], volumes: [], devForm: null, stoForm: null, newRecipe: null, addTo: null,
   packOpen: null, pd: null, pdFolder: '', pdDesc: '', descOpen: false,
   player: null,  // {path, name, dur, playing}
   toast: '',
@@ -184,10 +185,27 @@ function render() {
     ${titlebar()}
     ${tabbar()}
     <div class="main">${screens[S.screen]()}</div>
+    ${addToPicker()}
     ${statusbar()}
   `;
   wire();
   document.querySelector('.pd-row.playing')?.scrollIntoView({ block: 'nearest' });
+}
+
+function addToPicker() {
+  const a = S.addTo;
+  if (!a) return '';
+  return `<div class="menu-veil" data-act="add-to-cancel" style="background:rgba(0,0,0,.45)"></div>
+    <div style="position:fixed;z-index:7;left:50%;top:34%;transform:translateX(-50%);width:520px;background:#16191c;border:1px solid #2f353b;border-radius:8px;box-shadow:0 16px 48px rgba(0,0,0,.6);padding:16px;display:flex;flex-direction:column;gap:10px">
+      <span style="font:600 13px var(--sans)">Add to recipe</span>
+      <div style="font:400 11px var(--mono);color:var(--fg-dim);background:var(--bg-raise);border:1px solid var(--bord-raise);border-radius:4px;padding:7px 9px;word-break:break-all">${esc(a.location)} : ${esc(a.glob)}</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        ${sel('at-view', S.views.map(v => [v.name, `${v.name} — ${v.device}`]), S.view)}
+        <span class="restore-btn" data-act="add-to-cancel">cancel</span>
+        <span class="mat-btn" style="margin:0;padding:6px 16px;font-size:11px" data-act="add-to-save">add rule</span>
+      </div>
+      <div style="font:400 10px var(--sans);color:var(--fg-faint)">Appends an [[include]] block to the recipe's TOML — your comments and hand edits stay put.</div>
+    </div>`;
 }
 
 function titlebar() {
@@ -197,7 +215,7 @@ function titlebar() {
 }
 
 function tabbar() {
-  const tabs = [['library', 'Library', '1'], ['recipe', 'Recipe', '2'], ['run', 'Materialize', '3'], ['cards', 'Cards', '4'], ['sources', 'Sources', '5']];
+  const tabs = [['library', 'Library', '1'], ['recipe', 'Recipe', '2'], ['run', 'Materialize', '3'], ['cards', 'Cards', '4'], ['sources', 'Setup', '5']];
   const lens = S.lens ? `
     <div class="lens-chip"><span class="dot"></span><span class="name">Lens · ${esc(S.lens)}</span>
     <span class="x" data-act="clear-lens">✕</span></div>` : '';
@@ -307,7 +325,10 @@ function renderLibrary() {
         const stats = S.lens
           ? `<div class="stats lens">${n(p.eligible)} <span class="of">of ${n(p.files)}</span> · ${fmtB(p.converted_bytes || 0)}</div>`
           : `<div class="stats">${n(p.files)} files · ${fmtB(p.bytes)}</div>`;
-        const link = p.url ? `<a class="link" href="${esc(p.url)}" target="_blank" title="product page">↗</a>` : '';
+        const link = `<span style="display:flex;flex-direction:column;align-items:center;gap:6px;align-self:center">
+          ${p.url ? `<a class="link" href="${esc(p.url)}" target="_blank" title="product page">↗</a>` : ''}
+          <span data-act="add-to" data-loc="${esc(p.location)}" data-glob="${esc(p.dir)}/**" data-as="${esc(p.provider ? p.location.toUpperCase() : '')}" data-label="${esc(p.name)}" title="add this pack to a recipe" style="font:600 13px var(--mono);color:var(--fg-ghost);cursor:pointer">+</span>
+        </span>`;
         return `<div class="pack" data-blurb="${esc(p.url)}" data-act="open-pack" data-loc="${esc(p.location)}" data-dir="${esc(p.dir)}">${art}
           <div class="body">
             <div class="name" title="${esc(p.dir)}">${esc(p.name)}</div>
@@ -399,6 +420,7 @@ function renderPackDetail() {
       <span class="crumb-btn" data-act="close-pack">← Library</span>
       <span style="font:400 11px var(--mono);color:var(--fg-faint)">library / ${esc(po.provider || po.location)} / ${esc(po.name)}</span>
       <div style="flex:1"></div>${lensLine}
+      <span class="restore-btn" data-act="add-to" data-loc="${esc(po.location)}" data-glob="${esc(po.dir)}${S.pdFolder ? '/' + esc(S.pdFolder) : ''}/**" data-label="${esc(po.name)}${S.pdFolder ? ' / ' + esc(S.pdFolder) : ''}" title="add what you're looking at to a recipe">+ add to recipe</span>
     </div>
     <div class="pd-head">
       ${art}
@@ -422,9 +444,19 @@ function renderPackDetail() {
 /* ---------- sources ---------- */
 
 async function loadSources() {
-  const [locs, sugg] = await Promise.all([api('/api/locations'), api('/api/suggestions')]);
+  const [locs, sugg, stos, pres, vols] = await Promise.all([
+    api('/api/locations'), api('/api/suggestions'), api('/api/storages'),
+    api('/api/presets'), api('/api/volumes')]);
   S.locations = locs || []; S.suggestions = sugg || [];
+  S.storages = stos || []; S.presets = pres || []; S.volumes = vols || [];
   render();
+}
+
+async function viewAction(body) {
+  const r = await api('/api/view', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (r.error) { S.toast = r.error; render(); return false; }
+  S.views = await api('/api/views') || [];
+  return true;
 }
 
 async function pollScans() {
@@ -530,8 +562,83 @@ function renderSources() {
       ${form}
       ${rows}
       ${sugg ? `<div style="font:600 9px var(--sans);color:var(--fg-faint);letter-spacing:.1em;padding:10px 2px 2px">FOUND ON THIS MACHINE</div>${sugg}` : ''}
+      ${renderDevices()}
+      ${renderStorages()}
       ${S.toast ? `<div style="font:500 11px var(--mono);color:var(--warn)">${esc(S.toast)}</div>` : ''}
     </div>`;
+}
+
+const inp = (id, ph, val, w) => `<input id="${id}" placeholder="${ph}" value="${esc(val ?? '')}" style="${w ? 'width:' + w + ';' : 'flex:1;'}font:400 11px var(--mono);background:var(--bg-raise);border:1px solid var(--bord-raise);border-radius:4px;padding:6px 8px;color:var(--fg)">`;
+const sel = (id, opts, cur, w) => `<select id="${id}" style="${w ? 'width:' + w + ';' : ''}font:400 11px var(--mono);background:var(--bg-raise);border:1px solid var(--bord-raise);border-radius:4px;padding:6px;color:var(--fg-dim)">${opts.map(([v, l]) => `<option value="${esc(v)}" ${String(cur) === String(v) ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
+
+function renderDevices() {
+  const d = S.devForm;
+  const list = S.devices.map(x => `<div style="display:flex;align-items:center;gap:10px;background:var(--bg-card);border:1px solid var(--bord-card);border-radius:6px;padding:9px 12px">
+      <span style="font:600 12px var(--sans);min-width:130px">${esc(x.name)}</span>
+      <span style="font:400 10.5px var(--mono);color:var(--fg-faint);flex:1">${esc(x.sub)}</span>
+    </div>`).join('');
+  const form = !d ? '' : `
+    <div style="background:var(--bg-card);border:1px solid var(--bord-hover);border-radius:6px;padding:13px;display:flex;flex-direction:column;gap:9px">
+      <div style="display:flex;gap:8px;align-items:center">
+        <span style="font:600 12.5px var(--sans);flex:1">New device</span>
+        ${sel('dv-preset', [['', 'start from preset…']].concat(S.presets.map(p => [p.id, p.label])), d.preset)}
+      </div>
+      <div style="display:flex;gap:8px">
+        ${inp('dv-name', 'name (lowercase)', d.name)}
+        ${sel('dv-depth', [[16, '16-bit'], [24, '24-bit']], d.bit_depth, '110px')}
+        ${sel('dv-rate', [[44100, '44.1 kHz'], [48000, '48 kHz']], d.sample_rate, '110px')}
+        ${sel('dv-ch', [['stereo', 'stereo-preserving'], ['mono', 'mono (fold)']], d.channels, '160px')}
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        ${sel('dv-mode', [['card', 'card (mounted)'], ['staged', 'staged folder']], d.mode, '150px')}
+        ${sel('dv-layout', [['mirror', 'mirror folders'], ['flatten', 'flatten (no folders)']], d.layout, '175px')}
+        ${sel('dv-fs', [['', 'no filesystem rules'], ['fat32', 'fat32'], ['exfat', 'exfat']], d.filesystem, '160px')}
+        ${inp('dv-dur', 'max seconds (0 = none)', d.max_duration_seconds || '', '160px')}
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        ${inp('dv-maxfiles', 'max files/folder', d.max_files_per_dir || '', '140px')}
+        ${inp('dv-maxname', 'max filename chars', d.max_filename_length || '', '150px')}
+        <label style="font:400 11px var(--sans);color:var(--fg-dim);display:flex;align-items:center;gap:5px">
+          <input type="checkbox" id="dv-san" ${d.sanitize ? 'checked' : ''}> sanitize names (# & ')
+        </label>
+        <div style="flex:1"></div>
+        <span class="restore-btn" data-act="dev-cancel">cancel</span>
+        <span class="mat-btn" style="margin:0;padding:6px 16px;font-size:11px" data-act="dev-save">create device</span>
+      </div>
+      <div style="font:400 10px var(--sans);color:var(--fg-faint)">Presets are starting points from published specs — check them against your manual. Everything here is editable, and the .toml is yours to hand-edit after.</div>
+    </div>`;
+  return `<div style="font:600 9px var(--sans);color:var(--fg-faint);letter-spacing:.1em;padding:14px 2px 2px;display:flex;align-items:center;gap:10px">
+      DEVICES <div style="flex:1"></div>${d ? '' : '<span class="restore-btn" data-act="dev-new">+ add device</span>'}
+    </div>${form}${list}`;
+}
+
+function renderStorages() {
+  const s = S.stoForm;
+  const list = S.storages.map(x => `<div style="display:flex;align-items:center;gap:10px;background:var(--bg-card);border:1px solid var(--bord-card);border-radius:6px;padding:9px 12px">
+      <span style="font:600 12px var(--sans);min-width:130px">${esc(x.name)}</span>
+      <span style="font:400 10.5px var(--mono);color:var(--fg-faint);flex:1">${esc(x.kind)} · ${fmtB(x.capacity_bytes)}${x.reserve ? ' · reserve ' + esc(x.reserve) : ''}</span>
+    </div>`).join('');
+  const form = !s ? '' : `
+    <div style="background:var(--bg-card);border:1px solid var(--bord-hover);border-radius:6px;padding:13px;display:flex;flex-direction:column;gap:9px">
+      <div style="display:flex;gap:8px;align-items:center">
+        <span style="font:600 12.5px var(--sans);flex:1">New card / storage</span>
+        ${sel('st-vol', [['', 'measure a mounted volume…']].concat(S.volumes.map(v => [v.path, `${v.name} — ${fmtB(v.capacity_bytes)}`])), s.vol)}
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        ${inp('st-name', 'name (lowercase)', s.name)}
+        ${inp('st-cap', 'capacity bytes', s.capacity_bytes || '', '190px')}
+        ${inp('st-reserve', 'reserve (10% or bytes)', s.reserve || '10%', '170px')}
+        ${sel('st-cluster', [[32768, '32 KiB clusters'], [4096, '4 KiB'], [65536, '64 KiB'], [0, 'no cluster math']], s.cluster_bytes ?? 32768, '160px')}
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <div style="flex:1;font:400 10px var(--sans);color:var(--fg-faint)">Reserve is headroom the plan refuses to fill — device recordings, sidecars, whatever else shares the card.</div>
+        <span class="restore-btn" data-act="sto-cancel">cancel</span>
+        <span class="mat-btn" style="margin:0;padding:6px 16px;font-size:11px" data-act="sto-save">create storage</span>
+      </div>
+    </div>`;
+  return `<div style="font:600 9px var(--sans);color:var(--fg-faint);letter-spacing:.1em;padding:14px 2px 2px;display:flex;align-items:center;gap:10px">
+      CARDS &amp; STORAGE <div style="flex:1"></div>${s ? '' : '<span class="restore-btn" data-act="sto-new">+ add storage</span>'}
+    </div>${form}${list}`;
 }
 
 /* ---------- recipe ---------- */
@@ -540,13 +647,34 @@ function renderRecipe() {
   if (!S.pf && !S.pfBusy) loadPreflight();
   const pf = S.pf;
   const viewOpts = S.views.map(v => `<option ${v.name === S.view ? 'selected' : ''}>${esc(v.name)}</option>`).join('');
+  const vmeta = S.views.find(v => v.name === S.view) || {};
+  const nr = S.newRecipe;
+  const nrForm = !nr ? '' : `
+    <div style="background:var(--bg-card);border:1px solid var(--bord-hover);border-radius:6px;padding:13px;display:flex;flex-direction:column;gap:9px;margin-bottom:12px;max-width:640px">
+      <span style="font:600 12.5px var(--sans)">New recipe</span>
+      <div style="display:flex;gap:8px">
+        ${inp('nr-name', 'name (lowercase)', '')}
+        ${sel('nr-device', S.devices.map(d => [d.name, d.name]), nr.device, '160px')}
+        ${sel('nr-storage', S.storages.map(s => [s.name, s.name]), nr.storage, '170px')}
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        ${inp('nr-target', 'target folder (~/Desktop/…) — optional', '')}
+        <span class="restore-btn" data-act="recipe-cancel">cancel</span>
+        <span class="mat-btn" style="margin:0;padding:6px 16px;font-size:11px" data-act="recipe-create">create</span>
+      </div>
+      ${!S.devices.length || !S.storages.length ? '<div style="font:400 10.5px var(--sans);color:var(--warn)">Add a device and a storage profile first — Setup (⌘5).</div>' : ''}
+    </div>`;
   const head = `
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
       <span style="font:600 14px var(--sans)">Recipe</span>
       <select id="view-pick" style="font:500 11.5px var(--mono);color:var(--fg-dim);background:var(--bg-raise);border:1px solid var(--bord-raise);border-radius:4px;padding:3px 8px">${viewOpts}</select>
       ${pf ? `<span class="rtag dev">${esc(pf.device)}</span><span class="rtag" style="cursor:default">${esc(pf.storage)}</span>` : ''}
+      <span class="rtag" data-act="set-target" title="click to change">${vmeta.target ? esc(vmeta.target) : '+ set target'}</span>
+      <div style="flex:1"></div>
+      <span class="restore-btn" data-act="recipe-new">+ new recipe</span>
     </div>
-    <div style="font:400 11px var(--sans);color:var(--fg-faint);margin-bottom:2px">Include rules — toggle to preview; the recipe file is never modified from here</div>`;
+    <div style="font:400 11px var(--sans);color:var(--fg-faint);margin-bottom:2px">Toggling a rule previews it; ✕ removes it from the recipe file. Add rules from the Library.</div>
+    ${nrForm}`;
 
   if (!pf) return `<div class="recipe-grid"><div class="recipe-left">${head}
     <div style="font:400 11px var(--mono);color:var(--fg-faint);padding:24px 4px">running pre-flight…</div></div>
@@ -555,11 +683,13 @@ function renderRecipe() {
   const rules = pf.rules.map((r, i) => {
     const on = r.enabled;
     const name = r.as || (r.glob.split('/')[0].replace(/[*{}]/g, '') || r.location);
-    return `<div class="rule ${on ? '' : 'off'}" data-act="rule" data-i="${i}">
+    return `<div class="rule ${on ? '' : 'off'}">
+      <span data-act="rule" data-i="${i}" style="position:absolute;inset:0;cursor:pointer"></span>
       <span class="ck ${on ? 'on' : ''}">${on ? '✓' : ''}</span>
       <div class="body"><span class="rname">${esc(name)} <span style="font:400 10px var(--mono);color:var(--fg-faint)">${esc(r.location)}</span></span>
       <span class="rpath">${esc(r.glob)}</span></div>
       <span class="match">${n(r.files)} files · ${fmtB(r.converted_bytes)}</span>
+      <span data-act="rule-remove" data-i="${i}" title="remove this rule from the recipe" style="font:500 12px var(--mono);color:var(--fg-ghost);cursor:pointer;padding:0 2px">✕</span>
     </div>`;
   }).join('');
 
@@ -608,7 +738,7 @@ function renderRecipe() {
 
   return `<div class="recipe-grid">
     <div class="recipe-left">${head}<div class="rules">${rules}
-      <div class="add-rule">+ add rule — edit ${esc(S.view)}.toml (UI editing is next)</div></div></div>
+      <div class="add-rule">+ add rules from the Library — open a pack and use "add to recipe"</div></div></div>
     <div class="preflight">${right}</div>
   </div>`;
 }
@@ -750,6 +880,53 @@ function wire() {
       if (act === 'close-pack') { stopPlayback(); S.packOpen = null; S.pd = null; render(); }
       if (act === 'pd-folder') { S.pdFolder = el.dataset.f; loadPdFolder().then(render); }
       if (act === 'scan') startScan(el.dataset.l);
+      if (act === 'dev-new') { S.devForm = { bit_depth: 16, sample_rate: 44100, channels: 'stereo', mode: 'card', layout: 'mirror', sanitize: true }; S.toast=''; render(); }
+      if (act === 'dev-cancel') { S.devForm = null; render(); }
+      if (act === 'dev-save') {
+        const g = id => document.getElementById(id).value;
+        const body = { name: g('dv-name'), bit_depth: +g('dv-depth'), sample_rate: +g('dv-rate'),
+          channels: g('dv-ch'), mode: g('dv-mode'), layout: g('dv-layout'), filesystem: g('dv-fs'),
+          max_duration_seconds: parseFloat(g('dv-dur')) || 0, max_files_per_dir: parseInt(g('dv-maxfiles')) || 0,
+          max_filename_length: parseInt(g('dv-maxname')) || 0, sanitize: document.getElementById('dv-san').checked };
+        api('/api/device', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) })
+          .then(async r => { if (r.error) { S.toast = r.error; render(); return; }
+            S.devForm = null; S.devices = await api('/api/devices') || []; loadSources(); });
+      }
+      if (act === 'sto-new') { S.stoForm = { reserve: '10%', cluster_bytes: 32768 }; S.toast=''; render(); }
+      if (act === 'sto-cancel') { S.stoForm = null; render(); }
+      if (act === 'sto-save') {
+        const g = id => document.getElementById(id).value;
+        const body = { name: g('st-name'), capacity_bytes: parseInt(g('st-cap')) || 0,
+          reserve: g('st-reserve'), cluster_bytes: parseInt(g('st-cluster')) || 0, kind: 'filesystem' };
+        api('/api/storage', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) })
+          .then(r => { if (r.error) { S.toast = r.error; render(); return; } S.stoForm = null; loadSources(); });
+      }
+      if (act === 'recipe-new') { S.newRecipe = { device: (S.devices[0]||{}).name || '', storage: (S.storages[0]||{}).name || '' }; render(); }
+      if (act === 'recipe-cancel') { S.newRecipe = null; render(); }
+      if (act === 'recipe-create') {
+        const g = id => document.getElementById(id).value;
+        viewAction({ action:'create', name: g('nr-name'), device: g('nr-device'), storage: g('nr-storage'), target: g('nr-target') })
+          .then(ok => { if (ok) { S.newRecipe = null; S.view = document.getElementById('nr-name')?.value || S.view; S.pf = null; loadPreflight(); } });
+      }
+      if (act === 'rule-remove') {
+        const i = +el.dataset.i;
+        viewAction({ action:'remove-rule', name: S.view, index: i }).then(ok => { if (ok) { S.disabled = new Set(); loadPreflight(); } });
+      }
+      if (act === 'set-target') {
+        const val = prompt('Materialize target for ' + S.view + ':', (S.views.find(v=>v.name===S.view)||{}).target || '~/Desktop/' + S.view);
+        if (val != null) viewAction({ action:'set-target', name: S.view, target: val }).then(ok => ok && loadPreflight());
+      }
+      if (act === 'add-to') {
+        S.addTo = { location: el.dataset.loc, glob: el.dataset.glob, label: el.dataset.label, as: el.dataset.as || '' };
+        render();
+      }
+      if (act === 'add-to-cancel') { S.addTo = null; render(); }
+      if (act === 'add-to-save') {
+        const v = document.getElementById('at-view').value;
+        const a = S.addTo;
+        viewAction({ action:'add-rule', name: v, location: a.location, glob: a.glob, as: a.as, note: 'added from the library: ' + a.label })
+          .then(ok => { if (ok) { S.toast = `added to ${v}`; S.addTo = null; if (S.view === v) { S.pf = null; loadPreflight(); } else render(); setTimeout(()=>{S.toast='';render();}, 3000); } });
+      }
       if (act === 'new-source') { S.addForm = { name: '', type: 'local', root: '', rescan: 'manual' }; S.toast = ''; render(); }
       if (act === 'cancel-add') { S.addForm = null; S.toast = ''; render(); }
       if (act === 'add-sugg') {
@@ -804,6 +981,22 @@ function wire() {
         body: JSON.stringify({ update: sel.dataset.l, rescan: sel.value }) });
       loadSources();
     });
+  });
+  const dvPreset = document.getElementById('dv-preset');
+  if (dvPreset) dvPreset.addEventListener('change', () => {
+    const p = S.presets.find(x => x.id === dvPreset.value);
+    if (!p) return;
+    const keep = document.getElementById('dv-name').value;
+    S.devForm = Object.assign({}, p, { name: keep || p.id, preset: p.id });
+    render();
+  });
+  const stVol = document.getElementById('st-vol');
+  if (stVol) stVol.addEventListener('change', () => {
+    const v = S.volumes.find(x => x.path === stVol.value);
+    if (!v) return;
+    S.stoForm = Object.assign({}, S.stoForm, { vol: v.path, capacity_bytes: v.capacity_bytes,
+      name: (document.getElementById('st-name').value || v.name.toLowerCase().replace(/[^a-z0-9]+/g,'-')) });
+    render();
   });
   const afType = document.getElementById('af-type');
   if (afType) afType.addEventListener('change', () => { S.addForm.type = afType.value; S.addForm.name = document.getElementById('af-name').value; S.addForm.root = document.getElementById('af-root').value; render(); });

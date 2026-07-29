@@ -561,3 +561,26 @@ Wails v2 serves ui.Assets() and falls through to the same /api/* handler
 `CGO_LDFLAGS="-framework UniformTypeIdentifiers"`. The CLI `mtunes ui`
 remains the toolchain-free path; the desktop shell is presentation only —
 no bindings, no IPC, one HTTP contract.
+
+## 16. Authoring in the UI (v0.5)
+
+The UI writes as well as reads, but never takes ownership of the files:
+recipes, device and storage profiles stay hand-editable TOML, and UI edits
+are SURGICAL — append or remove a whole `[[include]]` block, rewrite one
+scalar — so comments and hand-tuning survive a round trip (verified: add
++ remove on a heavily-commented recipe is byte-identical). Only brand-new
+files are generated wholesale.
+
+- Sources (`/api/locations`, `/api/suggestions`, `/api/scan`): add a
+  source, scan with progress, per-location rescan cadence + background
+  ticker. Suggestions come from annotation `[install]` paths and a
+  builtin table — known locations checked for existence, never a crawl.
+- Recipes (`/api/view`): create, add-rule, remove-rule, set-target. The
+  add gesture lives in the Library — a pack card's `+`, or "add to
+  recipe" in the detail view, which adds *the folder you're looking at*
+  (so "just the acid loops" is two clicks, not a hand-written glob).
+- Profiles (`/api/device`, `/api/storage`, `/api/presets`,
+  `/api/volumes`): device presets are prefills for known gear and every
+  field is editable, because the next box out is one we've never seen;
+  storage capacity can be measured from a mounted volume instead of
+  looked up.

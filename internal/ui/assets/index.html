@@ -108,7 +108,7 @@
   .rtag { font: 500 11.5px var(--mono); color: var(--fg-dim); background: var(--bg-raise); border: 1px solid var(--bord-raise); border-radius: 4px; padding: 3px 8px; cursor: pointer; }
   .rtag.dev { font: 500 11px var(--sans); color: var(--teal); border-color: rgba(61,196,207,.35); cursor: default; }
   .rules { display: flex; flex-direction: column; gap: 7px; margin-top: 12px; }
-  .rule { display: flex; align-items: center; gap: 11px; background: var(--bg-card); border: 1px solid var(--bord-card); border-radius: 6px; padding: 10px 12px; cursor: pointer; }
+  .rule { position: relative; display: flex; align-items: center; gap: 11px; background: var(--bg-card); border: 1px solid var(--bord-card); border-radius: 6px; padding: 10px 12px; cursor: pointer; }
   .rule:hover { border-color: var(--bord-hover); }
   .rule.off { background: #141719; border-color: #1c2023; }
   .rule .ck { width: 14px; height: 14px; font-size: 10px; }
@@ -117,6 +117,8 @@
   .rule.off .rname { color: var(--fg-faint); }
   .rule .rpath { font: 400 10.5px var(--mono); color: var(--fg-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .rule .match { font: 500 11px var(--mono); color: var(--fg-num); white-space: nowrap; }
+  .rule [data-act="rule-remove"] { position: relative; z-index: 1; }
+  .rule [data-act="rule-remove"]:hover { color: var(--err) !important; }
   .rule.off .match { color: var(--fg-faint); }
   .add-rule { display: flex; align-items: center; gap: 8px; border: 1px dashed var(--bord-raise); border-radius: 6px; padding: 10px 12px; color: var(--fg-faint); font: 500 11.5px var(--sans); cursor: default; }
 
