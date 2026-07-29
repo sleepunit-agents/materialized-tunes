@@ -23,11 +23,16 @@ type Config struct {
 }
 
 type LocationConfig struct {
-	Name   string `toml:"name"`
-	Type   string `toml:"type"` // "local" | "ssh"
-	Root   string `toml:"root"`
-	Host   string `toml:"host,omitempty"`   // ssh only; resolved via ~/.ssh/config
-	Vendor string `toml:"vendor,omitempty"` // annotations vendor slug (workspace annotations/)
+	Name   string `toml:"name" json:"name"`
+	Type   string `toml:"type" json:"type"` // "local" | "ssh"
+	Root   string `toml:"root" json:"root"`
+	Host   string `toml:"host,omitempty" json:"host,omitempty"`     // ssh only; resolved via ~/.ssh/config
+	Vendor string `toml:"vendor,omitempty" json:"vendor,omitempty"` // annotations vendor slug (workspace annotations/)
+
+	// Rescan cadence. "" or "manual" = only when asked; otherwise a Go
+	// duration ("30m", "6h", "24h"). App-managed libraries (Splice keeps
+	// downloading) want a short one; an immutable archive wants manual.
+	Rescan string `toml:"rescan,omitempty" json:"rescan,omitempty"`
 }
 
 type Workspace struct {

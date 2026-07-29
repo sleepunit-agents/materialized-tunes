@@ -22,6 +22,14 @@ type Vendor struct {
 
 	Grammar string `json:"grammar,omitempty"` // packs.grammar, e.g. "top-level-dirs"
 
+	// Install: where this vendor's library lives by default, per OS.
+	// A fact about the vendor, same as its pack grammar — used to offer
+	// "you have Splice installed, add it?" without scanning the disk.
+	InstallMac   []string `json:"install_macos,omitempty"`
+	InstallLinux []string `json:"install_linux,omitempty"`
+	InstallWin   []string `json:"install_windows,omitempty"`
+	InstallNote  string   `json:"install_note,omitempty"`
+
 	Categories []Category `json:"categories,omitempty"`
 	Packs      []Pack     `json:"packs,omitempty"`
 
@@ -126,6 +134,12 @@ func loadVendor(dir string) (*Vendor, error) {
 		Packs struct {
 			Grammar string `toml:"grammar"`
 		} `toml:"packs"`
+		Install struct {
+			Macos   []string `toml:"macos"`
+			Linux   []string `toml:"linux"`
+			Windows []string `toml:"windows"`
+			Note    string   `toml:"note"`
+		} `toml:"install"`
 		Category []Category `toml:"category"`
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "vendor.toml"))
@@ -142,6 +156,8 @@ func loadVendor(dir string) (*Vendor, error) {
 		Slug: vf.Vendor.Slug, Name: vf.Vendor.Name,
 		Aliases: vf.Vendor.Aliases, Homepage: vf.Vendor.Homepage,
 		Grammar: vf.Packs.Grammar, Categories: vf.Category,
+		InstallMac: vf.Install.Macos, InstallLinux: vf.Install.Linux,
+		InstallWin: vf.Install.Windows, InstallNote: vf.Install.Note,
 		dir: dir,
 	}
 	if v.Slug == "" {

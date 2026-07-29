@@ -42,9 +42,10 @@ var assets embed.FS
 type Server struct {
 	ws *workspace.Workspace
 
-	mu   sync.Mutex
-	run  *runState // at most one materialization at a time
-	meta map[string]map[string]fileMeta
+	mu    sync.Mutex
+	run   *runState // at most one materialization at a time
+	meta  map[string]map[string]fileMeta
+	scans map[string]*scanState // per-location scan progress
 }
 
 type runState struct {
@@ -61,7 +62,8 @@ type runState struct {
 }
 
 func Handler(ws *workspace.Workspace) http.Handler {
-	s := &Server{ws: ws}
+	s := &Server{ws: ws, scans: map[string]*scanState{}}
+	go s.autoScan()
 	mux := http.NewServeMux()
 	static, _ := fs.Sub(assets, "assets")
 	mux.Handle("/", http.FileServer(http.FS(static)))
@@ -78,6 +80,9 @@ func Handler(ws *workspace.Workspace) http.Handler {
 	mux.HandleFunc("/api/blurb", s.blurb)
 	mux.HandleFunc("/api/pack", s.packDetail)
 	mux.HandleFunc("/api/preview", s.preview)
+	mux.HandleFunc("/api/locations", s.locations)
+	mux.HandleFunc("/api/suggestions", s.suggestions)
+	mux.HandleFunc("/api/scan", s.scanEndpoint)
 	return mux
 }
 

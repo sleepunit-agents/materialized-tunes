@@ -23,6 +23,7 @@ const S = {
   pf: null, pfBusy: false, disabled: new Set(),
   run: { status: 'idle' }, runLog: ['[idle] no run started this session'],
   selCard: 0, locks: [], diff: null, diffBusy: false,
+  locations: [], suggestions: [], scans: {}, addForm: null,
   packOpen: null, pd: null, pdFolder: '', pdDesc: '', descOpen: false,
   player: null,  // {path, name, dur, playing}
   toast: '',
@@ -66,6 +67,7 @@ async function boot() {
   await loadPacks();
   render();
   pollRun();
+  pollScans();
 }
 
 async function loadPacks() {
@@ -177,7 +179,7 @@ async function startRun() {
 /* ---------- render ---------- */
 
 function render() {
-  const screens = { library: renderLibrary, recipe: renderRecipe, run: renderRun, cards: renderCards };
+  const screens = { library: renderLibrary, recipe: renderRecipe, run: renderRun, cards: renderCards, sources: renderSources };
   $app.innerHTML = `
     ${titlebar()}
     ${tabbar()}
@@ -195,7 +197,7 @@ function titlebar() {
 }
 
 function tabbar() {
-  const tabs = [['library', 'Library', '1'], ['recipe', 'Recipe', '2'], ['run', 'Materialize', '3'], ['cards', 'Cards', '4']];
+  const tabs = [['library', 'Library', '1'], ['recipe', 'Recipe', '2'], ['run', 'Materialize', '3'], ['cards', 'Cards', '4'], ['sources', 'Sources', '5']];
   const lens = S.lens ? `
     <div class="lens-chip"><span class="dot"></span><span class="name">Lens · ${esc(S.lens)}</span>
     <span class="x" data-act="clear-lens">✕</span></div>` : '';
@@ -210,7 +212,7 @@ function tabbar() {
 
 function statusbar() {
   const ann = S.summary ? `annotations: ${n(S.summary.packs_annotated)} packs known` : '';
-  return `<div class="statusbar"><span>1–4 screens</span><span>L cycle lens</span><span>⌘K search</span>
+  return `<div class="statusbar"><span>1–5 screens</span><span>L cycle lens</span><span>⌘K search</span>
     <div style="flex:1"></div><span>${ann}</span></div>`;
 }
 
@@ -414,6 +416,121 @@ function renderPackDetail() {
     </div>
     ${body}
     ${playerBar}
+    </div>`;
+}
+
+/* ---------- sources ---------- */
+
+async function loadSources() {
+  const [locs, sugg] = await Promise.all([api('/api/locations'), api('/api/suggestions')]);
+  S.locations = locs || []; S.suggestions = sugg || [];
+  render();
+}
+
+async function pollScans() {
+  S.scans = await api('/api/scan') || {};
+  const busy = Object.values(S.scans).some(s => s.status === 'running');
+  if (S.screen === 'sources') {
+    if (busy) render();
+    else if (S._wasBusy) { await loadSources(); await loadPacks(); render(); }
+  }
+  S._wasBusy = busy;
+  setTimeout(pollScans, busy ? 700 : 4000);
+}
+
+async function startScan(name) {
+  await api('/api/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: name }) });
+  S.scans[name] = { location: name, status: 'running' }; S._wasBusy = true; render();
+}
+
+async function addLocation(body) {
+  const r = await api('/api/locations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (r.error) { S.toast = r.error; render(); return; }
+  S.addForm = null; S._wasBusy = true;
+  await loadSources();
+}
+
+const RESCANS = [['manual', 'manual only'], ['1h', 'hourly'], ['6h', 'every 6h'], ['24h', 'daily']];
+
+function renderSources() {
+  if (!S.locations.length && !S._srcLoaded) { S._srcLoaded = true; loadSources(); }
+
+  const rows = S.locations.map(l => {
+    const sc = S.scans[l.name];
+    const running = sc && sc.status === 'running';
+    const prog = running && sc.total ? ` ${n(sc.done)}/${n(sc.total)} ${esc(sc.stage || '')}` : '';
+    const when = l.scanned ? new Date(l.scanned).toLocaleString() : 'never scanned';
+    return `<div style="display:flex;align-items:center;gap:12px;background:var(--bg-card);border:1px solid ${l.stale ? 'rgba(224,182,79,.3)' : 'var(--bord-card)'};border-radius:6px;padding:11px 13px">
+      <div style="min-width:0;flex:1;display:flex;flex-direction:column;gap:3px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font:600 12.5px var(--sans)">${esc(l.name)}</span>
+          <span style="font:400 10px var(--mono);color:var(--fg-faint)">${esc(l.type)}${l.host ? ' · ' + esc(l.host) : ''}</span>
+          ${l.vendor ? `<span class="tagchip">${esc(l.vendor)}</span>` : ''}
+          ${l.stale ? '<span class="badge subset" style="color:var(--warn);border-color:rgba(224,182,79,.35)">stale</span>' : ''}
+        </div>
+        <span style="font:400 10.5px var(--mono);color:var(--fg-faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(l.root)}</span>
+        <span style="font:400 10.5px var(--mono);color:var(--fg-faint)">${n(l.files)} files · scanned ${esc(when)}</span>
+      </div>
+      <select data-act="rescan" data-l="${esc(l.name)}" style="font:500 10.5px var(--mono);color:var(--fg-dim);background:var(--bg-raise);border:1px solid var(--bord-raise);border-radius:4px;padding:3px 6px">
+        ${RESCANS.map(([v, lbl]) => `<option value="${v}" ${(l.rescan || 'manual') === v ? 'selected' : ''}>${lbl}</option>`).join('')}
+      </select>
+      ${running
+        ? `<span style="font:500 11px var(--mono);color:var(--amber);white-space:nowrap;min-width:120px;text-align:right">scanning${prog}</span>`
+        : `<span class="restore-btn" data-act="scan" data-l="${esc(l.name)}">rescan</span>`}
+    </div>`;
+  }).join('');
+
+  const sugg = S.suggestions.map(g => `
+    <div style="display:flex;align-items:center;gap:12px;border:1px dashed var(--bord-raise);border-radius:6px;padding:10px 13px">
+      <div style="min-width:0;flex:1;display:flex;flex-direction:column;gap:2px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font:600 12px var(--sans)">${esc(g.label)}</span>
+          <span style="font:400 10px var(--mono);color:var(--fg-faint)">${n(g.entries)} folders</span>
+          ${g.vendor ? `<span class="tagchip">annotated vendor</span>` : ''}
+        </div>
+        <span style="font:400 10.5px var(--mono);color:var(--fg-faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(g.root)}</span>
+        ${g.note ? `<span style="font:400 10px var(--sans);color:var(--fg-faint)">${esc(g.note)}</span>` : ''}
+      </div>
+      <span class="mat-btn" style="margin:0;padding:6px 14px;font-size:11px" data-act="add-sugg" data-i="${S.suggestions.indexOf(g)}">add source</span>
+    </div>`).join('');
+
+  const f = S.addForm;
+  const form = !f ? '' : `
+    <div style="background:var(--bg-card);border:1px solid var(--bord-hover);border-radius:6px;padding:13px;display:flex;flex-direction:column;gap:9px;max-width:620px">
+      <div style="font:600 12.5px var(--sans)">Add a source</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input id="af-name" placeholder="name (lowercase)" value="${esc(f.name)}" style="flex:1;font:400 11px var(--mono);background:var(--bg-raise);border:1px solid var(--bord-raise);border-radius:4px;padding:6px 8px;color:var(--fg)">
+        <select id="af-type" style="font:400 11px var(--mono);background:var(--bg-raise);border:1px solid var(--bord-raise);border-radius:4px;padding:6px;color:var(--fg-dim)">
+          <option value="local" ${f.type === 'local' ? 'selected' : ''}>local folder</option>
+          <option value="ssh" ${f.type === 'ssh' ? 'selected' : ''}>ssh</option>
+        </select>
+      </div>
+      <div style="display:flex;gap:8px">
+        <input id="af-host" placeholder="ssh host (from ~/.ssh/config)" value="${esc(f.host || '')}" style="width:200px;font:400 11px var(--mono);background:var(--bg-raise);border:1px solid var(--bord-raise);border-radius:4px;padding:6px 8px;color:var(--fg);${f.type === 'ssh' ? '' : 'display:none'}">
+        <input id="af-root" placeholder="/path/to/samples  (or ~/Samples)" value="${esc(f.root)}" style="flex:1;font:400 11px var(--mono);background:var(--bg-raise);border:1px solid var(--bord-raise);border-radius:4px;padding:6px 8px;color:var(--fg)">
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span style="font:400 11px var(--sans);color:var(--fg-faint)">rescan</span>
+        <select id="af-rescan" style="font:400 11px var(--mono);background:var(--bg-raise);border:1px solid var(--bord-raise);border-radius:4px;padding:6px;color:var(--fg-dim)">
+          ${RESCANS.map(([v, lbl]) => `<option value="${v}" ${f.rescan === v ? 'selected' : ''}>${lbl}</option>`).join('')}
+        </select>
+        <div style="flex:1"></div>
+        <span class="restore-btn" data-act="cancel-add">cancel</span>
+        <span class="mat-btn" style="margin:0;padding:6px 16px;font-size:11px" data-act="save-add">add + scan</span>
+      </div>
+    </div>`;
+
+  return `
+    <div class="screen-head"><h1>Sources</h1>
+      <span class="sum">${S.locations.length} configured${S.suggestions.length ? ` · ${S.suggestions.length} suggested` : ''}</span>
+      <div style="flex:1"></div>
+      ${f ? '' : '<span class="restore-btn" data-act="new-source">+ add source</span>'}
+    </div>
+    <div style="padding:14px 18px;display:flex;flex-direction:column;gap:9px;max-width:900px">
+      ${form}
+      ${rows}
+      ${sugg ? `<div style="font:600 9px var(--sans);color:var(--fg-faint);letter-spacing:.1em;padding:10px 2px 2px">FOUND ON THIS MACHINE</div>${sugg}` : ''}
+      ${S.toast ? `<div style="font:500 11px var(--mono);color:var(--warn)">${esc(S.toast)}</div>` : ''}
     </div>`;
 }
 
@@ -632,6 +749,23 @@ function wire() {
       }
       if (act === 'close-pack') { stopPlayback(); S.packOpen = null; S.pd = null; render(); }
       if (act === 'pd-folder') { S.pdFolder = el.dataset.f; loadPdFolder().then(render); }
+      if (act === 'scan') startScan(el.dataset.l);
+      if (act === 'new-source') { S.addForm = { name: '', type: 'local', root: '', rescan: 'manual' }; S.toast = ''; render(); }
+      if (act === 'cancel-add') { S.addForm = null; S.toast = ''; render(); }
+      if (act === 'add-sugg') {
+        const g = S.suggestions[+el.dataset.i];
+        addLocation({ name: g.name, type: 'local', root: g.root, vendor: g.vendor || '', rescan: g.rescan, scan: true });
+      }
+      if (act === 'save-add') {
+        addLocation({
+          name: document.getElementById('af-name').value,
+          type: document.getElementById('af-type').value,
+          root: document.getElementById('af-root').value,
+          host: document.getElementById('af-host').value,
+          rescan: document.getElementById('af-rescan').value,
+          scan: true,
+        });
+      }
       if (act === 'pd-up') {
         const i = S.pdFolder.lastIndexOf('/');
         S.pdFolder = i > 0 ? S.pdFolder.slice(0, i) : '';
@@ -664,6 +798,15 @@ function wire() {
       if (blurbCache[u].description) el.title = blurbCache[u].description;
     }, { once: false });
   });
+  $app.querySelectorAll('[data-act="rescan"]').forEach(sel => {
+    sel.addEventListener('change', async () => {
+      await api('/api/locations', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ update: sel.dataset.l, rescan: sel.value }) });
+      loadSources();
+    });
+  });
+  const afType = document.getElementById('af-type');
+  if (afType) afType.addEventListener('change', () => { S.addForm.type = afType.value; S.addForm.name = document.getElementById('af-name').value; S.addForm.root = document.getElementById('af-root').value; render(); });
   const search = document.getElementById('search');
   if (search) {
     search.addEventListener('input', () => { S.search = search.value; renderPreservingSearch(); });
@@ -683,7 +826,7 @@ window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') e.target.blur();
     return;
   }
-  const map = { 1: 'library', 2: 'recipe', 3: 'run', 4: 'cards' };
+  const map = { 1: 'library', 2: 'recipe', 3: 'run', 4: 'cards', 5: 'sources' };
   if (e.key === 'Escape' && S.packOpen) { stopPlayback(); S.packOpen = null; S.pd = null; render(); return; }
   if (S.packOpen && (e.key === 'ArrowDown' || e.key === 'ArrowUp') && S.pd?.files?.length) {
     e.preventDefault();
