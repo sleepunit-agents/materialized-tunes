@@ -101,7 +101,7 @@ func Materialize(ctx context.Context, ws *workspace.Workspace, p *plan.Plan, tar
 		out.Bytes += d.outBytes
 		if d.outBytes != d.planned {
 			out.Warnings = append(out.Warnings, fmt.Sprintf(
-				"%s: actual %d bytes vs %d planned (resampler boundary — fit math was %+d bytes off)",
+				"%s: actual %d bytes vs %d planned (fit math was %+d bytes off — resampler boundary or an unexpected header layout)",
 				d.outRel, d.outBytes, d.planned, d.outBytes-d.planned))
 		}
 	}

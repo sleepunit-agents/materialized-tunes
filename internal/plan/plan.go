@@ -21,7 +21,21 @@ import (
 	"github.com/jbarket/materialized-tunes/internal/workspace"
 )
 
-const wavHeaderBytes = 44 // canonical PCM header; materialize uses -bitexact to keep this honest
+// WAV header sizes ffmpeg's muxer produces under -bitexact: a canonical
+// 16-byte fmt chunk for 16-bit PCM (44 bytes total), and a 40-byte
+// WAVE_FORMAT_EXTENSIBLE fmt chunk for 24-bit (68 bytes total), regardless
+// of channel count. Verified against ffmpeg 9.0 output.
+const (
+	wavHeaderBytes16 = 44
+	wavHeaderBytes24 = 68
+)
+
+func wavHeaderBytes(bitDepth int) int64 {
+	if bitDepth == 24 {
+		return wavHeaderBytes24
+	}
+	return wavHeaderBytes16
+}
 
 // Entry is one source file that will materialize into one output file.
 type Entry struct {
@@ -197,7 +211,7 @@ func Build(ws *workspace.Workspace, viewName string) (*Plan, error) {
 		outFrames := int64(math.Round(float64(ce.Audio.Frames) *
 			float64(dev.Audio.SampleRate) / float64(ce.Audio.SampleRate)))
 		dataBytes := outFrames * int64(outCh) * int64(dev.Audio.BitDepth) / 8
-		outBytes := wavHeaderBytes + dataBytes + dataBytes%2
+		outBytes := wavHeaderBytes(dev.Audio.BitDepth) + dataBytes + dataBytes%2
 
 		p.Entries = append(p.Entries, Entry{
 			Location:    loc,
