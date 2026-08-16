@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"sync"
 	"time"
 
@@ -177,12 +178,20 @@ func runJobs(ctx context.Context, ws *workspace.Workspace, jobs []job, target st
 	}
 	cacheDir := filepath.Join(ws.Root, "cache", "objects")
 
+	// Default is deliberately modest: the usual target is an SD/CF card that
+	// hates concurrent writers. MTUNES_WORKERS overrides it for fast targets
+	// (a DAW library on an internal NVMe wants far more than 6).
 	workers := runtime.NumCPU() / 2
 	if workers < 2 {
 		workers = 2
 	}
 	if workers > 6 {
 		workers = 6
+	}
+	if s := os.Getenv("MTUNES_WORKERS"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			workers = n
+		}
 	}
 
 	var (

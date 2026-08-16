@@ -92,7 +92,12 @@ var restoreCmd = &cobra.Command{
 
 func progressLine(verb string) func(int, int) {
 	if !fileIsTTY(os.Stderr) {
-		return nil
+		// Piped/logged: a coarse heartbeat instead of a redrawn line.
+		return func(done, total int) {
+			if done%1000 == 0 || done == total {
+				fmt.Fprintf(os.Stderr, "  %s %d/%d\n", verb, done, total)
+			}
+		}
 	}
 	return func(done, total int) {
 		fmt.Fprintf(os.Stderr, "\r  %s %d/%d", verb, done, total)
