@@ -78,6 +78,15 @@ func Init(dir string) (*Workspace, error) {
 			return nil, err
 		}
 	}
+	// A workspace is meant to be synced/versioned across machines; pin LF so
+	// core.autocrlf on a Windows checkout never churns the catalog or locks.
+	gaPath := filepath.Join(dir, ".gitattributes")
+	if _, err := os.Stat(gaPath); os.IsNotExist(err) {
+		ga := "# mtunes writes LF everywhere; keep it that way on every OS.\n* text=auto eol=lf\n"
+		if err := os.WriteFile(gaPath, []byte(ga), 0o644); err != nil {
+			return nil, err
+		}
+	}
 	return Load(dir)
 }
 

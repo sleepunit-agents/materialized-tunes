@@ -88,7 +88,32 @@ SFTP. `[confirm]` whether ffprobe is installed on the workstation (it almost
 certainly is via ffmpeg).
 
 v0 source formats: WAV, AIFF, FLAC. Anything else is cataloged (path + SHA)
-but flagged unsupported-for-materialization.
+but flagged unsupported-for-materialization. Format is decided by magic
+bytes, not extension (Rhythm Lab ships AIFFs named `.wav`).
+
+### 3.1 Archive layout convention (the house archive, 2026-08-16)
+
+The reference source library lives at one local location (`archives` →
+`E:\Sample-Archives` on the Windows box) laid out uniformly as
+`<Vendor>\<Pack>\...` with the vendor's original download kept as a
+**sibling archive** next to the extracted pack (`<Vendor>\<Pack>.zip`,
+`.rar`) — SFM's own convention, applied to everyone. Pack directories keep
+the vendor's internal tree verbatim (SFM's parallel format trees, Polyend's
+`16 bit mono / 16 bit stereo / 24 bit stereo` trees, Zero-G's `VOL n`
+folders become one pack per volume). macOS litter (`__MACOSX`, `.DS_Store`)
+is purged from packs we extract ourselves; vendor-shipped litter is left
+alone (dotfiles are skipped at scan anyway).
+
+**Pack docs.** SFM packs ship `Docs\Artwork - <Pack>.jpg` and
+`Docs\<Pack> - About.rtf`. Packs that arrive without art/description get the
+same shape, assembled by us: `Docs\Artwork - <Pack>.<ext>` (vendor product
+image) and `Docs\<Pack> - About.md` (title, creator, counts, tags, product
+URL, vendor blurb, and a trailer noting the file is ours, not the vendor's).
+Non-audio, so it never touches a lockfile; it is the raw material for the
+pack-first browser (§11) — vendor grammar for the house archive is simply
+"art and about live in `Docs\` at the pack root". Zero-G's Jungle Warfare is
+the degenerate case: discontinued, so the About is a research note, not a
+copy of a product page.
 
 ## 4. Device profiles
 
