@@ -259,12 +259,16 @@ function badgeFor(p) {
 
 const artHue = (s) => { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) % 360; return h; };
 
+// The head-bar chips group packs by who made them: the vendor when the row
+// knows one (vendor-dirs archives, annotated locations), else the location.
+const packGroup = p => p.vendor || p.location;
+
 function renderLibrary() {
   if (S.packOpen) return renderPackDetail();
   const q = S.search.toLowerCase();
   const rows = S.packs.filter(p =>
-    (!S.locFilter || p.location === S.locFilter) &&
-    (!q || p.name.toLowerCase().includes(q) || (p.provider || '').toLowerCase().includes(q) || (p.tags || []).some(tg => tg.includes(q))))
+    (!S.locFilter || packGroup(p) === S.locFilter) &&
+    (!q || p.name.toLowerCase().includes(q) || (p.provider || '').toLowerCase().includes(q) || (p.vendor || '').toLowerCase().includes(q) || (p.tags || []).some(tg => tg.includes(q))))
     .slice().sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
 
   let sum;
@@ -276,7 +280,7 @@ function renderLibrary() {
     sum = `${rows.length} packs · ${n(rows.reduce((a, p) => a + p.files, 0))} files · ${fmtB(rows.reduce((a, p) => a + p.bytes, 0))}`;
   }
 
-  const locs = [...new Set(S.packs.map(p => p.location))];
+  const locs = [...new Set(S.packs.map(packGroup))].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
   const ownedDevs = S.devices.filter(d => S.owned[d.name]);
   const otherDevs = S.devices.filter(d => !S.owned[d.name]);
   const devRow = (d) => `
@@ -421,7 +425,7 @@ function renderPackDetail() {
     <div style="display:flex;flex-direction:column;min-height:100%">
     <div style="display:flex;align-items:center;gap:10px;padding:10px 18px;border-bottom:1px solid var(--bord)">
       <span class="crumb-btn" data-act="close-pack">← Library</span>
-      <span style="font:400 11px var(--mono);color:var(--fg-faint)">library / ${esc(po.provider || po.location)} / ${esc(po.name)}</span>
+      <span style="font:400 11px var(--mono);color:var(--fg-faint)">library / ${esc(po.provider || po.vendor || po.location)} / ${esc(po.name)}</span>
       <div style="flex:1"></div>${lensLine}
       <span class="restore-btn" data-act="add-to" data-loc="${esc(po.location)}" data-glob="${esc(po.dir)}${S.pdFolder ? '/' + esc(S.pdFolder) : ''}/**" data-label="${esc(po.name)}${S.pdFolder ? ' / ' + esc(S.pdFolder) : ''}" title="add what you're looking at to a recipe">+ add to recipe</span>
     </div>
@@ -432,7 +436,7 @@ function renderPackDetail() {
           <span style="font:700 18px var(--sans)">${esc(po.name)}</span>${badgeFor(po)}
         </div>
         <div style="display:flex;align-items:center;gap:10px">
-          <span style="font:400 11.5px var(--sans);color:var(--fg-dim)">${esc(po.provider || po.location)}</span>${urlChip}
+          <span style="font:400 11.5px var(--sans);color:var(--fg-dim)">${esc(po.provider || po.vendor || po.location)}</span>${urlChip}
         </div>
         ${desc}
         ${(po.tags || []).length ? `<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:2px">${po.tags.map(tg => `<span class="tagchip">${esc(tg)}</span>`).join('')}</div>` : ''}
