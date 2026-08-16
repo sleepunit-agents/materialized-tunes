@@ -3,6 +3,8 @@ package cli
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -36,12 +38,20 @@ var materializeCmd = &cobra.Command{
 		if len(p.Entries) == 0 {
 			return fmt.Errorf("nothing selected — nothing to materialize")
 		}
-		if entries, err := os.ReadDir(matTarget); err == nil && len(entries) > 0 {
-			fmt.Printf("\nnote: %s is not empty; existing files are overwritten, extras are left alone\n", matTarget)
+		target := matTarget
+		if target == "" {
+			target = expandHome(p.View.Target)
+			if target == "" {
+				return fmt.Errorf("no target: pass --to, or set target = \"...\" in the view")
+			}
+			fmt.Printf("target %s (from view)\n", target)
+		}
+		if entries, err := os.ReadDir(target); err == nil && len(entries) > 0 {
+			fmt.Printf("\nnote: %s is not empty; size-identical files are reused (resume), others are overwritten, extras are left alone\n", target)
 		}
 
 		fmt.Println()
-		out, err := materialize.Materialize(cmd.Context(), ws, p, matTarget, progressLine("materialize"))
+		out, err := materialize.Materialize(cmd.Context(), ws, p, target, progressLine("materialize"))
 		clearProgress()
 		if err != nil {
 			return err
@@ -49,8 +59,9 @@ var materializeCmd = &cobra.Command{
 		for _, w := range out.Warnings {
 			fmt.Printf("  ⚠ %s\n", w)
 		}
+		printSkips(out.Skipped)
 		fmt.Printf("wrote %d files (%s) to %s\nlock: %s\n",
-			out.Written, plan.HumanBytes(out.Bytes), matTarget, out.LockPath)
+			out.Written, plan.HumanBytes(out.Bytes), target, out.LockPath)
 		return nil
 	},
 }
@@ -85,9 +96,31 @@ var restoreCmd = &cobra.Command{
 		for _, w := range out.Warnings {
 			fmt.Printf("  ⚠ %s\n", w)
 		}
+		printSkips(out.Skipped)
 		fmt.Printf("wrote %d files (%s) to %s\n", out.Written, plan.HumanBytes(out.Bytes), restoreTarget)
 		return nil
 	},
+}
+
+func printSkips(skips []materialize.Skip) {
+	if len(skips) == 0 {
+		return
+	}
+	fmt.Printf("  ⚠ %d entries failed after retries and were SKIPPED — not on the target, not in the lock; `mtunes diff` will show them:\n", len(skips))
+	for _, s := range skips {
+		fmt.Printf("      %s — %s\n", s.OutRel, s.Err)
+	}
+}
+
+// expandHome resolves a leading "~/" so view targets can be written
+// portably ("~/Desktop/OT"). Anything else passes through untouched.
+func expandHome(p string) string {
+	if strings.HasPrefix(p, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, p[2:])
+		}
+	}
+	return p
 }
 
 func progressLine(verb string) func(int, int) {
@@ -111,9 +144,8 @@ func clearProgress() {
 }
 
 func init() {
-	materializeCmd.Flags().StringVar(&matTarget, "to", "", "target directory (card mount or staging folder)")
+	materializeCmd.Flags().StringVar(&matTarget, "to", "", "target directory (card mount or staging folder); defaults to the view's target")
 	materializeCmd.Flags().BoolVar(&matForce, "force", false, "materialize despite plan errors")
-	materializeCmd.MarkFlagRequired("to")
 	restoreCmd.Flags().StringVar(&restoreTarget, "to", "", "target directory")
 	restoreCmd.MarkFlagRequired("to")
 	rootCmd.AddCommand(materializeCmd, restoreCmd)

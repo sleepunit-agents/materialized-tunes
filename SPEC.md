@@ -165,6 +165,12 @@ max_filename_length = 32       # warn above this
 allowed_chars       = "A-Za-z0-9 ._()-"   # ASCII-safe; violations are errors
 max_path_length     = 120      # full path from card root; warn above
 case_sensitive      = false    # FAT32: Kick.wav and KICK.WAV collide
+sanitize            = { "#" = "s" }  # char → replacement, applied to output
+                               # paths at plan time before allowed_chars is
+                               # checked; C#1 → Cs1 (note convention). A
+                               # rewrite that merges two names is a normal
+                               # collision error. First real use: SFM pitched
+                               # kits vs the OT's '#' allergy.
 
 [filesystem]
 type = "fat32"                 # drives cluster-overhead math + name rules
@@ -250,6 +256,12 @@ metadata with zero transcoding.
 name    = "dnb-2026"
 device  = "octatrack"
 storage = "octatrack-cf"
+target  = "~/Desktop/dnb-2026"    # optional default materialize destination
+                                  # ("~/" expands); --to overrides. Where the
+                                  # render LANDS is a view preference, not a
+                                  # device fact — flaky card USB taught us
+                                  # local staging + manual copy is a workflow,
+                                  # so the recipe gets to name it.
 
 [[include]]
 location = "workstation"
@@ -279,6 +291,13 @@ glob = "**/*.asd"
   dirs ("KitA - Kick 01.wav"), only where needed; still-identical names
   fall through to the collision error. Templating layouts remain post-v0.
 - Excludes apply across all includes.
+- **Auto vendor grouping** (idea, 2026-07-18): a layout option that prefixes
+  output with a vendor dir *conditionally* — vendors contributing multiple
+  packs group ("SFM/808 From Mars/…"), single-pack vendors stay flat
+  ("Jungle Jungle/…"). Wants the vendor-annotations pack layer (pack
+  identity answers "how many packs does this vendor have in this view");
+  until then, per-include `as` does it explicitly, which is how ot-florida
+  ships. Display names for locations (config `label`?) are part of this.
 
 ## 7. Plan (pre-flight)
 
@@ -323,8 +342,25 @@ mtunes materialize dnb-2026 --to /Volumes/OCTA
 
 1. Runs the plan; aborts on errors.
 2. Ensures every selected source is in the local cache (SFTP pull if remote;
-   SHA-verified on arrival).
+   SHA-verified on arrival). Failed pulls retry ×3 with backoff — a hash
+   mismatch on pull is far more often in-flight corruption than a stale
+   catalog (first observed 2026-07-18: server bytes re-hashed clean after a
+   pull mismatch aborted a 47k-file run at 44%). Only repeatable failures
+   surface.
 3. Transcodes per device profile (ffmpeg), writes outputs to `--to`.
+   **Resume**: an existing output at its exact planned byte size is reused —
+   hashed into the lock, not re-rendered. Deterministic transcodes make
+   size+path a strong identity; interrupted writes are truncated and never
+   match; the rare actual≠planned entries (resampler boundary) re-render
+   harmlessly. Restore resumes the same way against locked byte counts, and
+   its output-vs-lock hash check still runs on reused files.
+   **Skip-on-fail**: an entry that still fails after retries is skipped, the
+   run continues, and the skip list prints loudly at the end. The lock only
+   pins bytes actually written, so card and lock stay consistent and
+   `mtunes diff` reports skipped entries as the gap they are. Capped
+   (50): past that the failure is systemic — dead card, dead link — and
+   continuing would be denial, so the run aborts. A ^C still aborts without
+   writing a lock. **Decided 2026-07-18** after a 3×-flaky OT USB session.
 4. Writes the lockfile to `locks/dnb-2026/<timestamp>.lock.json`.
 5. Writes `.mtunes-card.json` at the target root.
 
@@ -388,7 +424,18 @@ mtunes catalog status [--json]    # per-location counts, sizes, last-scan
 mtunes catalog ls [--device D] [--ineligible] [--location L] [--glob G] [--json]
                                   # --device = the device lens: only what can ride
 mtunes plan <view> [--json]
-mtunes materialize <view> --to <path> [--force]
+mtunes materialize <view> [--to <path>] [--force]   # --to defaults to view target
+mtunes catalog packs [--device D] [--location L] [--json]
+#   pack-first browsing (v0.3): tier 1 (location's `vendor` slug → workspace
+#   annotations/ checkout: names, urls, og meta, identity match exact/partial)
+#   and tier 3 (top-level dirs, honest fallback) are live; tier 2 heuristic
+#   inference for unknown vendors remains designed-for.
+#   Enrichment split (decided 2026-07-26): the annotations repo distributes
+#   FACTS AND POINTERS only (names, slugs, urls, image urls, hashes, counts);
+#   vendor prose (og:description) and image bytes are fetched by mtunes from
+#   the pack's url on demand and cached in the workspace (annotations-cache/,
+#   never committed, never redistributed). UI reads the cache; the repo
+#   stays legally boring. Fetch-on-demand is designed-for, not yet built.
 mtunes restore <lock> --to <path>
 mtunes verify --card <path>
 mtunes diff <lock> [--json]
@@ -513,3 +560,52 @@ bytes of the 32GB CF card (`diskutil info` when mounted).
   audio file compatibility: static = 16-bit 44.1 kHz wav/aiff mono/stereo;
   flex = 16/24-bit 44.1 kHz wav/aiff mono/stereo; audio pool folder max
   1,024 files.
+
+## 14. UI (v0.4)
+
+`mtunes ui` serves the browser UI from the binary (go:embed, localhost
+only, no toolchain): Library (pack browser, device lens, identity badges,
+artwork from annotation image URLs), Recipe (per-rule match stats, live
+pre-flight with fit meter/reserve/issues — rule toggles are previews, the
+recipe file is never modified from the UI), Materialize (real runs with
+live progress, resumed/skipped surfaced as first-class outcomes), Cards
+(lock history per view, staleness via the diff engine, restore as a
+copied command). Design imported from the claude.ai/design prototype;
+implemented as an embedded server + vanilla JS so Wails can wrap the same
+assets later. Deliberate deviations from the prototype: no pull/transcode/
+write phase pills (the pipeline is per-file concurrent, not phased — a
+single honest progress bar instead), restore copies the CLI command
+rather than writing to a target picked in a browser.
+
+## 15. Desktop shell (Wails)
+
+`cmd/mtunes-desktop` wraps the identical embedded UI in a native window:
+Wails v2 serves ui.Assets() and falls through to the same /api/* handler
+`mtunes ui` uses, so browser and desktop can never drift. Build needs
+`-tags desktop,production` and (macOS, Wails 2.13) an explicit
+`CGO_LDFLAGS="-framework UniformTypeIdentifiers"`. The CLI `mtunes ui`
+remains the toolchain-free path; the desktop shell is presentation only —
+no bindings, no IPC, one HTTP contract.
+
+## 16. Authoring in the UI (v0.5)
+
+The UI writes as well as reads, but never takes ownership of the files:
+recipes, device and storage profiles stay hand-editable TOML, and UI edits
+are SURGICAL — append or remove a whole `[[include]]` block, rewrite one
+scalar — so comments and hand-tuning survive a round trip (verified: add
++ remove on a heavily-commented recipe is byte-identical). Only brand-new
+files are generated wholesale.
+
+- Sources (`/api/locations`, `/api/suggestions`, `/api/scan`): add a
+  source, scan with progress, per-location rescan cadence + background
+  ticker. Suggestions come from annotation `[install]` paths and a
+  builtin table — known locations checked for existence, never a crawl.
+- Recipes (`/api/view`): create, add-rule, remove-rule, set-target. The
+  add gesture lives in the Library — a pack card's `+`, or "add to
+  recipe" in the detail view, which adds *the folder you're looking at*
+  (so "just the acid loops" is two clicks, not a hand-written glob).
+- Profiles (`/api/device`, `/api/storage`, `/api/presets`,
+  `/api/volumes`): device presets are prefills for known gear and every
+  field is editable, because the next box out is one we've never seen;
+  storage capacity can be measured from a mounted volume instead of
+  looked up.

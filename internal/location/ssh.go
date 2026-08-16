@@ -8,8 +8,11 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 // SSH runs everything through the system ssh binary, which brings
@@ -20,23 +23,89 @@ type SSH struct {
 	name string
 	host string
 	root string
+
+	// The ControlMaster socket is the one piece of state shared by every
+	// concurrent session on this host. Only ensureMaster may create it;
+	// masterMu serializes that, and checkedAt rate-limits the liveness
+	// probe.
+	masterMu  sync.Mutex
+	checkedAt time.Time
 }
+
+const controlPath = "ControlPath=~/.ssh/mtunes-%r@%h-%p"
+
+// multiplex says whether to use ControlMaster at all. Win32-OpenSSH does not
+// implement connection multiplexing (every Control* option fails with
+// "getsockname failed: Not a socket"), so on Windows each session is a
+// direct connection: slower for header-heavy scans, but the batched prefix
+// stream keeps that to one handshake per batch rather than per file.
+var multiplex = runtime.GOOS != "windows"
+
+// sessionOpts are the per-session ssh options; direct-only on Windows.
+func sessionOpts() []string {
+	opts := []string{"-o", "BatchMode=yes"}
+	if multiplex {
+		opts = append(opts, "-o", "ControlMaster=no", "-o", controlPath)
+	}
+	return opts
+}
+
+// masterRecheck is how long a liveness verdict is trusted. Well under
+// ControlPersist below, so an expired master is re-established before
+// sessions have been falling back to direct connections for long.
+const masterRecheck = 60 * time.Second
 
 func (s *SSH) Name() string { return s.name }
 
 func (s *SSH) command(ctx context.Context, remote string, stdin io.Reader) *exec.Cmd {
+	s.ensureMaster(ctx)
 	// BatchMode: fail fast instead of prompting for a password mid-scan.
 	// ControlMaster multiplexing: scans issue one ssh exec per audio file
 	// for header reads — without connection reuse that is a full handshake
 	// each time, which turns a big scan from minutes into hours.
-	cmd := exec.CommandContext(ctx, "ssh",
-		"-o", "BatchMode=yes",
-		"-o", "ControlMaster=auto",
-		"-o", "ControlPath=~/.ssh/mtunes-%r@%h-%p",
-		"-o", "ControlPersist=120",
-		s.host, remote)
+	// ControlMaster=no, not auto: sessions ride an existing master or fall
+	// back to a direct connection, but never try to *become* master — see
+	// ensureMaster for why racing to the socket corrupts concurrent pulls.
+	args := append(sessionOpts(), s.host, remote)
+	cmd := exec.CommandContext(ctx, "ssh", args...)
 	cmd.Stdin = stdin
 	return cmd
+}
+
+// ensureMaster keeps one live ControlMaster for this host, established by
+// at most one goroutine. ControlMaster=auto on the sessions themselves
+// looks like it does this for free, but whenever no master is alive (the
+// first burst of a run, or ControlPersist expiring during a long stretch
+// of cached/transcode-only work) every in-flight ssh races to bind the
+// control socket, and clients that attach to a half-established winner die
+// mid-stream — materialize sees those as truncated pulls that hash wrong.
+// Establishment failure is deliberately not an error: sessions fall back
+// to direct connections and report their own failures.
+func (s *SSH) ensureMaster(ctx context.Context) {
+	if !multiplex {
+		return
+	}
+	s.masterMu.Lock()
+	defer s.masterMu.Unlock()
+	if time.Since(s.checkedAt) < masterRecheck {
+		return
+	}
+	check := exec.CommandContext(ctx, "ssh", "-o", controlPath, "-O", "check", s.host)
+	if check.Run() == nil {
+		s.checkedAt = time.Now()
+		return
+	}
+	// No live master: connect once, alone, and let ControlPersist fork it
+	// into the background for everyone else.
+	prime := exec.CommandContext(ctx, "ssh",
+		"-o", "BatchMode=yes",
+		"-o", "ConnectTimeout=15",
+		"-o", "ControlMaster=auto",
+		"-o", controlPath,
+		"-o", "ControlPersist=120",
+		s.host, "true")
+	prime.Run()
+	s.checkedAt = time.Now()
 }
 
 func (s *SSH) List(ctx context.Context) ([]File, error) {
@@ -211,6 +280,8 @@ func (s *SSH) ReadPrefix(ctx context.Context, rel string, n int64) ([]byte, erro
 func (s *SSH) Open(ctx context.Context, rel string) (io.ReadCloser, error) {
 	remote := fmt.Sprintf(`command cat -- %s`, shellQuote(s.root+"/"+rel))
 	cmd := s.command(ctx, remote, nil)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	out, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err
@@ -218,18 +289,26 @@ func (s *SSH) Open(ctx context.Context, rel string) (io.ReadCloser, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	return &cmdReader{ReadCloser: out, cmd: cmd}, nil
+	return &cmdReader{ReadCloser: out, cmd: cmd, host: s.host, rel: rel, stderr: &stderr}, nil
 }
 
-// cmdReader closes the pipe and reaps the ssh process.
+// cmdReader closes the pipe and reaps the ssh process. Close's error is
+// load-bearing: a dead or refused ssh session delivers a clean-looking EOF
+// on stdout, so the exit status is the only signal that the stream was cut
+// short rather than complete.
 type cmdReader struct {
 	io.ReadCloser
-	cmd *exec.Cmd
+	cmd       *exec.Cmd
+	host, rel string
+	stderr    *bytes.Buffer
 }
 
 func (c *cmdReader) Close() error {
 	c.ReadCloser.Close()
-	return c.cmd.Wait()
+	if err := c.cmd.Wait(); err != nil {
+		return fmt.Errorf("ssh %s: cat %s: %w: %s", c.host, c.rel, err, strings.TrimSpace(c.stderr.String()))
+	}
+	return nil
 }
 
 func shellQuote(s string) string {

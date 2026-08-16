@@ -113,12 +113,33 @@ func Eligibility(dev *profile.Device, ce catalog.Entry) (reason string) {
 	return ""
 }
 
+// ConvertedBytes predicts the post-transform output size of an eligible
+// catalog entry on a device — the same math Build uses for fit, exported
+// so pack summaries can be computed from the catalog alone.
+func ConvertedBytes(dev *profile.Device, ce catalog.Entry) int64 {
+	outCh := ce.Audio.Channels
+	if dev.Audio.Channels == "mono" {
+		outCh = 1
+	}
+	outFrames := int64(math.Round(float64(ce.Audio.Frames) *
+		float64(dev.Audio.SampleRate) / float64(ce.Audio.SampleRate)))
+	dataBytes := outFrames * int64(outCh) * int64(dev.Audio.BitDepth) / 8
+	return wavHeaderBytes(dev.Audio.BitDepth) + dataBytes + dataBytes%2
+}
+
 // Build computes the plan for a view against the current catalogs.
 func Build(ws *workspace.Workspace, viewName string) (*Plan, error) {
 	v, err := view.Load(ws.Root, viewName)
 	if err != nil {
 		return nil, err
 	}
+	return BuildView(ws, v)
+}
+
+// BuildView computes the plan for an in-memory view — the UI's preflight
+// preview builds these with rules toggled off, without touching the recipe
+// file on disk.
+func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 	dev, err := profile.LoadDevice(ws.Root, v.Device)
 	if err != nil {
 		return nil, err
@@ -136,7 +157,7 @@ func Build(ws *workspace.Workspace, viewName string) (*Plan, error) {
 			continue
 		}
 		if _, ok := ws.Location(inc.Location); !ok {
-			return nil, fmt.Errorf("view %s: unknown location %q", viewName, inc.Location)
+			return nil, fmt.Errorf("view %s: unknown location %q", v.Name, inc.Location)
 		}
 		entries, err := catalog.Load(ws.CatalogPath(inc.Location))
 		if err != nil {
@@ -210,8 +231,7 @@ func Build(ws *workspace.Workspace, viewName string) (*Plan, error) {
 		}
 		outFrames := int64(math.Round(float64(ce.Audio.Frames) *
 			float64(dev.Audio.SampleRate) / float64(ce.Audio.SampleRate)))
-		dataBytes := outFrames * int64(outCh) * int64(dev.Audio.BitDepth) / 8
-		outBytes := wavHeaderBytes(dev.Audio.BitDepth) + dataBytes + dataBytes%2
+		outBytes := ConvertedBytes(dev, ce)
 
 		p.Entries = append(p.Entries, Entry{
 			Location:    loc,
@@ -240,6 +260,11 @@ func Build(ws *workspace.Workspace, viewName string) (*Plan, error) {
 
 	if dev.Delivery.Layout == "flatten" {
 		flatten(p.Entries, dev.Naming.CaseSensitive)
+		sort.Slice(p.Entries, func(i, j int) bool { return p.Entries[i].OutPath < p.Entries[j].OutPath })
+	}
+
+	if len(dev.Naming.Sanitize) > 0 {
+		sanitizeNames(p.Entries, dev.Naming.Sanitize)
 		sort.Slice(p.Entries, func(i, j int) bool { return p.Entries[i].OutPath < p.Entries[j].OutPath })
 	}
 
@@ -310,6 +335,27 @@ func flatten(entries []Entry, caseSensitive bool) {
 	}
 	for i := range entries {
 		entries[i].OutPath = names[i]
+	}
+}
+
+// sanitizeNames applies the device's naming.sanitize map to every OutPath,
+// directories and filenames alike — devices that reject a character reject
+// it anywhere in the path. Runs before the collision and naming checks, so
+// a rewrite that merges two names errors there, and a character the map
+// doesn't cover still fails allowed_chars.
+func sanitizeNames(entries []Entry, rules map[string]string) {
+	keys := make([]string, 0, len(rules))
+	for k := range rules {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	pairs := make([]string, 0, len(rules)*2)
+	for _, k := range keys {
+		pairs = append(pairs, k, rules[k])
+	}
+	r := strings.NewReplacer(pairs...)
+	for i := range entries {
+		entries[i].OutPath = r.Replace(entries[i].OutPath)
 	}
 }
 

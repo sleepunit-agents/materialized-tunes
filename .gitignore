@@ -2,3 +2,6 @@
 /mtunes
 /mtunes.exe
 .DS_Store
+/mtunes-desktop
+/mtunes-desktop.exe
+.claude/launch.json
