@@ -123,6 +123,24 @@ func BySlug(vendors []Vendor) map[string]*Vendor {
 	return m
 }
 
+// ByName finds a vendor by the name a human would put on a folder: slug,
+// display name, or any alias, case-insensitively. Used by the vendor-dirs
+// location layout, where the top-level directory names the vendor.
+func ByName(vendors []Vendor, name string) *Vendor {
+	for i := range vendors {
+		v := &vendors[i]
+		if strings.EqualFold(v.Slug, name) || strings.EqualFold(v.Name, name) {
+			return v
+		}
+		for _, a := range v.Aliases {
+			if strings.EqualFold(a, name) {
+				return v
+			}
+		}
+	}
+	return nil
+}
+
 func loadVendor(dir string) (*Vendor, error) {
 	var vf struct {
 		Vendor struct {

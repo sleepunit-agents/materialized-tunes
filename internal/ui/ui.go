@@ -462,6 +462,29 @@ func fetchURL(url string) ([]byte, error) {
 // from the vendor CDN once. Only URLs present in annotations are allowed.
 func (s *Server) art(w http.ResponseWriter, r *http.Request) {
 	u := r.URL.Query().Get("u")
+	if strings.HasPrefix(u, browse.CatalogScheme) {
+		// Art shipped inside the pack (Docs/Artwork - X.jpg): serve the
+		// cataloged file itself — same trust boundary as /api/preview.
+		local, path, ok := s.catalogFile(r, u)
+		if !ok {
+			w.WriteHeader(404)
+			return
+		}
+		switch strings.ToLower(filepath.Ext(path)) {
+		case ".jpg", ".jpeg":
+			w.Header().Set("Content-Type", "image/jpeg")
+		case ".png":
+			w.Header().Set("Content-Type", "image/png")
+		case ".webp":
+			w.Header().Set("Content-Type", "image/webp")
+		default:
+			w.WriteHeader(415)
+			return
+		}
+		w.Header().Set("Cache-Control", "max-age=86400")
+		http.ServeFile(w, r, local)
+		return
+	}
 	images, _ := s.allowedURLs()
 	if !images[u] {
 		w.WriteHeader(403)
@@ -485,6 +508,18 @@ func (s *Server) art(w http.ResponseWriter, r *http.Request) {
 // scraped from its product page once. Vendor prose stays local.
 func (s *Server) blurb(w http.ResponseWriter, r *http.Request) {
 	u := r.URL.Query().Get("u")
+	if strings.HasPrefix(u, browse.CatalogScheme) {
+		// About.md shipped inside the pack: parse it straight from the
+		// archive; nothing to fetch, nothing to cache.
+		local, _, ok := s.catalogFile(r, u)
+		if !ok {
+			w.WriteHeader(404)
+			return
+		}
+		title, desc, _ := browse.ReadAbout(local)
+		jsonOut(w, map[string]string{"title": title, "description": desc})
+		return
+	}
 	_, pages := s.allowedURLs()
 	if !pages[u] {
 		w.WriteHeader(403)
@@ -636,34 +671,62 @@ func (s *Server) packDetail(w http.ResponseWriter, r *http.Request) {
 	jsonOut(w, map[string]any{"folders": folds, "files": files, "total": total, "shown": len(files)})
 }
 
+type httpErr struct {
+	code int
+	err  error
+}
+
+func (e *httpErr) Error() string { return e.err.Error() }
+
+// localCopy resolves a cataloged file to a readable local path: local
+// sources in place, remote ones through the content-addressed cache. Only
+// files present in the catalog are reachable — the trust boundary for every
+// endpoint that serves archive bytes (preview, art, blurb).
+func (s *Server) localCopy(r *http.Request, locName, path string) (string, *httpErr) {
+	lc, ok := s.ws.Location(locName)
+	if !ok {
+		return "", &httpErr{404, fmt.Errorf("unknown location %q", locName)}
+	}
+	entries, err := catalog.Load(s.ws.CatalogPath(locName))
+	if err != nil {
+		return "", &httpErr{500, err}
+	}
+	ce, ok := entries[path]
+	if !ok {
+		return "", &httpErr{404, fmt.Errorf("not in catalog: %s", path)}
+	}
+	loc, err := location.New(lc)
+	if err != nil {
+		return "", &httpErr{500, err}
+	}
+	local, err := cache.Ensure(r.Context(), loc, path, ce.SHA256, filepath.Join(s.ws.Root, "cache", "objects"))
+	if err != nil {
+		return "", &httpErr{502, err}
+	}
+	return local, nil
+}
+
+// catalogFile resolves a "catalog:<location>/<path>" ref (browse.CatalogScheme).
+func (s *Server) catalogFile(r *http.Request, ref string) (local, path string, ok bool) {
+	locName, path, ok := browse.SplitCatalogRef(ref)
+	if !ok {
+		return "", "", false
+	}
+	local, herr := s.localCopy(r, locName, path)
+	if herr != nil {
+		return "", "", false
+	}
+	return local, path, true
+}
+
 // preview streams one cataloged source file: local sources in place,
 // remote ones through the same content-addressed cache materialize uses
 // (a preview warms the cache; nothing is ever written to a target).
 func (s *Server) preview(w http.ResponseWriter, r *http.Request) {
 	locName, path := r.URL.Query().Get("location"), r.URL.Query().Get("path")
-	lc, ok := s.ws.Location(locName)
-	if !ok {
-		jsonErr(w, 404, fmt.Errorf("unknown location %q", locName))
-		return
-	}
-	entries, err := catalog.Load(s.ws.CatalogPath(locName))
+	local, err := s.localCopy(r, locName, path)
 	if err != nil {
-		jsonErr(w, 500, err)
-		return
-	}
-	ce, ok := entries[path]
-	if !ok {
-		jsonErr(w, 404, fmt.Errorf("not in catalog: %s", path))
-		return
-	}
-	loc, err := location.New(lc)
-	if err != nil {
-		jsonErr(w, 500, err)
-		return
-	}
-	local, err := cache.Ensure(r.Context(), loc, path, ce.SHA256, filepath.Join(s.ws.Root, "cache", "objects"))
-	if err != nil {
-		jsonErr(w, 502, err)
+		jsonErr(w, err.code, err)
 		return
 	}
 	switch strings.ToLower(filepath.Ext(path)) {

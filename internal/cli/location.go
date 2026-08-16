@@ -15,9 +15,11 @@ var locationCmd = &cobra.Command{
 }
 
 var (
-	locType string
-	locRoot string
-	locHost string
+	locType   string
+	locRoot   string
+	locHost   string
+	locVendor string
+	locLayout string
 )
 
 var locationAddCmd = &cobra.Command{
@@ -33,7 +35,15 @@ var locationAddCmd = &cobra.Command{
 		if _, exists := ws.Location(name); exists {
 			return fmt.Errorf("location %q already exists", name)
 		}
-		lc := workspace.LocationConfig{Name: name, Type: locType, Root: locRoot, Host: locHost}
+		lc := workspace.LocationConfig{Name: name, Type: locType, Root: locRoot, Host: locHost, Vendor: locVendor, Layout: locLayout}
+		switch lc.Layout {
+		case "", "vendor-dirs":
+		default:
+			return fmt.Errorf("--layout must be empty (packs are top-level dirs) or vendor-dirs (<Vendor>/<Pack>)")
+		}
+		if lc.Layout == "vendor-dirs" && lc.Vendor != "" {
+			return fmt.Errorf("--vendor names one vendor; a vendor-dirs layout names its vendors by directory")
+		}
 		switch lc.Type {
 		case "local":
 			if lc.Host != "" {
@@ -111,5 +121,7 @@ func init() {
 	locationAddCmd.Flags().StringVar(&locType, "type", "local", "location type: local or ssh")
 	locationAddCmd.Flags().StringVar(&locRoot, "root", "", "root directory of the source material")
 	locationAddCmd.Flags().StringVar(&locHost, "host", "", "ssh host (resolved via ~/.ssh/config)")
+	locationAddCmd.Flags().StringVar(&locVendor, "vendor", "", "annotations vendor slug when the root is one vendor's library")
+	locationAddCmd.Flags().StringVar(&locLayout, "layout", "", "\"vendor-dirs\" when the root is a multi-vendor archive laid out <Vendor>/<Pack>")
 	locationCmd.AddCommand(locationAddCmd, locationListCmd, locationRemoveCmd)
 }

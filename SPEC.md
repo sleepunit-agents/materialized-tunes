@@ -115,6 +115,27 @@ pack-first browser (§11) — vendor grammar for the house archive is simply
 the degenerate case: discontinued, so the About is a research note, not a
 copy of a product page.
 
+**Location layout.** A location's `layout` says how packs sit under its
+root: `""` (default) — the root *is* one vendor's library and each top-level
+dir is a pack (a Splice folder; set `vendor = "<slug>"` to bind annotations);
+`"vendor-dirs"` — the house archive above, `<Vendor>/<Pack>/…`, where each
+top-level dir names a vendor and is matched to annotations by slug / name /
+alias when they exist. The browser's pack rows carry `dir` (catalog prefix,
+two segments under vendor-dirs), `name` (the pack), and `vendor`.
+
+**Docs tier.** Between "vendor annotations" and "honest fallback" sits a
+third tier the archive itself provides: a pack whose `Docs/` (SFM also
+numbers it, `5. Docs`) holds art and/or an About file — or a `*Cover*.png`
+at the pack root, Blu Mar Ten style — gets `image` / `blurb` refs of the
+form `catalog:<location>/<path>`, resolved by `/api/art` and `/api/blurb`
+straight from the cataloged file (same trust boundary as preview: only
+cataloged paths resolve; remote locations go through the object cache).
+`About.md` yields title / prose / product URL; SFM's `About.rtf` is stripped
+to prose; `.txt` passes through. Vendor annotations, when present, still win
+for name/slug/identity; docs fill whatever they leave empty. On the house
+archive this lifts 107 of 113 packs out of the fallback tier with zero
+network and zero annotation files.
+
 ## 4. Device profiles
 
 Two real profiles, from the horses' mouths (Syntakt User Manual OS 1.40,

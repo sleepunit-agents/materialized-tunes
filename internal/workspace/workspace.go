@@ -29,6 +29,14 @@ type LocationConfig struct {
 	Host   string `toml:"host,omitempty" json:"host,omitempty"`     // ssh only; resolved via ~/.ssh/config
 	Vendor string `toml:"vendor,omitempty" json:"vendor,omitempty"` // annotations vendor slug (workspace annotations/)
 
+	// Layout says how packs sit under the root. "" (default): the root IS a
+	// vendor's library and every top-level dir is a pack (Splice, an SFM
+	// download folder). "vendor-dirs": the root is a multi-vendor archive
+	// laid out <Vendor>/<Pack>/... — the house archive convention (SPEC
+	// §3.1); each top-level dir names a vendor, matched to annotations by
+	// name/alias when they exist.
+	Layout string `toml:"layout,omitempty" json:"layout,omitempty"`
+
 	// Rescan cadence. "" or "manual" = only when asked; otherwise a Go
 	// duration ("30m", "6h", "24h"). App-managed libraries (Splice keeps
 	// downloading) want a short one; an immutable archive wants manual.

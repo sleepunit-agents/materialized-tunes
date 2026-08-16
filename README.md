@@ -37,7 +37,16 @@ mtunes materialize <name> --to /Volumes/CARD     # or a staging folder for Trans
 mtunes verify --card /Volumes/CARD
 mtunes diff <name>                                # staleness vs newest lock
 mtunes restore <name> --to /Volumes/CARD          # newest lock; or pass a lock path
+mtunes catalog packs                              # pack-first browse (also --json, --device)
+mtunes ui                                         # the same, in a browser at 127.0.0.1:7315
 ```
+
+The UI (`mtunes ui`, or the native `mtunes-desktop` shell) browses the
+catalog pack-first with a per-device lens, authors recipes/devices/storage,
+runs materializations, and shows cards and locks. Pack art and prose come
+from vendor annotations when a `<workspace>/annotations` checkout exists,
+and otherwise from what the packs themselves ship (`Docs/Artwork*`,
+`Docs/*About*` — SFM's convention, applied to the whole house archive).
 
 ## Building
 
@@ -47,9 +56,17 @@ Runs on macOS, Linux, and Windows.
 ```
 go build ./cmd/mtunes
 go test ./...
+
+# native desktop shell (Wails v2; needs WebView2 on Windows, present on 10/11)
+go build -tags desktop,production -o mtunes-desktop ./cmd/mtunes-desktop
+#   macOS: CGO_LDFLAGS="-framework UniformTypeIdentifiers" go build -tags desktop,production ...
+#   Windows: go build -tags desktop,production -ldflags "-H windowsgui" -o mtunes-desktop.exe ./cmd/mtunes-desktop
 ```
 
 Windows notes: `winget install Gyan.FFmpeg` gets ffmpeg; set the workspace with
-`$env:MTUNES_WORKSPACE = "$HOME\mtunes-library"`; the built-in OpenSSH client
-is enough for `--type ssh` locations. Card paths are just drive letters
-(`--to E:\`).
+`$env:MTUNES_WORKSPACE = "$HOME\mtunes-library"` (or at user level in
+System → Environment Variables so the desktop app sees it); the built-in
+OpenSSH client is enough for `--type ssh` locations (no connection
+multiplexing there, so remote scans are slower than on macOS/Linux). Card
+paths are just drive letters (`--to E:\`). A multi-vendor archive laid out
+`<Vendor>\<Pack>` is added with `mtunes location add archives --root E:\Sample-Archives --layout vendor-dirs`.

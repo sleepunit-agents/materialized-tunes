@@ -102,9 +102,10 @@ async function openPack(p) {
     await loadPdFolder();
   }
   render();
-  if (p.url) {
-    if (!blurbCache[p.url]) { try { blurbCache[p.url] = await api('/api/blurb?u=' + encodeURIComponent(p.url)); } catch (e) { blurbCache[p.url] = {}; } }
-    S.pdDesc = blurbCache[p.url].description || '';
+  const bk = p.blurb || p.url; // in-archive About.md wins over a product page
+  if (bk) {
+    if (!blurbCache[bk]) { try { blurbCache[bk] = await api('/api/blurb?u=' + encodeURIComponent(bk)); } catch (e) { blurbCache[bk] = {}; } }
+    S.pdDesc = blurbCache[bk].description || '';
     render();
   }
 }
@@ -321,7 +322,7 @@ function renderLibrary() {
           : p.slug
             ? `<div class="art" style="background:linear-gradient(135deg,hsl(${artHue(p.name)},38%,42%),hsl(${artHue(p.name)},45%,24%))">${esc(p.name[0] || '?')}</div>`
             : `<div class="art none">/</div>`;
-        const vendor = p.provider || p.location;
+        const vendor = p.provider || p.vendor || p.location;
         const stats = S.lens
           ? `<div class="stats lens">${n(p.eligible)} <span class="of">of ${n(p.files)}</span> · ${fmtB(p.converted_bytes || 0)}</div>`
           : `<div class="stats">${n(p.files)} files · ${fmtB(p.bytes)}</div>`;
@@ -329,7 +330,7 @@ function renderLibrary() {
           ${p.url ? `<a class="link" href="${esc(p.url)}" target="_blank" title="product page">↗</a>` : ''}
           <span data-act="add-to" data-loc="${esc(p.location)}" data-glob="${esc(p.dir)}/**" data-as="${esc(p.provider ? p.location.toUpperCase() : '')}" data-label="${esc(p.name)}" title="add this pack to a recipe" style="font:600 13px var(--mono);color:var(--fg-ghost);cursor:pointer">+</span>
         </span>`;
-        return `<div class="pack" data-blurb="${esc(p.url)}" data-act="open-pack" data-loc="${esc(p.location)}" data-dir="${esc(p.dir)}">${art}
+        return `<div class="pack" data-blurb="${esc(p.blurb || p.url || '')}" data-act="open-pack" data-loc="${esc(p.location)}" data-dir="${esc(p.dir)}">${art}
           <div class="body">
             <div class="name" title="${esc(p.dir)}">${esc(p.name)}</div>
             <div class="vline"><span class="vendor">${esc(vendor)}</span>${badgeFor(p)}</div>
