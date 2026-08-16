@@ -30,8 +30,9 @@ type Row struct {
 
 	Slug          string   `json:"slug,omitempty"`
 	URL           string   `json:"url,omitempty"`
-	Image         string   `json:"image,omitempty"` // vendor CDN URL, or "catalog:<location>/<path>" for art living in the archive
-	Blurb         string   `json:"blurb,omitempty"` // "catalog:<location>/<path>" of an About file in the archive; the UI falls back to URL
+	Image         string   `json:"image,omitempty"`       // vendor CDN URL, or "catalog:<location>/<path>" for art living in the archive
+	Blurb         string   `json:"blurb,omitempty"`       // "catalog:<location>/<path>" of an About file in the archive; the UI falls back to URL
+	Description   string   `json:"description,omitempty"` // inline prose from annotations — only discontinued packs carry it (SCHEMA exception)
 	Provider      string   `json:"provider,omitempty"`
 	SamplesListed int      `json:"samples_listed,omitempty"`
 	Tags          []string `json:"tags,omitempty"`
@@ -118,6 +119,7 @@ func Rows(ws *workspace.Workspace, dev *profile.Device, location string) ([]Row,
 				if p := vendor.PackByDir(packDir); p != nil {
 					row.Name, row.Slug, row.URL = p.Name, p.Slug, p.URL
 					row.Image = p.Meta.Image
+					row.Description = p.Meta.Description
 					row.Provider = p.Provider
 					row.SamplesListed = p.SamplesListed
 					row.Tags = p.Tags

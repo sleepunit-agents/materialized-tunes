@@ -104,6 +104,7 @@ async function openPack(p) {
     await loadPdFolder();
   }
   render();
+  if (p.description) { S.pdDesc = p.description; render(); return; } // inline (discontinued packs)
   const bk = p.blurb || p.url; // in-archive About.md wins over a product page
   if (bk) {
     if (!blurbCache[bk]) { try { blurbCache[bk] = await api('/api/blurb?u=' + encodeURIComponent(bk)); } catch (e) { blurbCache[bk] = {}; } }
@@ -336,7 +337,7 @@ function renderLibrary() {
           ${p.url ? `<a class="link" href="${esc(p.url)}" target="_blank" title="product page">↗</a>` : ''}
           <span data-act="add-to" data-loc="${esc(p.location)}" data-glob="${esc(p.dir)}/**" data-as="${esc(p.provider ? p.location.toUpperCase() : '')}" data-label="${esc(p.name)}" title="add this pack to a recipe" style="font:600 13px var(--mono);color:var(--fg-ghost);cursor:pointer">+</span>
         </span>`;
-        return `<div class="pack" data-blurb="${esc(p.blurb || p.url || '')}" data-act="open-pack" data-loc="${esc(p.location)}" data-dir="${esc(p.dir)}">${art}
+        return `<div class="pack" data-blurb="${esc(p.description ? '' : (p.blurb || p.url || ''))}" title="${esc(p.description || '')}" data-act="open-pack" data-loc="${esc(p.location)}" data-dir="${esc(p.dir)}">${art}
           <div class="body">
             <div class="name" title="${esc(p.dir)}">${esc(p.name)}</div>
             <div class="vline"><span class="vendor">${esc(vendor)}</span>${badgeFor(p)}</div>
