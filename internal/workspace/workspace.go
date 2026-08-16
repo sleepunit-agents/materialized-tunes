@@ -87,7 +87,10 @@ func Init(dir string) (*Workspace, error) {
 	if _, err := os.Stat(giPath); os.IsNotExist(err) {
 		gi := "# The cache is content-addressed and disposable; never version it.\ncache/\n" +
 			"# The catalog is regenerable by `mtunes scan`, but versioning it gives you\n" +
-			"# history of your source library's state. Uncomment to exclude:\n# catalog/\n"
+			"# history of your source library's state. Uncomment to exclude:\n# catalog/\n" +
+			"# annotations/ is a checkout (or link) of sample-vendor-annotations — its own\n" +
+			"# repo; annotations-cache/ is fetched vendor prose/pixels. Neither is yours.\n" +
+			"annotations/\nannotations-cache/\n"
 		if err := os.WriteFile(giPath, []byte(gi), 0o644); err != nil {
 			return nil, err
 		}
