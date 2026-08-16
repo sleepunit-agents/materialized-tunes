@@ -127,6 +127,30 @@ func TestParseAIFF(t *testing.T) {
 	}
 }
 
+func TestParseSniffsMagicOverExtension(t *testing.T) {
+	// Rhythm Lab ships AIFFs named .wav; the content, not the name, wins.
+	m, err := Parse(bytes.NewReader(buildAIFF(1, 44100, 16, 44100)), "mislabeled.wav")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Format != "aiff" || m.Frames != 44100 {
+		t.Errorf("got %+v", m)
+	}
+	// And a genuine WAV still parses as WAV regardless of a weird extension.
+	m, err = Parse(bytes.NewReader(buildWAV(2, 48000, 24, 10, false)), "odd.aif")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Format != "wav" || m.Channels != 2 {
+		t.Errorf("got %+v", m)
+	}
+	// Unrecognizable bytes with a known extension fall through to the
+	// extension parser and produce its error, not a panic.
+	if _, err := Parse(bytes.NewReader([]byte("nope")), "x.wav"); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
 func buildFLAC(channels, rate, depth int, frames int64) []byte {
 	var b bytes.Buffer
 	b.WriteString("fLaC")

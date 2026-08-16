@@ -38,8 +38,25 @@ func IsAudioPath(path string) bool {
 	return false
 }
 
-// Parse dispatches on file extension.
+// Parse dispatches on the file's magic bytes when they are recognizable
+// (vendors do ship AIFFs named .wav), falling back to the extension.
 func Parse(rs io.ReadSeeker, path string) (*Meta, error) {
+	var magic [12]byte
+	n, _ := io.ReadFull(rs, magic[:])
+	if _, err := rs.Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
+	if n == len(magic) {
+		switch {
+		case bytes.Equal(magic[0:4], []byte("RIFF")) && bytes.Equal(magic[8:12], []byte("WAVE")):
+			return ParseWAV(rs)
+		case bytes.Equal(magic[0:4], []byte("FORM")) &&
+			(bytes.Equal(magic[8:12], []byte("AIFF")) || bytes.Equal(magic[8:12], []byte("AIFC"))):
+			return ParseAIFF(rs)
+		case bytes.Equal(magic[0:4], []byte("fLaC")):
+			return ParseFLAC(rs)
+		}
+	}
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".wav", ".wave":
 		return ParseWAV(rs)
