@@ -23,8 +23,9 @@
   #app { display: flex; flex-direction: column; height: 100vh; min-width: 1100px; background: var(--bg); color: var(--fg); overflow: hidden; }
 
   .titlebar { display: flex; align-items: center; height: 36px; padding: 0 14px; background: var(--bg-deep); border-bottom: 1px solid var(--bord); flex: none; user-select: none; --wails-draggable: drag; }
-  /* desktop shell: clear the macOS traffic lights (hidden-inset title bar) */
-  body.in-wails .titlebar { padding-left: 100px; height: 48px; padding-top: 5px; }
+  /* desktop shell on macOS: clear the traffic lights (hidden-inset title bar).
+     Windows/Linux keep the native title bar, so the in-app strip stays as-is. */
+  body.in-wails-mac .titlebar { padding-left: 100px; height: 48px; padding-top: 5px; }
   .titlebar .brand { font: 700 12px var(--sans); letter-spacing: .06em; color: var(--fg); }
   .titlebar .meta { font: 400 11px var(--mono); color: var(--fg-faint); margin-left: 12px; }
 

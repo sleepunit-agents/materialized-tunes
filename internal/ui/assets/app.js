@@ -43,6 +43,8 @@ async function boot() {
   // Wails injects window.runtime; the browser build never has it
   if (window.runtime) {
     document.body.classList.add('in-wails');
+    // the traffic-light inset is a macOS thing; Windows/Linux keep the OS title bar
+    if (/Mac/i.test(navigator.platform)) document.body.classList.add('in-wails-mac');
     // native Recipes menu → jump to that recipe
     window.runtime.EventsOn('open-view', (name) => {
       stopPlayback();
