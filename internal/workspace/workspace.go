@@ -125,7 +125,8 @@ func (w *Workspace) Location(name string) (LocationConfig, bool) {
 }
 
 func ExpandUser(path string) (string, error) {
-	if path == "~" || strings.HasPrefix(path, "~/") {
+	// Accept both "~/x" and, on Windows, "~\x".
+	if path == "~" || strings.HasPrefix(path, "~/") || strings.HasPrefix(path, "~"+string(filepath.Separator)) {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return "", err

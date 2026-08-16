@@ -1,2 +1,4 @@
-mtunes
+# built binary (anchored: an unanchored `mtunes` also matched cmd/mtunes/)
+/mtunes
+/mtunes.exe
 .DS_Store

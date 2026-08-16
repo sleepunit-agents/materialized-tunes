@@ -41,9 +41,15 @@ mtunes restore <name> --to /Volumes/CARD          # newest lock; or pass a lock 
 
 ## Building
 
-Requires Go and (for materialization, later) ffmpeg.
+Requires Go and ffmpeg (used by `materialize`/`restore`; must be on PATH).
+Runs on macOS, Linux, and Windows.
 
 ```
 go build ./cmd/mtunes
 go test ./...
 ```
+
+Windows notes: `winget install Gyan.FFmpeg` gets ffmpeg; set the workspace with
+`$env:MTUNES_WORKSPACE = "$HOME\mtunes-library"`; the built-in OpenSSH client
+is enough for `--type ssh` locations. Card paths are just drive letters
+(`--to E:\`).
