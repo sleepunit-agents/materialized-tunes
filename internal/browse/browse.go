@@ -17,6 +17,7 @@ import (
 	"github.com/jbarket/materialized-tunes/internal/catalog"
 	"github.com/jbarket/materialized-tunes/internal/plan"
 	"github.com/jbarket/materialized-tunes/internal/profile"
+	"github.com/jbarket/materialized-tunes/internal/resolve"
 	"github.com/jbarket/materialized-tunes/internal/workspace"
 )
 
@@ -81,6 +82,15 @@ func Rows(ws *workspace.Workspace, dev *profile.Device, location string) ([]Row,
 		}
 		vendorDirs := lc.Layout == "vendor-dirs"
 
+		// Marketplace vendors: per-pack facts come from the local resolver
+		// cache (annotations-cache/resolve/<vendor>/), not the repo.
+		var resolved map[string]resolve.Pack
+		if !vendorDirs {
+			if v := bySlug[lc.Vendor]; v != nil && v.Resolver != "" {
+				resolved = resolve.Load(ws, v.Slug)
+			}
+		}
+
 		// Group catalog entries by pack dir. Files that sit above pack level
 		// (sibling archives, vendor-root previews) are not pack content.
 		groups := map[string][]catalog.Entry{}
@@ -130,6 +140,10 @@ func Rows(ws *workspace.Workspace, dev *profile.Device, location string) ([]Row,
 						}
 					}
 					row.Match, row.MatchFraction = vendor.MatchIdentity(p, shas)
+				} else if rp, ok := resolved[packDir]; ok && rp.Name != "" {
+					// resolved from the vendor's API and cached locally
+					row.Name, row.Slug, row.URL = rp.Name, rp.Slug, rp.URL
+					row.Image, row.Provider, row.Tags = rp.Image, rp.Provider, rp.Tags
 				}
 			}
 			// Docs tier: art and an About file living in the pack itself

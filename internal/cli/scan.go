@@ -3,11 +3,14 @@ package cli
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
+	"github.com/jbarket/materialized-tunes/internal/annotations"
 	"github.com/jbarket/materialized-tunes/internal/harvest"
 	"github.com/jbarket/materialized-tunes/internal/location"
+	"github.com/jbarket/materialized-tunes/internal/resolve"
 	"github.com/jbarket/materialized-tunes/internal/scan"
 )
 
@@ -63,6 +66,11 @@ var scanCmd = &cobra.Command{
 				fmt.Printf(", %d stereo files checked for dual-mono", res.DualMonoChecked)
 			}
 			fmt.Println()
+			if vendors, err := annotations.Load(filepath.Join(ws.Root, "annotations")); err == nil {
+				if r, err := resolve.Location(cmd.Context(), ws, lc, vendors, nil); err == nil && r.Packs > 0 && r.Resolved+r.Missing+r.Failed > 0 {
+					fmt.Printf("  resolved %d packs via the vendor API (%d not found, %d failed)\n", r.Resolved, r.Missing, r.Failed)
+				}
+			}
 			if h, err := harvest.Run(ws, lc); err == nil && h.Files > 0 {
 				fmt.Printf("  harvested metadata for %d files: %d bpm, %d key, %d category\n",
 					h.Files, h.WithBPM, h.WithKey, h.WithCategory)

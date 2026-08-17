@@ -32,6 +32,7 @@ import (
 	"github.com/jbarket/materialized-tunes/internal/materialize"
 	"github.com/jbarket/materialized-tunes/internal/plan"
 	"github.com/jbarket/materialized-tunes/internal/profile"
+	"github.com/jbarket/materialized-tunes/internal/resolve"
 	"github.com/jbarket/materialized-tunes/internal/view"
 	"github.com/jbarket/materialized-tunes/internal/workspace"
 )
@@ -429,6 +430,17 @@ func (s *Server) allowedURLs() (images, pages map[string]bool) {
 			}
 			if p.URL != "" {
 				pages[p.URL] = true
+			}
+		}
+		// marketplace vendors: what the resolver cached is as trusted as the repo
+		if v.Resolver != "" {
+			for _, rp := range resolve.Load(s.ws, v.Slug) {
+				if rp.Image != "" {
+					images[rp.Image] = true
+				}
+				if rp.URL != "" {
+					pages[rp.URL] = true
+				}
 			}
 		}
 	}

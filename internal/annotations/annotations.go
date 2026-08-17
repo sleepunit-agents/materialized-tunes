@@ -23,6 +23,12 @@ type Vendor struct {
 
 	Grammar string `json:"grammar,omitempty"` // packs.grammar, e.g. "top-level-dirs"
 
+	// Resolver: for marketplaces (Splice) whose pack list is unbounded, the
+	// repo ships no per-pack files; consumers resolve a pack's identity from
+	// the vendor's public API on demand and cache locally. Named strategy,
+	// e.g. "splice-graphql". "" = packs are annotated in the repo.
+	Resolver string `json:"resolver,omitempty"`
+
 	// Formats: which per-pack dir holds the canonical audio and which are
 	// parallel exports (Ableton/Kontakt/16-bit cuts). Globs over the dir
 	// name directly under the pack dir. "" / "." = audio sits at pack root.
@@ -171,7 +177,8 @@ func loadVendor(dir string) (*Vendor, error) {
 			Homepage string   `toml:"homepage"`
 		} `toml:"vendor"`
 		Packs struct {
-			Grammar string `toml:"grammar"`
+			Grammar  string `toml:"grammar"`
+			Resolver string `toml:"resolver"`
 		} `toml:"packs"`
 		Formats struct {
 			CanonicalDir string   `toml:"canonical_dir"`
@@ -199,7 +206,7 @@ func loadVendor(dir string) (*Vendor, error) {
 	v := &Vendor{
 		Slug: vf.Vendor.Slug, Name: vf.Vendor.Name,
 		Aliases: vf.Vendor.Aliases, Homepage: vf.Vendor.Homepage,
-		Grammar: vf.Packs.Grammar, Categories: vf.Category,
+		Grammar: vf.Packs.Grammar, Resolver: vf.Packs.Resolver, Categories: vf.Category,
 		CanonicalDir: vf.Formats.CanonicalDir, ParallelDirs: vf.Formats.ParallelDirs,
 		Naming:     vf.Naming,
 		InstallMac: vf.Install.Macos, InstallLinux: vf.Install.Linux,

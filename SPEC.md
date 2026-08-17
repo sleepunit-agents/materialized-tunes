@@ -552,6 +552,20 @@ GUI can never disagree about what a plan says.
     data (no code execution), so a public contributions repo is low-risk.
     House rules: schema-versioned files; facts only ("this pack's stereo
     is dual-mono"), never taste ("sum sounds better") — taste is local.
+    **Marketplaces (decided 2026-08-16)**: pack *houses* (SFM, Polyend,
+    Zero-G) have finite catalogs and are annotated per pack in the repo;
+    *marketplaces* (Splice) list more packs daily and every user's library
+    is a different partial subset, so the repo ships their grammar only
+    plus `[packs] resolver = "<strategy>"`. `internal/resolve` implements
+    the strategy (`splice-graphql`: one public unauthenticated query per
+    pack dir, probed by a sample's path within the pack → parent pack's
+    name/slug/provider/URL/cover/tags), paced and 429-aware, and caches
+    facts per pack in `annotations-cache/resolve/<vendor>/` (negatives
+    too, re-asked after 30 days). browse reads that cache exactly like a
+    repo pack; the art endpoint trusts its cover URLs. Runs after every
+    scan of such a location and via `catalog resolve`. Vendor tag labels
+    are canonicalized through the repo's `tags.toml` (now implemented in
+    Go: `annotations.TagMap`).
 - **Display-aware naming** (found on hardware 2026-07-17: Syntakt's list
   view crops names, so `BD A 808 Decay A 01..06` all display identically —
   the distinguishing digits are past the crop). **Ideas 1 and 2 shipped

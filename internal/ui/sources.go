@@ -16,6 +16,7 @@ import (
 	"github.com/jbarket/materialized-tunes/internal/annotations"
 	"github.com/jbarket/materialized-tunes/internal/harvest"
 	"github.com/jbarket/materialized-tunes/internal/location"
+	"github.com/jbarket/materialized-tunes/internal/resolve"
 	"github.com/jbarket/materialized-tunes/internal/scan"
 	"github.com/jbarket/materialized-tunes/internal/workspace"
 )
@@ -310,6 +311,9 @@ func (s *Server) startScan(name string) error {
 			if err == nil {
 				// derive per-file metadata (bpm/key/category) from the fresh catalog
 				harvest.Run(s.ws, lc)
+				if vendors, err := annotations.Load(filepath.Join(s.ws.Root, "annotations")); err == nil {
+					resolve.Location(context.Background(), s.ws, lc, vendors, nil) // best-effort, cached
+				}
 				s.mu.Lock()
 				st.Result = fmt.Sprintf("%d files: %d added, %d changed, %d removed, %d unchanged",
 					res.Total, res.Added, res.Changed, res.Removed, res.Unchanged)
