@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/jbarket/materialized-tunes/internal/harvest"
 	"github.com/jbarket/materialized-tunes/internal/location"
 	"github.com/jbarket/materialized-tunes/internal/scan"
 )
@@ -62,6 +63,10 @@ var scanCmd = &cobra.Command{
 				fmt.Printf(", %d stereo files checked for dual-mono", res.DualMonoChecked)
 			}
 			fmt.Println()
+			if h, err := harvest.Run(ws, lc); err == nil && h.Files > 0 {
+				fmt.Printf("  harvested metadata for %d files: %d bpm, %d key, %d category\n",
+					h.Files, h.WithBPM, h.WithKey, h.WithCategory)
+			}
 		}
 		return nil
 	},

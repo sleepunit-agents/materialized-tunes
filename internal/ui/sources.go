@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/jbarket/materialized-tunes/internal/annotations"
+	"github.com/jbarket/materialized-tunes/internal/harvest"
 	"github.com/jbarket/materialized-tunes/internal/location"
 	"github.com/jbarket/materialized-tunes/internal/scan"
 	"github.com/jbarket/materialized-tunes/internal/workspace"
@@ -307,11 +308,13 @@ func (s *Server) startScan(name string) error {
 				s.mu.Unlock()
 			})
 			if err == nil {
+				// derive per-file metadata (bpm/key/category) from the fresh catalog
+				harvest.Run(s.ws, lc)
 				s.mu.Lock()
 				st.Result = fmt.Sprintf("%d files: %d added, %d changed, %d removed, %d unchanged",
 					res.Total, res.Added, res.Changed, res.Removed, res.Unchanged)
 				st.Status = "done"
-				delete(s.meta, name) // per-file metadata may have new keys
+				delete(s.meta, name) // per-file metadata was just rewritten
 				s.mu.Unlock()
 				return
 			}

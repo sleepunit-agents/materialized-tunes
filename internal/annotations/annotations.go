@@ -29,6 +29,10 @@ type Vendor struct {
 	CanonicalDir string   `json:"canonical_dir,omitempty"`
 	ParallelDirs []string `json:"parallel_dirs,omitempty"`
 
+	// Naming: filename grammar facts (see SCHEMA [naming]). Consumers use
+	// them to harvest per-file metadata (key, bpm) and to rename safely.
+	Naming Naming `json:"naming,omitempty"`
+
 	// Install: where this vendor's library lives by default, per OS.
 	// A fact about the vendor, same as its pack grammar — used to offer
 	// "you have Splice installed, add it?" without scanning the disk.
@@ -41,6 +45,16 @@ type Vendor struct {
 	Packs      []Pack     `json:"packs,omitempty"`
 
 	dir string // vendor directory on disk, for manifest resolution
+}
+
+// Naming mirrors SCHEMA [naming]: free-form grammar strings, plus the two
+// flags consumers actually branch on.
+type Naming struct {
+	DirOrderPrefix string `toml:"dir_order_prefix" json:"dir_order_prefix,omitempty"`
+	NoteSuffix     string `toml:"note_suffix" json:"note_suffix,omitempty"` // e.g. "_<note><octave>"
+	KeySuffix      string `toml:"key_suffix" json:"key_suffix,omitempty"`   // e.g. " - <camelot>"
+	TakeSuffix     string `toml:"take_suffix" json:"take_suffix,omitempty"`
+	BPMDirSuffix   bool   `toml:"bpm_dir_suffix" json:"bpm_dir_suffix,omitempty"` // loop dirs end in their BPM ("Bass Lines 166.5")
 }
 
 type Category struct {
@@ -163,6 +177,7 @@ func loadVendor(dir string) (*Vendor, error) {
 			CanonicalDir string   `toml:"canonical_dir"`
 			ParallelDirs []string `toml:"parallel_dirs"`
 		} `toml:"formats"`
+		Naming  Naming `toml:"naming"`
 		Install struct {
 			Macos   []string `toml:"macos"`
 			Linux   []string `toml:"linux"`
@@ -186,6 +201,7 @@ func loadVendor(dir string) (*Vendor, error) {
 		Aliases: vf.Vendor.Aliases, Homepage: vf.Vendor.Homepage,
 		Grammar: vf.Packs.Grammar, Categories: vf.Category,
 		CanonicalDir: vf.Formats.CanonicalDir, ParallelDirs: vf.Formats.ParallelDirs,
+		Naming:     vf.Naming,
 		InstallMac: vf.Install.Macos, InstallLinux: vf.Install.Linux,
 		InstallWin: vf.Install.Windows, InstallNote: vf.Install.Note,
 		dir: dir,
