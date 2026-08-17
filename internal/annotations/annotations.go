@@ -47,8 +47,9 @@ type Vendor struct {
 	InstallWin   []string `json:"install_windows,omitempty"`
 	InstallNote  string   `json:"install_note,omitempty"`
 
-	Categories []Category `json:"categories,omitempty"`
-	Packs      []Pack     `json:"packs,omitempty"`
+	Instruments []Instrument `json:"instruments,omitempty"` // vendor-local overrides, consulted before the shared lexicon
+	Categories  []Category   `json:"categories,omitempty"`
+	Packs       []Pack       `json:"packs,omitempty"`
 
 	dir string // vendor directory on disk, for manifest resolution
 }
@@ -191,7 +192,8 @@ func loadVendor(dir string) (*Vendor, error) {
 			Windows []string `toml:"windows"`
 			Note    string   `toml:"note"`
 		} `toml:"install"`
-		Category []Category `toml:"category"`
+		Category   []Category   `toml:"category"`
+		Instrument []Instrument `toml:"instrument"`
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "vendor.toml"))
 	if os.IsNotExist(err) {
@@ -207,6 +209,7 @@ func loadVendor(dir string) (*Vendor, error) {
 		Slug: vf.Vendor.Slug, Name: vf.Vendor.Name,
 		Aliases: vf.Vendor.Aliases, Homepage: vf.Vendor.Homepage,
 		Grammar: vf.Packs.Grammar, Resolver: vf.Packs.Resolver, Categories: vf.Category,
+		Instruments:  vf.Instrument,
 		CanonicalDir: vf.Formats.CanonicalDir, ParallelDirs: vf.Formats.ParallelDirs,
 		Naming:     vf.Naming,
 		InstallMac: vf.Install.Macos, InstallLinux: vf.Install.Linux,

@@ -72,8 +72,8 @@ var scanCmd = &cobra.Command{
 				}
 			}
 			if h, err := harvest.Run(ws, lc); err == nil && h.Files > 0 {
-				fmt.Printf("  harvested metadata for %d files: %d bpm, %d key, %d category\n",
-					h.Files, h.WithBPM, h.WithKey, h.WithCategory)
+				fmt.Printf("  harvested metadata for %d files: %d bpm, %d key, %d category, %d instrument\n",
+					h.Files, h.WithBPM, h.WithKey, h.WithCategory, h.WithInstrument)
 			}
 		}
 		return nil

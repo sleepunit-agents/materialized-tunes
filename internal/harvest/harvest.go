@@ -26,17 +26,20 @@ import (
 
 // Meta is one harvested record. Same shape the UI's meta cache reads.
 type Meta struct {
-	SHA      string   `json:"sha"`
-	BPM      int      `json:"bpm,omitempty"`
-	Key      string   `json:"key,omitempty"`
-	Chord    string   `json:"chord,omitempty"`
-	Category string   `json:"category,omitempty"`
-	Tags     []string `json:"tags,omitempty"`
+	SHA        string   `json:"sha"`
+	BPM        int      `json:"bpm,omitempty"`
+	Key        string   `json:"key,omitempty"`
+	Chord      string   `json:"chord,omitempty"`
+	Category   string   `json:"category,omitempty"`
+	Instrument string   `json:"instrument,omitempty"`
+	Family     string   `json:"family,omitempty"`
+	Tags       []string `json:"tags,omitempty"`
 }
 
 // Result summarizes one location's harvest.
 type Result struct {
 	Files, WithBPM, WithKey, WithCategory, WithTags int
+	WithInstrument                                  int
 }
 
 var (
@@ -66,6 +69,7 @@ func Run(ws *workspace.Workspace, lc workspace.LocationConfig) (*Result, error) 
 	if err != nil {
 		return nil, err
 	}
+	lex := annotations.LoadInstruments(filepath.Join(ws.Root, "annotations"))
 	res := &Result{}
 	var out []Meta
 	byTop := map[string]*annotations.Vendor{}
@@ -111,8 +115,13 @@ func Run(ws *workspace.Workspace, lc workspace.LocationConfig) (*Result, error) 
 		m.BPM = harvestBPM(base, dirs, vendor)
 		m.Key = harvestKey(base, vendor)
 		m.Category, m.Tags = harvestCategory(dirs, vendor, pack, segs[packIdx])
+		var vendorInst []annotations.Instrument
+		if vendor != nil {
+			vendorInst = vendor.Instruments
+		}
+		m.Instrument, m.Family = lex.Resolve(base, dirs, vendorInst)
 
-		if m.BPM == 0 && m.Key == "" && m.Category == "" && len(m.Tags) == 0 {
+		if m.BPM == 0 && m.Key == "" && m.Category == "" && m.Instrument == "" && len(m.Tags) == 0 {
 			continue
 		}
 		res.Files++
@@ -124,6 +133,9 @@ func Run(ws *workspace.Workspace, lc workspace.LocationConfig) (*Result, error) 
 		}
 		if m.Category != "" {
 			res.WithCategory++
+		}
+		if m.Instrument != "" {
+			res.WithInstrument++
 		}
 		if len(m.Tags) > 0 {
 			res.WithTags++
@@ -284,4 +296,23 @@ func harvestCategory(dirs []string, v *annotations.Vendor, p *annotations.Pack, 
 		}
 	}
 	return category, tags
+}
+
+// LoadMeta reads a location's harvested metadata cache, keyed by content
+// SHA. Missing cache is empty, not an error — harvest may not have run.
+func LoadMeta(ws *workspace.Workspace, location string) map[string]Meta {
+	out := map[string]Meta{}
+	f, err := os.Open(filepath.Join(ws.Root, "annotations-cache", "meta", location+".jsonl"))
+	if err != nil {
+		return out
+	}
+	defer f.Close()
+	dec := json.NewDecoder(f)
+	for {
+		var m Meta
+		if dec.Decode(&m) != nil {
+			return out
+		}
+		out[m.SHA] = m
+	}
 }

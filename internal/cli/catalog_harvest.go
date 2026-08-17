@@ -38,8 +38,8 @@ new annotations).`,
 			if err != nil {
 				return err
 			}
-			fmt.Printf("%s: %d files with metadata — %d bpm, %d key, %d category, %d tagged\n",
-				lc.Name, h.Files, h.WithBPM, h.WithKey, h.WithCategory, h.WithTags)
+			fmt.Printf("%s: %d files with metadata — %d bpm, %d key, %d category, %d instrument, %d tagged\n",
+				lc.Name, h.Files, h.WithBPM, h.WithKey, h.WithCategory, h.WithInstrument, h.WithTags)
 		}
 		return nil
 	},
