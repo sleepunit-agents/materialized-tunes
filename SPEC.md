@@ -566,10 +566,18 @@ GUI can never disagree about what a plan says.
      maximizing distinguishing info per visible character (git-style
      unique abbreviation, but for sample names).
 - **Dual-mono detection**: if L ≈ R, take one channel, skip the −3 dB pad —
-  no decision needed and lossless by definition. Checkable at materialize
-  time (file is already in cache), verdict cached in the catalog as derived
-  metadata. Leaves annotations for genuine taste calls on true-stereo
-  material only.
+  no decision needed and lossless by definition. **Shipped 2026-08-16**,
+  moved to scan time rather than materialize: local locations analyze
+  every 2-channel integer-PCM WAV/AIFF (|L−R| ≤ 1 LSB@16-bit for every
+  frame) and store `audio.dual_mono` in the catalog; entries scanned
+  before the field existed are backfilled on the next rescan (31,627
+  stereo files in 6 s on the house archive; 3,146 dual-mono — 10%). Remote
+  sources and non-PCM stay unknown (nil), and unknown never folds. Mono
+  devices fold dual-mono sources with `left` instead of the device
+  downmix; stereo-preserving devices opt in with `[audio] dual_mono =
+  "fold"` (default `keep`). The choice is per entry and lands in the
+  lock's ffmpeg args like any transform. Leaves annotations for genuine
+  taste calls on true-stereo material only.
 
 ## 12. Open questions for markup
 

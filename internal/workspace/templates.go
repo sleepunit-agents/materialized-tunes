@@ -44,6 +44,9 @@ bit_depth   = 16
 sample_rate = 44100
 channels    = "stereo"     # preserves source channel count
 downmix     = "sum-3db"    # used only if channels = "mono"
+# dual_mono = "fold"       # stereo files whose channels are identical (scan
+                           # detects them) render mono: lossless, half the
+                           # bytes. Default "keep" renders what the vendor shipped.
 
 [naming]
 max_files_per_dir   = 1024   # audio pool folder limit (manual)

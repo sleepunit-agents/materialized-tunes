@@ -48,6 +48,7 @@ type Entry struct {
 
 	OutPath     string `json:"out_path"`
 	OutChannels int    `json:"out_channels"`
+	DualMono    bool   `json:"dual_mono,omitempty"` // folded by taking one channel (L≡R), no −3 dB pad
 	OutRate     int    `json:"out_rate"`
 	OutDepth    int    `json:"out_depth"`
 	OutFrames   int64  `json:"out_frames"`
@@ -82,6 +83,7 @@ type Plan struct {
 	ExcludedByGlob     int    `json:"excluded_by_glob"`               //
 	StrippedFormatTree int    `json:"stripped_format_tree,omitempty"` // outputs whose vendor format-tree level was dropped
 	Renamed            int    `json:"renamed,omitempty"`              // outputs renamed distinguishing-first for the device display
+	DualMonoFolded     int    `json:"dual_mono_folded,omitempty"`     // stereo sources with identical channels rendered as one channel, no pad
 	DisplayClashes     int    `json:"display_clashes,omitempty"`      // names still identical within naming.display_length
 	LimitedFrom        int    `json:"limited_from,omitempty"`         // eligible count before the view's limit truncated it
 	SkippedNonAudio    []Skip `json:"skipped_non_audio,omitempty"`
@@ -118,14 +120,45 @@ func Eligibility(dev *profile.Device, ce catalog.Entry) (reason string) {
 	return ""
 }
 
+// FoldSpec is what the transcoder needs to know about channels for this
+// entry: the effective channel mode ("mono" folds a 2-channel source) and
+// the downmix to use — the device's, or "left" when the source is dual-mono
+// (identical channels: taking one is lossless, and the −3 dB pad would
+// only make it quieter than it was).
+func (e Entry) FoldSpec(deviceDownmix string) (channels, downmix string) {
+	if e.OutChannels == 1 && e.InChannels == 2 {
+		if e.DualMono {
+			return "mono", "left"
+		}
+		return "mono", deviceDownmix
+	}
+	return "stereo", deviceDownmix
+}
+
+// OutputChannels decides how many channels an eligible source renders with
+// on a device, and whether it is being folded as dual-mono (both channels
+// identical per the catalog): mono devices fold everything, but a
+// dual-mono source folds by taking one channel — no −3 dB pad; stereo-
+// preserving devices fold dual-mono only when audio.dual_mono = "fold".
+func OutputChannels(dev *profile.Device, ce catalog.Entry) (channels int, dualMono bool) {
+	channels = ce.Audio.Channels
+	dualMono = ce.Audio.Channels == 2 && ce.Audio.DualMono != nil && *ce.Audio.DualMono
+	switch {
+	case dev.Audio.Channels == "mono":
+		channels = 1
+	case dualMono && dev.Audio.DualMono == "fold":
+		channels = 1
+	default:
+		dualMono = false // stereo device keeping stereo: the verdict changes nothing
+	}
+	return channels, dualMono
+}
+
 // ConvertedBytes predicts the post-transform output size of an eligible
 // catalog entry on a device — the same math Build uses for fit, exported
 // so pack summaries can be computed from the catalog alone.
 func ConvertedBytes(dev *profile.Device, ce catalog.Entry) int64 {
-	outCh := ce.Audio.Channels
-	if dev.Audio.Channels == "mono" {
-		outCh = 1
-	}
+	outCh, _ := OutputChannels(dev, ce)
 	outFrames := int64(math.Round(float64(ce.Audio.Frames) *
 		float64(dev.Audio.SampleRate) / float64(ce.Audio.SampleRate)))
 	dataBytes := outFrames * int64(outCh) * int64(dev.Audio.BitDepth) / 8
@@ -249,9 +282,9 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 			continue
 		}
 
-		outCh := ce.Audio.Channels
-		if dev.Audio.Channels == "mono" {
-			outCh = 1
+		outCh, dualMono := OutputChannels(dev, ce)
+		if dualMono {
+			p.DualMonoFolded++
 		}
 		outFrames := int64(math.Round(float64(ce.Audio.Frames) *
 			float64(dev.Audio.SampleRate) / float64(ce.Audio.SampleRate)))
@@ -271,6 +304,7 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 			SourceSize:  ce.Size,
 			OutPath:     outputPath(pk.inc, srcForOut),
 			OutChannels: outCh,
+			DualMono:    dualMono,
 			OutRate:     dev.Audio.SampleRate,
 			OutDepth:    dev.Audio.BitDepth,
 			OutFrames:   outFrames,

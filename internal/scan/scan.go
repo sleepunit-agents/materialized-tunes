@@ -7,6 +7,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
+	"runtime"
+	"sort"
+	"sync"
 	"time"
 
 	"github.com/jbarket/materialized-tunes/internal/audio"
@@ -83,6 +87,8 @@ type Result struct {
 	Removed   int
 	Unchanged int
 	AudioErrs int
+
+	DualMonoChecked int // stereo PCM sources analyzed for L≈R this run (new + backfilled)
 }
 
 type Progress func(stage string, done, total int)
@@ -162,8 +168,87 @@ func Run(ctx context.Context, loc location.Location, catalogPath string, progres
 		}
 	}
 
+	// Dual-mono verdicts: derived metadata for 2-channel PCM sources on
+	// local locations. Backfills unchanged entries that predate the field,
+	// so one rescan upgrades an old catalog; remote sources stay unknown.
+	res.DualMonoChecked = analyzeDualMono(ctx, loc, entries, progress)
+
 	if err := catalog.Write(catalogPath, entries); err != nil {
 		return nil, err
 	}
 	return res, nil
+}
+
+// localPather is implemented by locations whose files are on this machine.
+type localPather interface {
+	LocalPath(rel string) string
+}
+
+func analyzeDualMono(ctx context.Context, loc location.Location, entries map[string]catalog.Entry, progress Progress) int {
+	lp, ok := loc.(localPather)
+	if !ok {
+		return 0
+	}
+	var todo []string
+	for p, e := range entries {
+		if e.Audio != nil && e.Audio.Channels == 2 && e.Audio.DualMono == nil &&
+			(e.Audio.Format == "wav" || e.Audio.Format == "aiff") {
+			todo = append(todo, p)
+		}
+	}
+	if len(todo) == 0 {
+		return 0
+	}
+	sort.Strings(todo)
+	workers := runtime.NumCPU()
+	if workers > 16 {
+		workers = 16
+	}
+	type verdict struct {
+		path string
+		dm   *bool
+	}
+	jobs := make(chan string)
+	out := make(chan verdict)
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for p := range jobs {
+				v := verdict{path: p}
+				if f, err := os.Open(lp.LocalPath(p)); err == nil {
+					if dm, err := audio.AnalyzeDualMono(f); err == nil {
+						v.dm = &dm
+					}
+					f.Close()
+				}
+				out <- v
+			}
+		}()
+	}
+	go func() {
+		for _, p := range todo {
+			select {
+			case jobs <- p:
+			case <-ctx.Done():
+			}
+		}
+		close(jobs)
+		wg.Wait()
+		close(out)
+	}()
+	done := 0
+	for v := range out {
+		done++
+		if v.dm != nil {
+			e := entries[v.path]
+			e.Audio.DualMono = v.dm
+			entries[v.path] = e
+		}
+		if progress != nil {
+			progress("dual-mono", done, len(todo))
+		}
+	}
+	return done
 }

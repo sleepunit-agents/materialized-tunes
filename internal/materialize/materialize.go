@@ -28,6 +28,14 @@ import (
 
 const Version = "0.1.0-dev"
 
+// entryArgs is the ffmpeg argument list for one plan entry — the thing the
+// lock records verbatim. Channel handling comes from the entry (dual-mono
+// sources fold by taking one channel), everything else from the device.
+func entryArgs(p *plan.Plan, e plan.Entry) []string {
+	ch, downmix := e.FoldSpec(p.Device.Audio.Downmix)
+	return transcode.BuildArgs(e.InChannels, ch, downmix, e.InRate, e.OutRate, e.OutDepth)
+}
+
 const CardMetaFile = ".mtunes-card.json"
 
 type CardMeta struct {
@@ -81,9 +89,8 @@ func Materialize(ctx context.Context, ws *workspace.Workspace, p *plan.Plan, tar
 	for i, e := range p.Entries {
 		jobs[i] = job{
 			loc: e.Location, srcPath: e.SourcePath, srcSHA: e.SHA256, srcBytes: e.SourceSize,
-			outRel: e.OutPath,
-			args: transcode.BuildArgs(e.InChannels, p.Device.Audio.Channels,
-				p.Device.Audio.Downmix, e.InRate, e.OutRate, e.OutDepth),
+			outRel:  e.OutPath,
+			args:    entryArgs(p, e),
 			planned: e.OutBytes,
 		}
 	}

@@ -74,8 +74,8 @@ func Compute(l *Lock, p *plan.Plan, catalogSHAs map[string]map[string]string) *D
 
 // planArgs rebuilds the ffmpeg args a plan entry would use today.
 func planArgs(p *plan.Plan, e plan.Entry) []string {
-	return transcode.BuildArgs(e.InChannels, p.Device.Audio.Channels,
-		p.Device.Audio.Downmix, e.InRate, e.OutRate, e.OutDepth)
+	ch, downmix := e.FoldSpec(p.Device.Audio.Downmix)
+	return transcode.BuildArgs(e.InChannels, ch, downmix, e.InRate, e.OutRate, e.OutDepth)
 }
 
 func equalArgs(a, b []string) bool {

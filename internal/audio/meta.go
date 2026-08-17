@@ -27,6 +27,13 @@ type Meta struct {
 	BitDepth   int     `json:"bit_depth"`
 	Frames     int64   `json:"frames"`
 	DurationS  float64 `json:"duration_s"`
+
+	// DualMono: for 2-channel PCM sources, whether L and R carry the same
+	// signal (within 1 LSB at 16-bit). nil = not analyzed (remote source,
+	// non-PCM, or scanned before this existed); a folded copy of a
+	// dual-mono file is lossless, so devices may take one channel with no
+	// pad. Derived metadata — computed at scan from the file bytes.
+	DualMono *bool `json:"dual_mono,omitempty"`
 }
 
 // IsAudioPath reports whether the file extension is one we can parse.

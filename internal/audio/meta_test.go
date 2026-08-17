@@ -193,3 +193,65 @@ func TestParseFLAC24Bit(t *testing.T) {
 		t.Errorf("got %+v", m)
 	}
 }
+
+// buildStereoWAV writes interleaved 16-bit stereo where R = L + delta.
+func buildStereoWAV(frames int, delta int16) []byte {
+	var b bytes.Buffer
+	b.WriteString("RIFF")
+	binary.Write(&b, binary.LittleEndian, uint32(0))
+	b.WriteString("WAVE")
+	b.WriteString("fmt ")
+	binary.Write(&b, binary.LittleEndian, uint32(16))
+	binary.Write(&b, binary.LittleEndian, uint16(1))
+	binary.Write(&b, binary.LittleEndian, uint16(2))
+	binary.Write(&b, binary.LittleEndian, uint32(44100))
+	binary.Write(&b, binary.LittleEndian, uint32(44100*4))
+	binary.Write(&b, binary.LittleEndian, uint16(4))
+	binary.Write(&b, binary.LittleEndian, uint16(16))
+	b.WriteString("data")
+	binary.Write(&b, binary.LittleEndian, uint32(frames*4))
+	for i := 0; i < frames; i++ {
+		l := int16((i * 37) % 20000)
+		binary.Write(&b, binary.LittleEndian, l)
+		binary.Write(&b, binary.LittleEndian, l+delta)
+	}
+	return b.Bytes()
+}
+
+func TestAnalyzeDualMono(t *testing.T) {
+	if ok, err := AnalyzeDualMono(bytes.NewReader(buildStereoWAV(5000, 0))); err != nil || !ok {
+		t.Errorf("identical channels: ok=%v err=%v", ok, err)
+	}
+	if ok, err := AnalyzeDualMono(bytes.NewReader(buildStereoWAV(5000, 1))); err != nil || !ok {
+		t.Errorf("1 LSB apart (dither) must still count: ok=%v err=%v", ok, err)
+	}
+	if ok, err := AnalyzeDualMono(bytes.NewReader(buildStereoWAV(5000, 2))); err != nil || ok {
+		t.Errorf("2 LSB apart is stereo: ok=%v err=%v", ok, err)
+	}
+	// mono input: not analyzable, must error rather than answer
+	if _, err := AnalyzeDualMono(bytes.NewReader(buildWAV(1, 44100, 16, 100, false))); err == nil {
+		t.Error("mono must error")
+	}
+	// AIFF stereo, identical channels (big-endian 16-bit)
+	var a bytes.Buffer
+	a.WriteString("FORM")
+	binary.Write(&a, binary.BigEndian, uint32(0))
+	a.WriteString("AIFF")
+	a.WriteString("COMM")
+	binary.Write(&a, binary.BigEndian, uint32(18))
+	binary.Write(&a, binary.BigEndian, uint16(2))
+	binary.Write(&a, binary.BigEndian, uint32(100))
+	binary.Write(&a, binary.BigEndian, uint16(16))
+	a.Write(encodeFloat80(44100))
+	a.WriteString("SSND")
+	binary.Write(&a, binary.BigEndian, uint32(8+400))
+	binary.Write(&a, binary.BigEndian, uint32(0))
+	binary.Write(&a, binary.BigEndian, uint32(0))
+	for i := 0; i < 100; i++ {
+		binary.Write(&a, binary.BigEndian, int16(i*100))
+		binary.Write(&a, binary.BigEndian, int16(i*100))
+	}
+	if ok, err := AnalyzeDualMono(bytes.NewReader(a.Bytes())); err != nil || !ok {
+		t.Errorf("aiff dual mono: ok=%v err=%v", ok, err)
+	}
+}

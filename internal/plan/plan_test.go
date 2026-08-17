@@ -544,3 +544,63 @@ glob="**"
 		t.Errorf("renamed=%d clashes=%d errors=%v", p.Renamed, p.DisplayClashes, p.Errors)
 	}
 }
+
+// TestDualMonoFold: a mono device folds a dual-mono source by taking one
+// channel (no pad); a stereo-preserving device keeps it stereo unless
+// audio.dual_mono = "fold", in which case size halves. Unknown verdicts
+// (nil) never fold.
+func TestDualMonoFold(t *testing.T) {
+	yes, no := true, false
+	dm := wavEntry("k/dm.wav", 2, 48000, 16, 4800)
+	dm.Audio.DualMono = &yes
+	st := wavEntry("k/st.wav", 2, 48000, 16, 4800)
+	st.Audio.DualMono = &no
+	unk := wavEntry("k/unk.wav", 2, 48000, 16, 4800)
+	ws := testWorkspace(t, []catalog.Entry{dm, st, unk}, nil)
+	writeProfile(t, ws, "storage/sq.toml", "name = \"sq\"\nkind = \"quota\"\ncapacity_bytes = 33554432\n")
+	writeProfile(t, ws, "devices/mono.toml", syntaktDevice)
+	writeProfile(t, ws, "devices/stereo.toml", "name=\"s\"\n[audio]\nformat=\"wav\"\nbit_depth=16\nsample_rate=48000\nchannels=\"stereo\"\n[delivery]\nmode=\"staged\"\n")
+	writeProfile(t, ws, "devices/fold.toml", "name=\"f\"\n[audio]\nformat=\"wav\"\nbit_depth=16\nsample_rate=48000\nchannels=\"stereo\"\ndual_mono=\"fold\"\n[delivery]\nmode=\"staged\"\n")
+	for _, d := range []string{"mono", "stereo", "fold"} {
+		writeView(t, ws, d, "name=\""+d+"\"\ndevice=\""+d+"\"\nstorage=\"sq\"\n[[include]]\nlocation=\"src\"\nglob=\"**\"\n")
+	}
+	get := func(view, path string) Entry {
+		p, err := Build(ws, view)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range p.Entries {
+			if e.SourcePath == path {
+				return e
+			}
+		}
+		t.Fatalf("%s: %s missing", view, path)
+		return Entry{}
+	}
+	// mono device: everything folds; only the dual-mono one skips the pad
+	if e := get("mono", "k/dm.wav"); e.OutChannels != 1 || !e.DualMono {
+		t.Errorf("mono/dm: %+v", e)
+	} else if ch, dmx := e.FoldSpec("sum-3db"); ch != "mono" || dmx != "left" {
+		t.Errorf("mono/dm fold spec: %s %s", ch, dmx)
+	}
+	if e := get("mono", "k/st.wav"); e.OutChannels != 1 || e.DualMono {
+		t.Errorf("mono/st: %+v", e)
+	} else if _, dmx := e.FoldSpec("sum-3db"); dmx != "sum-3db" {
+		t.Errorf("mono/st keeps device downmix, got %s", dmx)
+	}
+	if e := get("mono", "k/unk.wav"); e.DualMono {
+		t.Errorf("unknown verdict must not fold as dual-mono: %+v", e)
+	}
+	// stereo device, default keep
+	if e := get("stereo", "k/dm.wav"); e.OutChannels != 2 || e.DualMono {
+		t.Errorf("stereo/keep: %+v", e)
+	}
+	// stereo device, fold: one channel, half the bytes of its stereo sibling
+	fd, fs := get("fold", "k/dm.wav"), get("fold", "k/st.wav")
+	if fd.OutChannels != 1 || !fd.DualMono || fs.OutChannels != 2 {
+		t.Errorf("fold: dm=%+v st=%+v", fd, fs)
+	}
+	if fd.OutBytes-44 != (fs.OutBytes-44)/2 {
+		t.Errorf("fold bytes: dm=%d st=%d", fd.OutBytes, fs.OutBytes)
+	}
+}

@@ -31,6 +31,14 @@ type Audio struct {
 	Channels           string  `toml:"channels" json:"channels"` // "mono" folds; "stereo" preserves source channels
 	Downmix            string  `toml:"downmix" json:"downmix"`
 	MaxDurationSeconds float64 `toml:"max_duration_seconds" json:"max_duration_seconds,omitempty"` // 0 = unlimited
+
+	// DualMono: what to do with 2-channel sources whose channels are
+	// identical (catalog verdict). Mono devices always take one channel
+	// (no −3 dB pad — the pad is for summing two different signals). For
+	// stereo-preserving devices: "keep" (default) renders them as the
+	// stereo they claim to be; "fold" writes them mono — lossless, half the
+	// bytes, and what the sound actually is.
+	DualMono string `toml:"dual_mono" json:"dual_mono,omitempty"`
 }
 
 type Naming struct {
@@ -106,6 +114,11 @@ func LoadDevice(workspaceRoot, name string) (*Device, error) {
 		if _, err := d.Naming.DisallowedRe(); err != nil {
 			return nil, fmt.Errorf("device %s: allowed_chars: %w", name, err)
 		}
+	}
+	switch d.Audio.DualMono {
+	case "", "keep", "fold":
+	default:
+		return nil, fmt.Errorf("device %s: audio.dual_mono must be keep or fold", name)
 	}
 	switch d.Naming.Rename {
 	case "", "distinguishing-first":
