@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -20,6 +21,7 @@ var (
 	locHost   string
 	locVendor string
 	locLayout string
+	locRescan string
 )
 
 var locationAddCmd = &cobra.Command{
@@ -35,7 +37,12 @@ var locationAddCmd = &cobra.Command{
 		if _, exists := ws.Location(name); exists {
 			return fmt.Errorf("location %q already exists", name)
 		}
-		lc := workspace.LocationConfig{Name: name, Type: locType, Root: locRoot, Host: locHost, Vendor: locVendor, Layout: locLayout}
+		lc := workspace.LocationConfig{Name: name, Type: locType, Root: locRoot, Host: locHost, Vendor: locVendor, Layout: locLayout, Rescan: locRescan}
+		if locRescan != "" && locRescan != "manual" {
+			if _, err := time.ParseDuration(locRescan); err != nil {
+				return fmt.Errorf("--rescan must be manual or a duration like 30m, 6h, 24h")
+			}
+		}
 		switch lc.Layout {
 		case "", "vendor-dirs":
 		default:
@@ -123,5 +130,6 @@ func init() {
 	locationAddCmd.Flags().StringVar(&locHost, "host", "", "ssh host (resolved via ~/.ssh/config)")
 	locationAddCmd.Flags().StringVar(&locVendor, "vendor", "", "annotations vendor slug when the root is one vendor's library")
 	locationAddCmd.Flags().StringVar(&locLayout, "layout", "", "\"vendor-dirs\" when the root is a multi-vendor archive laid out <Vendor>/<Pack>")
+	locationAddCmd.Flags().StringVar(&locRescan, "rescan", "", "rescan cadence for app-managed libraries (30m, 6h, 24h); default manual")
 	locationCmd.AddCommand(locationAddCmd, locationListCmd, locationRemoveCmd)
 }

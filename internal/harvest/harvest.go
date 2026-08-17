@@ -267,12 +267,15 @@ func harvestCategory(dirs []string, v *annotations.Vendor, p *annotations.Pack, 
 		for _, c := range v.Categories {
 			for _, g := range c.Match {
 				for _, d := range dirs {
-					name := dirOrderRe.ReplaceAllString(d, "")
-					if ok, _ := doublestar.Match(g, name); ok {
+					// case-insensitive: vendors write "One Shots", "one_shots",
+					// "ONE-SHOTS" across labels and eras; the rule is one glob
+					gl := strings.ToLower(g)
+					name := strings.ToLower(dirOrderRe.ReplaceAllString(d, ""))
+					if ok, _ := doublestar.Match(gl, name); ok {
 						category = c.ID
 						break outer
 					}
-					if ok, _ := doublestar.Match(g, d); ok {
+					if ok, _ := doublestar.Match(gl, strings.ToLower(d)); ok {
 						category = c.ID
 						break outer
 					}
