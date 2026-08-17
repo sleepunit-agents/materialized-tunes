@@ -604,3 +604,40 @@ func TestDualMonoFold(t *testing.T) {
 		t.Errorf("fold bytes: dm=%d st=%d", fd.OutBytes, fs.OutBytes)
 	}
 }
+
+// TestDedupContent: identical bytes at two paths render once (first
+// output path wins) only when the view opts in.
+func TestDedupContent(t *testing.T) {
+	a := wavEntry("kit/Kicks/BD 01.wav", 1, 48000, 16, 4800)
+	b := wavEntry("kit/Kit A/BD 01.wav", 1, 48000, 16, 4800)
+	b.SHA256 = a.SHA256 // same content, different path
+	c := wavEntry("kit/Kicks/BD 02.wav", 1, 48000, 16, 4800)
+	ws := testWorkspace(t, []catalog.Entry{a, b, c}, nil)
+	writeProfile(t, ws, "devices/syntakt.toml", syntaktDevice)
+	writeProfile(t, ws, "storage/sq.toml", "name = \"sq\"\nkind = \"quota\"\ncapacity_bytes = 33554432\n")
+	writeView(t, ws, "keep", "name=\"keep\"\ndevice=\"syntakt\"\nstorage=\"sq\"\n[[include]]\nlocation=\"src\"\nglob=\"**\"\n")
+	writeView(t, ws, "dd", "name=\"dd\"\ndevice=\"syntakt\"\nstorage=\"sq\"\ndedup=\"content\"\n[[include]]\nlocation=\"src\"\nglob=\"**\"\n")
+	p, err := Build(ws, "keep")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Entries) != 3 || p.Deduped != 0 {
+		t.Errorf("keep: %d entries, deduped=%d", len(p.Entries), p.Deduped)
+	}
+	p, err = Build(ws, "dd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Entries) != 2 || p.Deduped != 1 {
+		t.Fatalf("dedup: %d entries, deduped=%d", len(p.Entries), p.Deduped)
+	}
+	// "kit/Kicks/BD 01.wav" sorts before "kit/Kit A/BD 01.wav"? No: "Kicks" > "Kit A"
+	// ('c' 0x63 > 't' 0x74 is false; 'c' < 't') — Kicks first. Either way: exactly one survives.
+	names := map[string]bool{}
+	for _, e := range p.Entries {
+		names[e.OutPath] = true
+	}
+	if !names["kit/Kicks/BD 01.wav"] || names["kit/Kit A/BD 01.wav"] {
+		t.Errorf("first-in-sort-order must win: %v", names)
+	}
+}

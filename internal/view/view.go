@@ -24,9 +24,16 @@ type View struct {
 	// drops it — it carries no musical information and costs a tap on every
 	// browser; "keep" mirrors the source verbatim. Needs annotations to know
 	// the vendor; unknown vendors are always mirrored.
-	FormatTree string    `toml:"format_tree" json:"format_tree,omitempty"`
-	Include    []Include `toml:"include" json:"include"`
-	Exclude    []Exclude `toml:"exclude" json:"exclude,omitempty"`
+	FormatTree string `toml:"format_tree" json:"format_tree,omitempty"`
+
+	// Dedup: "" (default — every selected source renders, even when two
+	// paths hold identical bytes; a DAW kit folder wants its members) or
+	// "content" — identical audio (same SHA) renders once, at the first
+	// output path in sort order. For slot- and card-bound devices where a
+	// duplicate is a wasted slot.
+	Dedup   string    `toml:"dedup" json:"dedup,omitempty"`
+	Include []Include `toml:"include" json:"include"`
+	Exclude []Exclude `toml:"exclude" json:"exclude,omitempty"`
 }
 
 type Include struct {
@@ -65,6 +72,11 @@ func Load(workspaceRoot, name string) (*View, error) {
 	case "", "strip", "keep":
 	default:
 		return nil, fmt.Errorf("view %s: format_tree must be strip or keep", name)
+	}
+	switch v.Dedup {
+	case "", "content":
+	default:
+		return nil, fmt.Errorf("view %s: dedup must be empty or content", name)
 	}
 	for i, inc := range v.Include {
 		if inc.Location == "" || inc.Glob == "" {

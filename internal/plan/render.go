@@ -49,6 +49,9 @@ func (p *Plan) Render(w io.Writer, verbose bool) {
 			fmt.Fprintf(w, "      %s:%s (%s)\n", sk.Location, sk.Path, sk.Reason)
 		}
 	}
+	if n := p.Deduped; n > 0 {
+		fmt.Fprintf(w, "  ℹ %d duplicate sources (identical bytes) render once — dedup = \"content\"\n", n)
+	}
 	if n := p.DualMonoFolded; n > 0 {
 		fmt.Fprintf(w, "  ℹ %d dual-mono sources (L≡R) render as one channel, no −3 dB pad\n", n)
 	}

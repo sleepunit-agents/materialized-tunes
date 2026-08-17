@@ -521,7 +521,19 @@ GUI can never disagree about what a plan says.
     (duration/channels/rate/format) is already in the catalog, so it costs
     nothing to evaluate. A CLI precursor (`catalog ls --device syntakt`)
     would be nearly free to add.
-- Tagging, preview/audition, audio-content dedup.
+- Tagging, preview/audition, audio-content dedup. **Status 2026-08-16**:
+  audition shipped with the UI (v0.4); **content dedup shipped** — a view's
+  `dedup = "content"` renders identical bytes once (first output path in
+  sort order; deterministic, pinned), opt-in because a DAW kit folder wants
+  its members even when they duplicate the one-shots folder; `catalog
+  dupes` reports the groups (house archive: 6,726 groups, 10,420 redundant
+  copies, 1.6 GiB); **per-file metadata harvest shipped** — `harvest`
+  derives bpm/key/category/tags from filename and folder grammar
+  (`_C#4`, `124 Bpm`, Camelot ` - 10A`, `Bass Lines 166.5/`) plus the
+  annotation layer's `[[category]]` and pack `[[dir]]` maps into
+  `annotations-cache/meta/<location>.jsonl` (the UI's bpm/key/cat
+  columns), after every scan and via `catalog harvest`. Audio-content
+  (perceptual) dedup and free-form tagging remain open.
 - **Source annotations**: a metadata cascade over the (still immutable)
   sources, most-specific wins:
   `device default → vendor profile → vendor group/era → pack override →

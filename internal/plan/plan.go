@@ -84,6 +84,7 @@ type Plan struct {
 	StrippedFormatTree int    `json:"stripped_format_tree,omitempty"` // outputs whose vendor format-tree level was dropped
 	Renamed            int    `json:"renamed,omitempty"`              // outputs renamed distinguishing-first for the device display
 	DualMonoFolded     int    `json:"dual_mono_folded,omitempty"`     // stereo sources with identical channels rendered as one channel, no pad
+	Deduped            int    `json:"deduped,omitempty"`              // identical-content sources dropped by dedup = "content"
 	DisplayClashes     int    `json:"display_clashes,omitempty"`      // names still identical within naming.display_length
 	LimitedFrom        int    `json:"limited_from,omitempty"`         // eligible count before the view's limit truncated it
 	SkippedNonAudio    []Skip `json:"skipped_non_audio,omitempty"`
@@ -317,6 +318,22 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 		})
 	}
 	sort.Slice(p.Entries, func(i, j int) bool { return p.Entries[i].OutPath < p.Entries[j].OutPath })
+
+	if v.Dedup == "content" {
+		// Identical bytes render once — the first output path in sort order
+		// wins, so the choice is deterministic and pins in the lock.
+		seenSHA := map[string]bool{}
+		kept := p.Entries[:0]
+		for _, e := range p.Entries {
+			if seenSHA[e.SHA256] {
+				p.Deduped++
+				continue
+			}
+			seenSHA[e.SHA256] = true
+			kept = append(kept, e)
+		}
+		p.Entries = kept
+	}
 
 	if v.Limit > 0 && len(p.Entries) > v.Limit {
 		p.LimitedFrom = len(p.Entries)
