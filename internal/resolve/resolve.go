@@ -71,7 +71,7 @@ func Load(ws *workspace.Workspace, vendorSlug string) map[string]Pack {
 		return out
 	}
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") || e.Name() == stateFile {
 			continue
 		}
 		data, err := os.ReadFile(filepath.Join(cacheDir(ws, vendorSlug), e.Name()))
@@ -97,7 +97,9 @@ func save(ws *workspace.Workspace, vendorSlug string, p Pack) error {
 // Result summarizes one run.
 type Result struct {
 	Packs, Resolved, Missing, Cached, Failed int
-	Throttled                                bool // the vendor closed its window mid-run; the rest resolves next time
+	Remaining                                int       // left for the next run (per-run cap, or a throttle)
+	Throttled                                bool      // the vendor closed its window mid-run
+	CoolingUntil                             time.Time // non-zero: resting until then, nothing was asked
 }
 
 // Progress reports resolver activity (done, total).
@@ -159,22 +161,53 @@ func Location(ctx context.Context, ws *workspace.Workspace, lc workspace.Locatio
 		dirs = append(dirs, d)
 	}
 	sort.Strings(dirs)
-	done := 0
+
+	// Split the work before doing any of it, so the counts are honest even
+	// when the run stops early, and a fully-cached library touches no
+	// network at all.
+	var todo []string
 	for _, d := range dirs {
+		if c, ok := have[d]; ok && c.Error == "" && (!c.Missing || time.Since(c.ResolvedAt) < MissingTTL) {
+			res.Cached++
+			continue
+		}
+		todo = append(todo, d)
+	}
+	if len(todo) == 0 {
+		return res, nil
+	}
+
+	// Respect a cooldown the last run earned, even across processes.
+	pol := policyFor(v.Resolver)
+	st := loadState(ws.Root, v.Slug)
+	if time.Now().Before(st.ThrottledUntil) {
+		res.Remaining = len(todo)
+		res.CoolingUntil = st.ThrottledUntil
+		return res, nil
+	}
+
+	asked := 0
+	done := 0
+	for _, d := range todo {
 		done++
 		if progress != nil {
-			progress(done, len(dirs))
-		}
-		if c, ok := have[d]; ok {
-			fresh := c.Error == "" && (!c.Missing || time.Since(c.ResolvedAt) < MissingTTL)
-			if fresh {
-				res.Cached++
-				continue
-			}
+			progress(done, len(todo))
 		}
 		if ctx.Err() != nil {
 			return res, ctx.Err()
 		}
+		// A big library is resolved over several runs; the cache makes that
+		// free, and the vendor never sees a flood.
+		if pol.MaxPerRun > 0 && asked >= pol.MaxPerRun {
+			res.Remaining = len(todo) - done + 1
+			break
+		}
+		if asked >= pol.Burst {
+			if !sleep(ctx, pol.Pace) {
+				return res, ctx.Err()
+			}
+		}
+		asked++
 		var p Pack
 		var err error
 		for _, fp := range probe[d] {
@@ -188,11 +221,17 @@ func Location(ctx context.Context, ws *workspace.Workspace, lc workspace.Locatio
 		p.Tags = tags.Canonical(p.Tags)
 		switch {
 		case errors.Is(err, errThrottled):
-			// The vendor's window is closed for a while. Don't grind through
-			// the rest failing one by one (a post-scan resolve must never
-			// stall a scan): stop here, leave the remainder for the next run.
-			res.Failed += len(dirs) - done + 1
+			// The vendor's window is closed. Stop immediately — a post-scan
+			// resolve must never stall a scan — and remember the cooldown so
+			// the next run doesn't walk straight back into it.
+			cool := pol.nextCooldown(st.Cooldown)
+			st.ThrottledUntil = time.Now().Add(cool)
+			st.Cooldown = cool.String()
+			st.LastRun = time.Now().UTC()
+			saveState(ws.Root, v.Slug, st)
+			res.Remaining = len(todo) - done + 1
 			res.Throttled = true
+			res.CoolingUntil = st.ThrottledUntil
 			return res, nil
 		case err != nil:
 			p.Error = err.Error()
@@ -207,6 +246,14 @@ func Location(ctx context.Context, ws *workspace.Workspace, lc workspace.Locatio
 			return res, err
 		}
 	}
+	// A run that got through without a hard throttle earns its cooldown back.
+	if res.Resolved > 0 {
+		st.Cooldown = ""
+		st.ThrottledUntil = time.Time{}
+	}
+	st.LastRun = time.Now().UTC()
+	st.Resolved += res.Resolved
+	saveState(ws.Root, v.Slug, st)
 	return res, nil
 }
 
@@ -219,10 +266,6 @@ func (e rateLimited) Error() string { return "rate limited" }
 // errThrottled: backoff gave up — the vendor wants a long pause.
 var errThrottled = errors.New("rate limited by the vendor; try again later")
 
-// pace is the floor between two API calls — polite by default; the vendor
-// serves musicians, not crawlers.
-const pace = 1 * time.Second
-
 // withBackoff runs one resolution, sleeping through 429s with the vendor's
 // Retry-After (or a doubling wait, capped) and giving up after a few
 // tries so a run never hangs on a throttled endpoint.
@@ -232,7 +275,6 @@ func withBackoff(ctx context.Context, fn func() (Pack, error)) (Pack, error) {
 		p, err := fn()
 		var rl rateLimited
 		if !errors.As(err, &rl) {
-			sleep(ctx, pace)
 			return p, err
 		}
 		if attempt >= 3 {

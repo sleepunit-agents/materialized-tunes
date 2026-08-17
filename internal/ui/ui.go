@@ -79,6 +79,7 @@ func Handler(ws *workspace.Workspace) http.Handler {
 	mux.HandleFunc("/api/diff", s.diff)
 	mux.HandleFunc("/api/art", s.art)
 	mux.HandleFunc("/api/blurb", s.blurb)
+	mux.HandleFunc("/api/samples", s.samples)
 	mux.HandleFunc("/api/pack", s.packDetail)
 	mux.HandleFunc("/api/preview", s.preview)
 	mux.HandleFunc("/api/locations", s.locations)

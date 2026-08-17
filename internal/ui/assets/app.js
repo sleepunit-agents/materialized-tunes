@@ -26,6 +26,11 @@ const S = {
   locations: [], suggestions: [], scans: {}, addForm: null,
   storages: [], presets: [], volumes: [], devForm: null, stoForm: null, newRecipe: null, addTo: null,
   packOpen: null, pd: null, pdFolder: '', pdDesc: '', descOpen: false,
+  // cross-pack sample filters: any of these set switches the Library from
+  // pack cards to sample rows. Packs stay the default unit; this is the
+  // "the vocal pack also has a top loop in it" escape hatch.
+  fInst: '', fKey: '', fBpm: '', fCat: '',
+  samples: null, samplesBusy: false,
   player: null,  // {path, name, dur, playing}
   toast: '',
 };
@@ -128,14 +133,16 @@ function stopPlayback() {
   S.player = null;
 }
 
-function playFile(path, name, dur) {
+// location defaults to the open pack's — cross-pack sample rows pass their own.
+function playFile(path, name, dur, location) {
   if (S.player && S.player.path === path) {
     if (S.player.playing) { audio.pause(); S.player.playing = false; }
     else { audio.play(); S.player.playing = true; }
     render(); return;
   }
-  const p = S.packOpen;
-  audio.src = '/api/preview?' + new URLSearchParams({ location: p.location, path });
+  const loc = location || S.packOpen?.location;
+  if (!loc) return;
+  audio.src = '/api/preview?' + new URLSearchParams({ location: loc, path });
   audio.play();
   S.player = { path, name, dur, playing: true };
   render();
@@ -264,8 +271,102 @@ const artHue = (s) => { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt
 // knows one (vendor-dirs archives, annotated locations), else the location.
 const packGroup = p => p.vendor || p.location;
 
+const sampleMode = () => !!(S.fInst || S.fKey || S.fBpm || S.fCat);
+
+// Instruments offered in the filter bar, grouped the way a producer thinks.
+// These are canonical ids from the annotations lexicon; a vendor that never
+// labelled a sound simply has none of it here.
+const INSTRUMENTS = [
+  ['drums', ['kick', 'snare', 'clap', 'hat', 'cymbal', 'tom', 'rim', 'break', 'drums']],
+  ['percussion', ['shaker', 'tambourine', 'conga', 'cowbell', 'clave', 'percussion']],
+  ['bass', ['sub', 'reese', 'bass']],
+  ['keys', ['piano', 'organ', 'keys', 'mallet', 'bell']],
+  ['synth', ['lead', 'pad', 'pluck', 'stab', 'arp', 'synth']],
+  ['acoustic', ['guitar', 'strings', 'brass', 'woodwind']],
+  ['voice / fx', ['vocal', 'fx', 'foley']],
+];
+
+function filterBar() {
+  const opts = INSTRUMENTS.map(([group, ids]) =>
+    `<optgroup label="${group}">${ids.map(i => `<option value="${i}" ${S.fInst === i ? 'selected' : ''}>${i}</option>`).join('')}</optgroup>`).join('');
+  const cats = ['one-shots', 'loops', 'kits', 'multisamples', 'fx'];
+  const inp = (id, ph, val, w) =>
+    `<input id="${id}" class="filt" placeholder="${ph}" value="${esc(val)}" style="width:${w}">`;
+  const active = sampleMode();
+  return `
+    <div class="filters">
+      <span class="flabel">Find</span>
+      <select id="f-inst" class="filt" style="width:150px">
+        <option value="">any instrument</option>${opts}
+      </select>
+      <select id="f-cat" class="filt" style="width:130px">
+        <option value="">any category</option>
+        ${cats.map(c => `<option value="${c}" ${S.fCat === c ? 'selected' : ''}>${c}</option>`).join('')}
+      </select>
+      ${inp('f-key', 'key (Am, C#1)', S.fKey, '120px')}
+      ${inp('f-bpm', 'bpm (120-130)', S.fBpm, '120px')}
+      ${active ? `<span class="restore-btn" data-act="clear-filters">clear</span>` : ''}
+      <div style="flex:1"></div>
+      <span style="font:400 10.5px var(--mono);color:var(--fg-faint)">
+        ${active ? 'showing individual samples across every pack' : 'filter to search inside packs'}
+      </span>
+    </div>`;
+}
+
+function renderSamples() {
+  const d = S.samples;
+  const chips = (d?.instruments || []).slice(0, 12).map(f =>
+    `<span class="chip ${S.fInst === f.id ? 'active' : ''}" data-act="f-inst" data-v="${esc(f.id)}">${esc(f.id)} <span style="color:var(--fg-faint)">${n(f.count)}</span></span>`).join('');
+  const head = `
+    <div class="screen-head">
+      <h1>Samples</h1>
+      <span class="sum">${S.samplesBusy ? 'searching…' : d ? `${n(d.total)} match${d.total === 1 ? '' : 'es'}${d.total > d.shown ? ` · showing ${n(d.shown)}` : ''}` : ''}</span>
+      <div style="flex:1"></div>
+      <div class="search">⌕ <input id="search" placeholder="Search names…" value="${esc(S.search)}"><span class="kbd">⌘K</span></div>
+      <div style="position:relative">
+        <div class="lens-btn ${S.lens ? 'on' : ''}" data-act="toggle-menu">
+          <span class="dot"></span><span class="label">Lens · ${S.lens ? esc(S.lens) : 'off'}</span><span class="caret">▾</span>
+        </div>
+      </div>
+    </div>
+    ${filterBar()}
+    ${chips ? `<div class="filters" style="padding-top:0;border:0">${chips}</div>` : ''}`;
+
+  if (S.samplesBusy && !d) return head + `<div style="font:400 11px var(--mono);color:var(--fg-faint);padding:20px">searching…</div>`;
+  if (!d || !d.samples.length) {
+    return head + `<div style="font:400 11.5px var(--mono);color:var(--fg-faint);padding:24px;line-height:1.7">
+      nothing matches.<br><span style="color:var(--fg-ghost)">only what the vendor labelled is searchable — unlabelled samples never match rather than being guessed at.</span></div>`;
+  }
+  const rows = d.samples.map(s => `
+    <div class="srow" data-act="play-sample" data-loc="${esc(s.location)}" data-path="${esc(s.path)}">
+      <span class="sname" title="${esc(s.path)}">${esc(s.name)}</span>
+      <span class="spack" title="${esc(s.pack)}">${esc(s.pack)}</span>
+      <span class="smeta">${s.instrument ? `<b>${esc(s.instrument)}</b>` : ''}</span>
+      <span class="smeta">${s.key ? esc(s.key) : ''}</span>
+      <span class="smeta">${s.bpm ? s.bpm + ' bpm' : ''}</span>
+      <span class="smeta">${esc(s.category || '')}</span>
+      <span class="smeta" style="text-align:right">${fmtDur(s.duration)}</span>
+    </div>`).join('');
+  return head + `<div class="slist">${rows}</div>`;
+}
+
+async function loadSamples() {
+  const q = new URLSearchParams();
+  if (S.fInst) q.set('instrument', S.fInst);
+  if (S.fKey) q.set('key', S.fKey);
+  if (S.fBpm) q.set('bpm', S.fBpm);
+  if (S.fCat) q.set('category', S.fCat);
+  if (S.locFilter) q.set('pack', S.locFilter);
+  if (S.search) q.set('q', S.search);
+  if (S.lens) q.set('device', S.lens);
+  S.samplesBusy = true; render();
+  try { S.samples = await api('/api/samples?' + q); } catch (e) { S.samples = { total: 0, samples: [], instruments: [] }; }
+  S.samplesBusy = false; render();
+}
+
 function renderLibrary() {
   if (S.packOpen) return renderPackDetail();
+  if (sampleMode()) return renderSamples();
   const q = S.search.toLowerCase();
   const rows = S.packs.filter(p =>
     (!S.locFilter || packGroup(p) === S.locFilter) &&
@@ -321,6 +422,7 @@ function renderLibrary() {
         ${menu}
       </div>
     </div>
+    ${filterBar()}
 
     <div class="grid">
       ${rows.map(p => {
@@ -884,6 +986,15 @@ function wire() {
         localStorage.setItem('mtunes.onlyOwned', JSON.stringify(S.onlyOwned)); render();
       }
       if (act === 'loc') { S.locFilter = (S.locFilter === el.dataset.l) ? '' : el.dataset.l; render(); }
+      if (act === 'f-inst') { S.fInst = (S.fInst === el.dataset.v) ? '' : el.dataset.v; applyFilters(); }
+      if (act === 'clear-filters') {
+        S.fInst = S.fKey = S.fBpm = S.fCat = '';
+        S.samples = null; stopPlayback(); render();
+      }
+      if (act === 'play-sample') {
+        const p = el.dataset.path;
+        playFile(p, p.split('/').pop(), 0, el.dataset.loc);
+      }
       if (act === 'open-pack') {
         if (e.target.closest('a')) return; // product link stays a link
         const row = S.packs.find(x => x.location === el.dataset.loc && x.dir === el.dataset.dir);
@@ -1016,10 +1127,43 @@ function wire() {
   if (afType) afType.addEventListener('change', () => { S.addForm.type = afType.value; S.addForm.name = document.getElementById('af-name').value; S.addForm.root = document.getElementById('af-root').value; render(); });
   const search = document.getElementById('search');
   if (search) {
-    search.addEventListener('input', () => { S.search = search.value; renderPreservingSearch(); });
+    search.addEventListener('input', () => {
+      S.search = search.value;
+      if (sampleMode()) { clearTimeout(searchTimer); searchTimer = setTimeout(loadSamples, 220); }
+      renderPreservingSearch();
+    });
   }
+  // cross-pack filters: selects apply immediately, text fields debounce
+  const bind = (id, key, evt) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener(evt, () => {
+      S[key] = el.value.trim();
+      if (evt === 'input') { clearTimeout(searchTimer); searchTimer = setTimeout(applyFilters, 300); }
+      else applyFilters();
+    });
+  };
+  bind('f-inst', 'fInst', 'change');
+  bind('f-cat', 'fCat', 'change');
+  bind('f-key', 'fKey', 'input');
+  bind('f-bpm', 'fBpm', 'input');
   const vp = document.getElementById('view-pick');
   if (vp) vp.addEventListener('change', () => { S.view = vp.value; S.disabled = new Set(); S.pf = null; loadPreflight(); });
+}
+
+let searchTimer = null;
+
+// applyFilters keeps focus where the user was typing — the whole screen
+// re-renders, so re-find the field and restore the caret.
+function applyFilters() {
+  const active = document.activeElement?.id;
+  const caret = document.activeElement?.selectionStart;
+  if (!sampleMode()) { S.samples = null; render(); return; }
+  loadSamples().then(() => {
+    if (!active) return;
+    const el = document.getElementById(active);
+    if (el) { el.focus(); if (caret != null && el.setSelectionRange) el.setSelectionRange(caret, caret); }
+  });
 }
 
 function renderPreservingSearch() {

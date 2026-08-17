@@ -521,6 +521,41 @@ GUI can never disagree about what a plan says.
     (duration/channels/rate/format) is already in the catalog, so it costs
     nothing to evaluate. A CLI precursor (`catalog ls --device syntakt`)
     would be nearly free to add.
+### Instrument facet and cross-pack search (2026-08-17)
+
+Packs are the browsing unit, but a jungle pack still holds 69 vocals and
+16 pianos — the instrument facet is how you reach them without abandoning
+pack-first browsing. Sources, in the order they are trusted:
+
+1. **What the vendor labelled.** `01. Bass Drum/`, `TA_Kick_Loop_124_D.wav`.
+   The annotations repo carries a shared `instruments.toml` (canonical id,
+   family, the words vendors write, `avoid` traps) applied to every vendor,
+   plus per-vendor `[[instrument]]` blocks for abbreviations only
+   unambiguous inside one library (SFM's `CH`/`HH`/`BD`). Every label on a
+   path is collected and the most specific wins (earliest in the lexicon) —
+   machine names land in filenames, so `04. Rimshot/Rimshot TOM 31.wav` has
+   to read as a rimshot while `Drums/Kick 01.wav` stays a kick. 86% of the
+   house archive and 97% of Splice carry one.
+2. **Vendor APIs**, for marketplaces — but per-SAMPLE calls do not scale:
+   Splice 429s `assetsSearch` for hours after a few hundred rapid queries
+   (measured 2026-08-17). Pack-level resolution is fine and cached; per-file
+   enrichment must stay opportunistic. Filtering never depends on it.
+3. **Never** audio analysis or asking the user to tag a 160k-file library.
+   Unlabelled samples stay unlabelled and simply don't match.
+
+Surfaced by `catalog samples` (`--instrument/--family/--category/--key/
+--bpm/--pack/--device`, `--json`) and by the UI's filter bar, which swaps
+the Library from pack cards to cross-pack sample rows while any filter is
+set, with instrument facet counts and the device lens still applied.
+
+**Resolver rate limiting.** A vendor's free API is a favour. Policies are
+per strategy: a burst for small jobs (a new pack resolves instantly), a
+pace after it, a per-run cap so a 220-pack library resolves over several
+runs, and a cooldown persisted in `annotations-cache/resolve/<vendor>/
+_state.json` that survives the process — otherwise every scan walks
+straight back into a limit that is still in force. Cached answers keep
+working throughout.
+
 - Tagging, preview/audition, audio-content dedup. **Status 2026-08-16**:
   audition shipped with the UI (v0.4); **content dedup shipped** — a view's
   `dedup = "content"` renders identical bytes once (first output path in
