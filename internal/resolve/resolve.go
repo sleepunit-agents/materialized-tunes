@@ -20,6 +20,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -96,6 +97,7 @@ func save(ws *workspace.Workspace, vendorSlug string, p Pack) error {
 // Result summarizes one run.
 type Result struct {
 	Packs, Resolved, Missing, Cached, Failed int
+	Throttled                                bool // the vendor closed its window mid-run; the rest resolves next time
 }
 
 // Progress reports resolver activity (done, total).
@@ -122,8 +124,9 @@ func Location(ctx context.Context, ws *workspace.Workspace, lc workspace.Locatio
 	if err != nil {
 		return nil, err
 	}
-	// one probe file per pack dir: the first audio path in sort order
-	probe := map[string]string{}
+	// Probe files per pack dir: first, middle and last audio path in sort
+	// order — a renamed or delisted single sample must not sink the pack.
+	byPack := map[string][]string{}
 	paths := make([]string, 0, len(entries))
 	for p, e := range entries {
 		if e.Audio != nil {
@@ -136,9 +139,17 @@ func Location(ctx context.Context, ws *workspace.Workspace, lc workspace.Locatio
 		if !ok || rest == "" {
 			continue
 		}
-		if _, seen := probe[top]; !seen {
-			probe[top] = rest
+		byPack[top] = append(byPack[top], rest)
+	}
+	probe := map[string][]string{}
+	for top, all := range byPack {
+		picks := []string{all[0]}
+		if n := len(all); n > 2 {
+			picks = append(picks, all[n/2], all[n-1])
+		} else if n == 2 {
+			picks = append(picks, all[1])
 		}
+		probe[top] = picks
 	}
 	res.Packs = len(probe)
 	have := Load(ws, v.Slug)
@@ -164,11 +175,25 @@ func Location(ctx context.Context, ws *workspace.Workspace, lc workspace.Locatio
 		if ctx.Err() != nil {
 			return res, ctx.Err()
 		}
-		p, err := withBackoff(ctx, func() (Pack, error) { return r(ctx, d, probe[d]) })
+		var p Pack
+		var err error
+		for _, fp := range probe[d] {
+			p, err = withBackoff(ctx, func() (Pack, error) { return r(ctx, d, fp) })
+			if err != nil || p.Name != "" {
+				break // a hit, or a real failure; only "not found" tries the next probe
+			}
+		}
 		p.Dir = d
 		p.ResolvedAt = time.Now().UTC()
 		p.Tags = tags.Canonical(p.Tags)
 		switch {
+		case errors.Is(err, errThrottled):
+			// The vendor's window is closed for a while. Don't grind through
+			// the rest failing one by one (a post-scan resolve must never
+			// stall a scan): stop here, leave the remainder for the next run.
+			res.Failed += len(dirs) - done + 1
+			res.Throttled = true
+			return res, nil
 		case err != nil:
 			p.Error = err.Error()
 			res.Failed++
@@ -191,6 +216,9 @@ type rateLimited struct{ RetryAfter time.Duration }
 
 func (e rateLimited) Error() string { return "rate limited" }
 
+// errThrottled: backoff gave up — the vendor wants a long pause.
+var errThrottled = errors.New("rate limited by the vendor; try again later")
+
 // pace is the floor between two API calls — polite by default; the vendor
 // serves musicians, not crawlers.
 const pace = 1 * time.Second
@@ -207,15 +235,15 @@ func withBackoff(ctx context.Context, fn func() (Pack, error)) (Pack, error) {
 			sleep(ctx, pace)
 			return p, err
 		}
-		if attempt >= 5 {
-			return p, errors.New("splice: rate limited; try again later")
+		if attempt >= 3 {
+			return p, errThrottled
 		}
 		d := wait
 		if rl.RetryAfter > 0 {
 			d = rl.RetryAfter
 		}
-		if d > 90*time.Second {
-			d = 90 * time.Second
+		if d > 30*time.Second {
+			d = 30 * time.Second
 		}
 		if !sleep(ctx, d) {
 			return p, ctx.Err()
@@ -251,8 +279,11 @@ const spliceEndpoint = "https://surfaces-graphql.splice.com/graphql"
 // (SampleAsset.name is exactly the path within the pack) and reads its
 // parent pack: name, slug, provider, permalink base, cover file.
 func spliceGraphQL(ctx context.Context, packDir, probePath string) (Pack, error) {
-	const q = `query($fp:String!){ assetsSearch(filter:{asset_type_slug:sample, filepath:$fp}, pagination:{limit:5}) { items { ... on SampleAsset { name parents(filter:{asset_type_slug:pack}) { items { ... on PackAsset { name uuid permalink_slug permalink_base_url provider { name permalink_slug } tags { label } files { url asset_file_type_slug } } } } } } } }`
-	body, _ := json.Marshal(map[string]any{"query": q, "variables": map[string]string{"fp": probePath}})
+	// Search by the sample's basename — the full-path filter chokes on some
+	// characters ("#" in "ff_at_synth_korg_C#min.wav") — and match the full
+	// name strictly below.
+	const q = `query($fp:String!){ assetsSearch(filter:{asset_type_slug:sample, filepath:$fp}, pagination:{limit:25}) { items { ... on SampleAsset { name parents(filter:{asset_type_slug:pack}) { items { ... on PackAsset { name uuid permalink_slug permalink_base_url provider { name permalink_slug } tags { label } files { url asset_file_type_slug } } } } } } } }`
+	body, _ := json.Marshal(map[string]any{"query": q, "variables": map[string]string{"fp": path.Base(probePath)}})
 	req, err := http.NewRequestWithContext(ctx, "POST", spliceEndpoint, bytes.NewReader(body))
 	if err != nil {
 		return Pack{}, err
@@ -318,12 +349,19 @@ func spliceGraphQL(ctx context.Context, packDir, probePath string) (Pack, error)
 	if len(out.Errors) > 0 {
 		return Pack{}, errors.New("splice: " + out.Errors[0].Message)
 	}
-	// Prefer the sample whose name IS our probe path; the search is fuzzy.
-	for pass := 0; pass < 2; pass++ {
-		for _, it := range out.Data.AssetsSearch.Items {
-			if pass == 0 && !strings.EqualFold(it.Name, probePath) {
-				continue
-			}
+	// The search is fuzzy and happily returns unrelated packs for a path it
+	// doesn't know, so only a real hit counts: the sample's name IS our
+	// probe path, or shares its basename and immediate parent dir (a
+	// renamed top-level folder). Anything looser attributes wrong packs —
+	// verified the hard way (21 of 196 wrong with a loose fallback).
+	probeBase := path.Base(probePath)
+	probeDir := path.Base(path.Dir(probePath))
+	for _, it := range out.Data.AssetsSearch.Items {
+		if !strings.EqualFold(it.Name, probePath) &&
+			!(strings.EqualFold(path.Base(it.Name), probeBase) && strings.EqualFold(path.Base(path.Dir(it.Name)), probeDir)) {
+			continue
+		}
+		{
 			for _, pk := range it.Parents.Items {
 				if pk.Name == "" {
 					continue
