@@ -49,6 +49,9 @@ func (p *Plan) Render(w io.Writer, verbose bool) {
 			fmt.Fprintf(w, "      %s:%s (%s)\n", sk.Location, sk.Path, sk.Reason)
 		}
 	}
+	if n := p.StrippedFormatTree; n > 0 {
+		fmt.Fprintf(w, "  ℹ %d outputs lose their vendor format-tree level (WAV/, * 24 bit stereo/ …); format_tree = \"keep\" to mirror\n", n)
+	}
 	if n := len(p.SkippedNonAudio); n > 0 {
 		fmt.Fprintf(w, "  ℹ %d non-audio files skipped\n", n)
 		if verbose {

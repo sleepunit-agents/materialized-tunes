@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"sort"
 	"time"
 
@@ -79,8 +80,12 @@ var catalogStatusCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
-			if len(entries) == 0 {
+			if _, err := os.Stat(ws.CatalogPath(lc.Name)); os.IsNotExist(err) {
 				fmt.Printf("%s: not scanned yet (`mtunes scan %s`)\n", lc.Name, lc.Name)
+				continue
+			}
+			if len(entries) == 0 {
+				fmt.Printf("%s: scanned, 0 files (is --root right?)\n", lc.Name)
 				continue
 			}
 

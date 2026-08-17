@@ -13,13 +13,20 @@ import (
 )
 
 type View struct {
-	Name    string    `toml:"name" json:"name"`
-	Device  string    `toml:"device" json:"device"`
-	Storage string    `toml:"storage" json:"storage"`
-	Target  string    `toml:"target" json:"target,omitempty"` // default materialize destination; --to overrides. "~/" expands.
-	Limit   int       `toml:"limit" json:"limit,omitempty"`   // keep only the first N eligible files (by output path); 0 = all
-	Include []Include `toml:"include" json:"include"`
-	Exclude []Exclude `toml:"exclude" json:"exclude,omitempty"`
+	Name    string `toml:"name" json:"name"`
+	Device  string `toml:"device" json:"device"`
+	Storage string `toml:"storage" json:"storage"`
+	Target  string `toml:"target" json:"target,omitempty"` // default materialize destination; --to overrides. "~/" expands.
+	Limit   int    `toml:"limit" json:"limit,omitempty"`   // keep only the first N eligible files (by output path); 0 = all
+
+	// FormatTree: what to do with a vendor's format-tree level (SFM's "WAV/",
+	// Polyend's "<Pack> 24 bit stereo/") in output paths. "strip" (default)
+	// drops it — it carries no musical information and costs a tap on every
+	// browser; "keep" mirrors the source verbatim. Needs annotations to know
+	// the vendor; unknown vendors are always mirrored.
+	FormatTree string    `toml:"format_tree" json:"format_tree,omitempty"`
+	Include    []Include `toml:"include" json:"include"`
+	Exclude    []Exclude `toml:"exclude" json:"exclude,omitempty"`
 }
 
 type Include struct {
@@ -53,6 +60,11 @@ func Load(workspaceRoot, name string) (*View, error) {
 	}
 	if len(v.Include) == 0 {
 		return nil, fmt.Errorf("view %s: at least one [[include]] is required", name)
+	}
+	switch v.FormatTree {
+	case "", "strip", "keep":
+	default:
+		return nil, fmt.Errorf("view %s: format_tree must be strip or keep", name)
 	}
 	for i, inc := range v.Include {
 		if inc.Location == "" || inc.Glob == "" {

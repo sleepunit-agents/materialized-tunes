@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+	"github.com/bmatcuk/doublestar/v4"
 )
 
 type Vendor struct {
@@ -21,6 +22,12 @@ type Vendor struct {
 	Homepage string   `toml:"homepage" json:"homepage,omitempty"`
 
 	Grammar string `json:"grammar,omitempty"` // packs.grammar, e.g. "top-level-dirs"
+
+	// Formats: which per-pack dir holds the canonical audio and which are
+	// parallel exports (Ableton/Kontakt/16-bit cuts). Globs over the dir
+	// name directly under the pack dir. "" / "." = audio sits at pack root.
+	CanonicalDir string   `json:"canonical_dir,omitempty"`
+	ParallelDirs []string `json:"parallel_dirs,omitempty"`
 
 	// Install: where this vendor's library lives by default, per OS.
 	// A fact about the vendor, same as its pack grammar — used to offer
@@ -152,6 +159,10 @@ func loadVendor(dir string) (*Vendor, error) {
 		Packs struct {
 			Grammar string `toml:"grammar"`
 		} `toml:"packs"`
+		Formats struct {
+			CanonicalDir string   `toml:"canonical_dir"`
+			ParallelDirs []string `toml:"parallel_dirs"`
+		} `toml:"formats"`
 		Install struct {
 			Macos   []string `toml:"macos"`
 			Linux   []string `toml:"linux"`
@@ -174,6 +185,7 @@ func loadVendor(dir string) (*Vendor, error) {
 		Slug: vf.Vendor.Slug, Name: vf.Vendor.Name,
 		Aliases: vf.Vendor.Aliases, Homepage: vf.Vendor.Homepage,
 		Grammar: vf.Packs.Grammar, Categories: vf.Category,
+		CanonicalDir: vf.Formats.CanonicalDir, ParallelDirs: vf.Formats.ParallelDirs,
 		InstallMac: vf.Install.Macos, InstallLinux: vf.Install.Linux,
 		InstallWin: vf.Install.Windows, InstallNote: vf.Install.Note,
 		dir: dir,
@@ -214,6 +226,46 @@ func loadVendor(dir string) (*Vendor, error) {
 		})
 	}
 	return v, nil
+}
+
+// IsFormatTree reports whether dir (a directory name directly under a pack
+// dir) is a format-tree level — the vendor's canonical audio dir ("WAV",
+// "* 24 bit stereo") or one of its parallel exports — i.e. a level that
+// carries no musical information and can be dropped from output paths.
+// A pack's own [[dir]] map wins where it speaks: an explicit
+// role = "format-tree" is one; any other role on that exact dir (a
+// category dir at pack root that happens to be called "FX") is not. A
+// "." canonical dir means audio sits at pack root and nothing is a tree.
+func (v *Vendor) IsFormatTree(p *Pack, dir string) bool {
+	if p != nil {
+		for _, d := range p.Dirs {
+			dp := strings.Trim(d.Path, "/")
+			if strings.Contains(dp, "/") || !strings.EqualFold(dp, dir) {
+				continue
+			}
+			if d.Role == "format-tree" {
+				return true
+			}
+			// canonical-audio on a single segment is only a tree when the
+			// vendor has a format level at all and this dir IS that level
+			if d.Role == "canonical-audio" && v.CanonicalDir != "" && v.CanonicalDir != "." {
+				ok, _ := doublestar.Match(v.CanonicalDir, dir)
+				return ok
+			}
+			return false
+		}
+	}
+	if v.CanonicalDir != "" && v.CanonicalDir != "." {
+		if ok, _ := doublestar.Match(v.CanonicalDir, dir); ok {
+			return true
+		}
+	}
+	for _, g := range v.ParallelDirs {
+		if ok, _ := doublestar.Match(g, dir); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // PackByDir finds the pack annotated for an on-disk directory name.

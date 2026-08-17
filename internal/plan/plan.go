@@ -9,12 +9,14 @@ import (
 	"fmt"
 	"math"
 	"path"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
 
+	"github.com/jbarket/materialized-tunes/internal/annotations"
 	"github.com/jbarket/materialized-tunes/internal/catalog"
 	"github.com/jbarket/materialized-tunes/internal/profile"
 	"github.com/jbarket/materialized-tunes/internal/view"
@@ -76,12 +78,13 @@ type Plan struct {
 
 	Entries []Entry `json:"entries"`
 
-	Matched          int    `json:"matched"`                // selected by includes before any exclusion
-	ExcludedByGlob   int    `json:"excluded_by_glob"`       //
-	LimitedFrom      int    `json:"limited_from,omitempty"` // eligible count before the view's limit truncated it
-	SkippedNonAudio  []Skip `json:"skipped_non_audio,omitempty"`
-	SkippedDuration  []Skip `json:"skipped_duration,omitempty"`
-	UnparseableAudio []Skip `json:"unparseable_audio,omitempty"`
+	Matched            int    `json:"matched"`                        // selected by includes before any exclusion
+	ExcludedByGlob     int    `json:"excluded_by_glob"`               //
+	StrippedFormatTree int    `json:"stripped_format_tree,omitempty"` // outputs whose vendor format-tree level was dropped
+	LimitedFrom        int    `json:"limited_from,omitempty"`         // eligible count before the view's limit truncated it
+	SkippedNonAudio    []Skip `json:"skipped_non_audio,omitempty"`
+	SkippedDuration    []Skip `json:"skipped_duration,omitempty"`
+	UnparseableAudio   []Skip `json:"unparseable_audio,omitempty"`
 
 	Collisions []Collision `json:"collisions,omitempty"`
 	Errors     []string    `json:"errors"` // any error ⇒ materialize refuses
@@ -150,6 +153,25 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 	}
 
 	p := &Plan{View: v, Device: dev, Storage: sto}
+
+	// Format-tree stripping is vendor knowledge: load annotations once and
+	// build a stripper per location (nil when the view keeps trees or the
+	// location's vendors are unknown).
+	var strippers map[string]*treeStripper
+	if v.FormatTree != "keep" {
+		vendors, err := annotations.Load(filepath.Join(ws.Root, "annotations"))
+		if err != nil {
+			return nil, err
+		}
+		strippers = map[string]*treeStripper{}
+		for _, inc := range v.Include {
+			if _, done := strippers[inc.Location]; done {
+				continue
+			}
+			lc, _ := ws.Location(inc.Location)
+			strippers[inc.Location] = newTreeStripper(lc, vendors)
+		}
+	}
 
 	catalogs := map[string]map[string]catalog.Entry{}
 	for _, inc := range v.Include {
@@ -233,12 +255,19 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 			float64(dev.Audio.SampleRate) / float64(ce.Audio.SampleRate)))
 		outBytes := ConvertedBytes(dev, ce)
 
+		srcForOut := ce.Path
+		if st := strippers[loc]; st != nil && !globCoversTree(pk.inc, st.vendorDirs) {
+			if stripped, ok := st.strip(ce.Path); ok {
+				srcForOut = stripped
+				p.StrippedFormatTree++
+			}
+		}
 		p.Entries = append(p.Entries, Entry{
 			Location:    loc,
 			SourcePath:  ce.Path,
 			SHA256:      ce.SHA256,
 			SourceSize:  ce.Size,
-			OutPath:     outputPath(pk.inc, ce.Path),
+			OutPath:     outputPath(pk.inc, srcForOut),
 			OutChannels: outCh,
 			OutRate:     dev.Audio.SampleRate,
 			OutDepth:    dev.Audio.BitDepth,
@@ -272,6 +301,81 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 	p.checkNaming()
 	p.checkFit()
 	return p, nil
+}
+
+// treeStripper drops a vendor's format-tree level from catalog paths: the
+// segment right after the pack dir when annotations say it is the
+// canonical audio dir or a parallel export ("808 From Mars/WAV/Kicks/x" →
+// "808 From Mars/Kicks/x", "ASMR/ASMR 24 bit stereo/y" → "ASMR/y"). Pack
+// depth follows the location layout; the vendor comes from the location's
+// slug, or from the top dir under vendor-dirs.
+type treeStripper struct {
+	vendorDirs bool
+	fixed      *annotations.Vendor // single-vendor location
+	vendors    []annotations.Vendor
+	byTop      map[string]*annotations.Vendor // vendor-dirs: top dir → vendor (nil = unknown)
+}
+
+func newTreeStripper(lc workspace.LocationConfig, vendors []annotations.Vendor) *treeStripper {
+	if len(vendors) == 0 {
+		return nil
+	}
+	st := &treeStripper{vendorDirs: lc.Layout == "vendor-dirs", vendors: vendors, byTop: map[string]*annotations.Vendor{}}
+	if !st.vendorDirs {
+		st.fixed = annotations.BySlug(vendors)[lc.Vendor]
+		if st.fixed == nil {
+			return nil
+		}
+	}
+	return st
+}
+
+// globCoversTree reports whether an include's static glob root already
+// reaches past the pack dir into the format tree ("<pack>/WAV/**"): its
+// `as` (or the mirror) then already decides that level, so stripping would
+// double up. Pack depth is 1 (flat) or 2 (vendor-dirs).
+func globCoversTree(inc view.Include, vendorDirs bool) bool {
+	root := strings.Trim(view.GlobRoot(inc.Glob), "/")
+	if root == "" {
+		return false
+	}
+	depth := len(strings.Split(root, "/"))
+	packDepth := 1
+	if vendorDirs {
+		packDepth = 2
+	}
+	return depth > packDepth
+}
+
+// strip returns the path without its format-tree segment, and whether one
+// was removed.
+func (st *treeStripper) strip(p string) (string, bool) {
+	segs := strings.Split(p, "/")
+	packIdx := 0 // index of the pack dir segment
+	vendor := st.fixed
+	if st.vendorDirs {
+		if len(segs) < 4 { // vendor/pack/tree/file at minimum
+			return p, false
+		}
+		packIdx = 1
+		v, seen := st.byTop[segs[0]]
+		if !seen {
+			v = annotations.ByName(st.vendors, segs[0])
+			st.byTop[segs[0]] = v
+		}
+		vendor = v
+	} else if len(segs) < 3 { // pack/tree/file
+		return p, false
+	}
+	if vendor == nil {
+		return p, false
+	}
+	pack := vendor.PackByDir(segs[packIdx])
+	if !vendor.IsFormatTree(pack, segs[packIdx+1]) {
+		return p, false
+	}
+	out := append(append([]string{}, segs[:packIdx+1]...), segs[packIdx+2:]...)
+	return strings.Join(out, "/"), true
 }
 
 // outputPath maps a source path to its output path: mirror by default, or

@@ -59,8 +59,11 @@ kind           = "quota"
 capacity_bytes = 33554432
 max_files      = 64
 `,
-	"storage/octatrack-cf.toml": `# The 32GB CF card. Set capacity_bytes from the real card:
-#   diskutil info /Volumes/YOURCARD | grep "Container Total Space"
+	"storage/octatrack-cf.toml": `# The 32GB CF card. Set capacity_bytes from the real card, mounted:
+#   easiest: mtunes ui → Setup → Storage → pick the volume (reads it live)
+#   macOS:   diskutil info /Volumes/YOURCARD | grep "Container Total Space"
+#   Windows: (Get-Volume -DriveLetter E).Size
+#   Linux:   df -B1 /media/$USER/YOURCARD
 # Marketing "32GB" is a lie; this placeholder assumes ~29.7 GiB usable.
 name           = "octatrack-cf"
 kind           = "filesystem"

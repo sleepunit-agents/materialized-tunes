@@ -488,7 +488,15 @@ GUI can never disagree about what a plan says.
   not to the view — so slices follow the sample across views. The lockfile
   already records everything needed to key them.
 - Vendor-aware format-tree selection (auto-pick WAV vs Ableton-rack folders
-  per device). v0 answer: recipe excludes.
+  per device). v0 answer: recipe excludes. **Half shipped 2026-08-16**: the
+  *output* side — a view's `format_tree = "strip"` (default) drops the
+  vendor's format-tree level from output paths using annotations
+  (`[formats] canonical_dir` / `parallel_dirs`, or a pack `[[dir]]` with
+  `role = "format-tree"`): `808 From Mars/WAV/Kicks/x` → `808 From Mars/
+  Kicks/x`, `ASMR/ASMR 24 bit stereo/y` → `ASMR/y`. Category dirs at pack
+  root are never trees (Rhythm Lab, BMT, Polyend Heights); unknown vendors
+  mirror; an include whose glob root already reaches into the tree is left
+  to its `as`. Selection (which tree to *pick*) is still the recipe's job.
 - Direct device upload for staged devices (skipping the Transfer drag-and-
   drop) — e.g. via SysEx/SDS the way elektroid does it. v0 answer: hand the
   staging folder to Transfer.

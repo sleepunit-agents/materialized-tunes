@@ -375,3 +375,101 @@ glob="x/**"
 		t.Fatalf("sanitize merging two names must collide, got %+v", p.Collisions)
 	}
 }
+
+// TestFormatTreeStrip: with annotations present, the vendor's format-tree
+// level (SFM "WAV", Polyend "* 24 bit stereo") disappears from output
+// paths under both location layouts; category dirs at pack root and
+// unknown vendors are left alone; format_tree = "keep" mirrors; an include
+// whose glob root already reaches into the tree is not stripped twice.
+func TestFormatTreeStrip(t *testing.T) {
+	ws := testWorkspace(t, []catalog.Entry{
+		wavEntry("Samples From Mars/808 From Mars/WAV/Kicks/BD 01.wav", 1, 48000, 16, 4800),
+		wavEntry("Samples From Mars/808 From Mars/Ableton Live/BD 01.wav", 1, 48000, 16, 4800),
+		wavEntry("Polyend/ASMR/ASMR 24 bit stereo/kit_a_1.wav", 1, 48000, 16, 4800),
+		wavEntry("Polyend/Heights/Riser/rise 1.wav", 1, 48000, 16, 4800),  // no format level: category at root
+		wavEntry("Rhythm Lab/Amen/Original/amen.wav", 1, 48000, 16, 4800), // canonical "." → nothing is a tree
+		wavEntry("Nobody/Pack/WAV/x.wav", 1, 48000, 16, 4800),             // unknown vendor: mirrored
+	}, map[string]string{
+		"annotations/vendors/sfm/vendor.toml":            "[vendor]\nname=\"Samples From Mars\"\nslug=\"samples-from-mars\"\n[formats]\ncanonical_dir=\"WAV\"\nparallel_dirs=[\"Ableton Live*\", \"Kontakt*\"]\n",
+		"annotations/vendors/polyend/vendor.toml":        "[vendor]\nname=\"Polyend\"\nslug=\"polyend\"\n[formats]\ncanonical_dir=\"* 24 bit stereo\"\nparallel_dirs=[\"* 16 bit mono\"]\n",
+		"annotations/vendors/polyend/packs/heights.toml": "[pack]\nname=\"Heights\"\nslug=\"heights\"\ndir=\"Heights\"\n[[dir]]\npath=\"Riser\"\nrole=\"canonical-audio\"\ncategory=\"fx\"\n",
+		"annotations/vendors/rhythm-lab/vendor.toml":     "[vendor]\nname=\"Rhythm Lab\"\nslug=\"rhythm-lab\"\n[formats]\ncanonical_dir=\".\"\n",
+	})
+	// the test workspace's location is flat; switch it to vendor-dirs
+	ws.Config.Locations[0].Layout = "vendor-dirs"
+	if err := ws.SaveConfig(); err != nil {
+		t.Fatal(err)
+	}
+	writeProfile(t, ws, "devices/syntakt.toml", syntaktDevice)
+	writeProfile(t, ws, "storage/sq.toml", `name = "sq"
+kind = "quota"
+capacity_bytes = 33554432
+`)
+	writeView(t, ws, "v", `name="v"
+device="syntakt"
+storage="sq"
+[[include]]
+location="src"
+glob="**"
+`)
+	p, err := Build(ws, "v")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, e := range p.Entries {
+		got[e.SourcePath] = e.OutPath
+	}
+	want := map[string]string{
+		"Samples From Mars/808 From Mars/WAV/Kicks/BD 01.wav":    "Samples From Mars/808 From Mars/Kicks/BD 01.wav",
+		"Samples From Mars/808 From Mars/Ableton Live/BD 01.wav": "Samples From Mars/808 From Mars/BD 01.wav",
+		"Polyend/ASMR/ASMR 24 bit stereo/kit_a_1.wav":            "Polyend/ASMR/kit_a_1.wav",
+		"Polyend/Heights/Riser/rise 1.wav":                       "Polyend/Heights/Riser/rise 1.wav",
+		"Rhythm Lab/Amen/Original/amen.wav":                      "Rhythm Lab/Amen/Original/amen.wav",
+		"Nobody/Pack/WAV/x.wav":                                  "Nobody/Pack/WAV/x.wav",
+	}
+	for src, out := range want {
+		if got[src] != out {
+			t.Errorf("%s → %q, want %q", src, got[src], out)
+		}
+	}
+	if p.StrippedFormatTree != 3 {
+		t.Errorf("stripped = %d, want 3", p.StrippedFormatTree)
+	}
+
+	// keep: verbatim mirror
+	writeView(t, ws, "k", `name="k"
+device="syntakt"
+storage="sq"
+format_tree="keep"
+[[include]]
+location="src"
+glob="**"
+`)
+	p, err = Build(ws, "k")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range p.Entries {
+		if e.OutPath != e.SourcePath {
+			t.Errorf("keep: %s → %s", e.SourcePath, e.OutPath)
+		}
+	}
+
+	// glob root reaching into the tree, with `as`: the include owns that level
+	writeView(t, ws, "a", `name="a"
+device="syntakt"
+storage="sq"
+[[include]]
+location="src"
+glob="Samples From Mars/808 From Mars/WAV/**"
+as="808"
+`)
+	p, err = Build(ws, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Entries) != 1 || p.Entries[0].OutPath != "808/Kicks/BD 01.wav" || p.StrippedFormatTree != 0 {
+		t.Errorf("as over tree: %+v stripped=%d", p.Entries, p.StrippedFormatTree)
+	}
+}
