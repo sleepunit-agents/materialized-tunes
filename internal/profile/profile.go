@@ -40,6 +40,16 @@ type Naming struct {
 	MaxPathLength     int               `toml:"max_path_length" json:"max_path_length,omitempty"`         // warn-level; 0 = unlimited
 	CaseSensitive     bool              `toml:"case_sensitive" json:"case_sensitive"`
 	Sanitize          map[string]string `toml:"sanitize" json:"sanitize,omitempty"` // char → replacement, applied to output paths at plan time
+
+	// DisplayLength: how many characters of a filename the device's browser
+	// actually shows before cropping (Syntakt's list view). 0 = unknown.
+	// With it set, plan warns about names that are identical within it.
+	DisplayLength int `toml:"display_length" json:"display_length,omitempty"`
+	// Rename: "" (never) | "distinguishing-first" — for names indistinct
+	// within DisplayLength, move the tokens that differ to the front so the
+	// crop shows them ("BD A 808 Decay A 01" → "01 BD A 808 Decay A").
+	// Deterministic; pinned in the lock like every other output path.
+	Rename string `toml:"rename" json:"rename,omitempty"`
 }
 
 type Filesystem struct {
@@ -96,6 +106,14 @@ func LoadDevice(workspaceRoot, name string) (*Device, error) {
 		if _, err := d.Naming.DisallowedRe(); err != nil {
 			return nil, fmt.Errorf("device %s: allowed_chars: %w", name, err)
 		}
+	}
+	switch d.Naming.Rename {
+	case "", "distinguishing-first":
+	default:
+		return nil, fmt.Errorf("device %s: naming.rename must be empty or distinguishing-first", name)
+	}
+	if d.Naming.Rename != "" && d.Naming.DisplayLength <= 0 {
+		return nil, fmt.Errorf("device %s: naming.rename needs naming.display_length (the crop it works around)", name)
 	}
 	for k, v := range d.Naming.Sanitize {
 		if utf8.RuneCountInString(k) != 1 || k == "/" {

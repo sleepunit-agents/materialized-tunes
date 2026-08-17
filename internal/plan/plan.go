@@ -81,6 +81,8 @@ type Plan struct {
 	Matched            int    `json:"matched"`                        // selected by includes before any exclusion
 	ExcludedByGlob     int    `json:"excluded_by_glob"`               //
 	StrippedFormatTree int    `json:"stripped_format_tree,omitempty"` // outputs whose vendor format-tree level was dropped
+	Renamed            int    `json:"renamed,omitempty"`              // outputs renamed distinguishing-first for the device display
+	DisplayClashes     int    `json:"display_clashes,omitempty"`      // names still identical within naming.display_length
 	LimitedFrom        int    `json:"limited_from,omitempty"`         // eligible count before the view's limit truncated it
 	SkippedNonAudio    []Skip `json:"skipped_non_audio,omitempty"`
 	SkippedDuration    []Skip `json:"skipped_duration,omitempty"`
@@ -297,7 +299,13 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 		sort.Slice(p.Entries, func(i, j int) bool { return p.Entries[i].OutPath < p.Entries[j].OutPath })
 	}
 
+	if dev.Naming.Rename == "distinguishing-first" && dev.Naming.DisplayLength > 0 {
+		p.Renamed = distinguishingFirst(p.Entries, dev.Naming.DisplayLength, dev.Naming.CaseSensitive)
+		sort.Slice(p.Entries, func(i, j int) bool { return p.Entries[i].OutPath < p.Entries[j].OutPath })
+	}
+
 	p.checkCollisions()
+	p.checkDisplay()
 	p.checkNaming()
 	p.checkFit()
 	return p, nil
@@ -440,6 +448,139 @@ func flatten(entries []Entry, caseSensitive bool) {
 	for i := range entries {
 		entries[i].OutPath = names[i]
 	}
+}
+
+// displayKey is the part of a filename a cropped device browser shows: the
+// directory plus the first n characters of the base name (extension
+// dropped — devices don't show it), case-folded unless the device cares.
+func displayKey(outPath string, n int, caseSensitive bool) string {
+	dir, file := path.Split(outPath)
+	base := strings.TrimSuffix(file, path.Ext(file))
+	if r := []rune(base); len(r) > n {
+		base = string(r[:n])
+	}
+	if !caseSensitive {
+		base = strings.ToLower(base)
+	}
+	return dir + "\x00" + base
+}
+
+var nameTokenRe = regexp.MustCompile(`[^ _\-]+`)
+
+// distinguishingFirst rewrites names that are indistinct within the first
+// n characters of the display so that what differs comes first: within
+// each clashing group (same dir, same n-prefix) the longest common token
+// prefix is found and every member becomes "<its remaining tokens> <common
+// prefix>". "BD A 808 Decay A 01".."06" → "01 BD A 808 Decay A".."06 …".
+// One pass can create a fresh clash (moving "01" forward makes "01 BD A
+// 808 Decay A" and "…Decay B" agree for 16 chars), so it iterates: each
+// pass pulls the next differing token to the front, until nothing clashes
+// or nothing can move ("A 01 BD A 808 Decay"). A member with nothing left
+// over (it IS the common prefix) keeps its name. Only clashing names move;
+// everything else is untouched. Returns the number of names changed.
+func distinguishingFirst(entries []Entry, n int, caseSensitive bool) int {
+	touched := map[int]bool{}
+	for pass := 0; pass < 8; pass++ {
+		moved := distinguishingPass(entries, n, caseSensitive, touched)
+		if moved == 0 {
+			break
+		}
+	}
+	return len(touched)
+}
+
+func distinguishingPass(entries []Entry, n int, caseSensitive bool, touched map[int]bool) int {
+	fold := func(s string) string {
+		if caseSensitive {
+			return s
+		}
+		return strings.ToLower(s)
+	}
+	groups := map[string][]int{}
+	for i, e := range entries {
+		k := displayKey(e.OutPath, n, caseSensitive)
+		groups[k] = append(groups[k], i)
+	}
+	renamed := 0
+	for _, idxs := range groups {
+		if len(idxs) < 2 {
+			continue
+		}
+		toks := make([][]string, len(idxs))
+		for j, i := range idxs {
+			_, file := path.Split(entries[i].OutPath)
+			toks[j] = nameTokenRe.FindAllString(strings.TrimSuffix(file, path.Ext(file)), -1)
+		}
+		// longest common token prefix across the group
+		common := 0
+		for {
+			if common >= len(toks[0]) {
+				break
+			}
+			t := fold(toks[0][common])
+			same := true
+			for _, tk := range toks[1:] {
+				if common >= len(tk) || fold(tk[common]) != t {
+					same = false
+					break
+				}
+			}
+			if !same {
+				break
+			}
+			common++
+		}
+		if common == 0 {
+			continue // nothing shared at token level; the clash is inside a token — leave it
+		}
+		for j, i := range idxs {
+			rest := toks[j][common:]
+			if len(rest) == 0 {
+				continue
+			}
+			dir, file := path.Split(entries[i].OutPath)
+			ext := path.Ext(file)
+			newBase := strings.Join(rest, " ") + " " + strings.Join(toks[j][:common], " ")
+			entries[i].OutPath = dir + newBase + ext
+			touched[i] = true
+			renamed++
+		}
+	}
+	return renamed
+}
+
+// checkDisplay warns about names the device's browser cannot tell apart —
+// identical within naming.display_length in the same folder. Runs after
+// any rename policy, so it reports what is left.
+func (p *Plan) checkDisplay() {
+	n := p.Device.Naming.DisplayLength
+	if n <= 0 {
+		return
+	}
+	groups := map[string][]string{}
+	for _, e := range p.Entries {
+		k := displayKey(e.OutPath, n, p.Device.Naming.CaseSensitive)
+		groups[k] = append(groups[k], e.OutPath)
+	}
+	keys := make([]string, 0, len(groups))
+	for k, v := range groups {
+		if len(v) > 1 {
+			keys = append(keys, k)
+			p.DisplayClashes += len(v)
+		}
+	}
+	if len(keys) == 0 {
+		return
+	}
+	sort.Strings(keys)
+	ex := groups[keys[0]]
+	sort.Strings(ex)
+	msg := fmt.Sprintf("%d names look identical on the device (first %d chars) — e.g. %q and %q",
+		p.DisplayClashes, n, ex[0], ex[1])
+	if p.Device.Naming.Rename == "" {
+		msg += `; set naming.rename = "distinguishing-first" to move what differs to the front`
+	}
+	p.Warnings = append(p.Warnings, msg)
 }
 
 // sanitizeNames applies the device's naming.sanitize map to every OutPath,

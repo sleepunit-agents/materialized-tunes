@@ -606,6 +606,10 @@ function renderDevices() {
       <div style="display:flex;gap:8px;align-items:center">
         ${inp('dv-maxfiles', 'max files/folder', d.max_files_per_dir || '', '140px')}
         ${inp('dv-maxname', 'max filename chars', d.max_filename_length || '', '150px')}
+        ${inp('dv-display', 'display crop (chars shown)', d.display_length || '', '170px')}
+        <label style="font:400 11px var(--sans);color:var(--fg-dim);display:flex;align-items:center;gap:5px" title="names identical within the display crop get their differing tokens moved to the front">
+          <input type="checkbox" id="dv-rename" ${d.rename ? 'checked' : ''}> distinguishing-first
+        </label>
         <label style="font:400 11px var(--sans);color:var(--fg-dim);display:flex;align-items:center;gap:5px">
           <input type="checkbox" id="dv-san" ${d.sanitize ? 'checked' : ''}> sanitize names (# & ')
         </label>
@@ -895,7 +899,9 @@ function wire() {
         const body = { name: g('dv-name'), bit_depth: +g('dv-depth'), sample_rate: +g('dv-rate'),
           channels: g('dv-ch'), mode: g('dv-mode'), layout: g('dv-layout'), filesystem: g('dv-fs'),
           max_duration_seconds: parseFloat(g('dv-dur')) || 0, max_files_per_dir: parseInt(g('dv-maxfiles')) || 0,
-          max_filename_length: parseInt(g('dv-maxname')) || 0, sanitize: document.getElementById('dv-san').checked };
+          max_filename_length: parseInt(g('dv-maxname')) || 0, sanitize: document.getElementById('dv-san').checked,
+          display_length: parseInt(g('dv-display')) || 0,
+          rename: (document.getElementById('dv-rename').checked && parseInt(g('dv-display')) > 0) ? 'distinguishing-first' : '' };
         api('/api/device', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) })
           .then(async r => { if (r.error) { S.toast = r.error; render(); return; }
             S.devForm = null; S.devices = await api('/api/devices') || []; loadSources(); });

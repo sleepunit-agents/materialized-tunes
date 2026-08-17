@@ -240,9 +240,11 @@ var devicePresets = []map[string]any{
 	{"id": "digitakt-ii", "label": "Elektron Digitakt II", "bit_depth": 16, "sample_rate": 48000,
 		"channels": "stereo", "mode": "staged", "layout": "mirror"},
 	{"id": "syntakt", "label": "Elektron Syntakt", "bit_depth": 16, "sample_rate": 48000,
-		"channels": "mono", "mode": "staged", "layout": "flatten", "max_duration_seconds": 5},
+		"channels": "mono", "mode": "staged", "layout": "flatten", "max_duration_seconds": 5,
+		"display_length": 16, "rename": "distinguishing-first"},
 	{"id": "model-samples", "label": "Elektron Model:Samples", "bit_depth": 16, "sample_rate": 48000,
-		"channels": "mono", "mode": "staged", "layout": "flatten"},
+		"channels": "mono", "mode": "staged", "layout": "flatten",
+		"display_length": 16, "rename": "distinguishing-first"},
 	{"id": "sp404mk2", "label": "Roland SP-404MKII", "bit_depth": 16, "sample_rate": 48000,
 		"channels": "stereo", "filesystem": "fat32", "mode": "card", "layout": "mirror"},
 	{"id": "deluge", "label": "Synthstrom Deluge", "bit_depth": 24, "sample_rate": 44100,
@@ -270,6 +272,8 @@ func (s *Server) deviceWrite(w http.ResponseWriter, r *http.Request) {
 		MaxName     int     `json:"max_filename_length"`
 		MaxPath     int     `json:"max_path_length"`
 		Sanitize    bool    `json:"sanitize"`
+		DisplayLen  int     `json:"display_length"`
+		Rename      string  `json:"rename"`
 		Overwrite   bool    `json:"overwrite"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&d); err != nil {
@@ -296,8 +300,14 @@ func (s *Server) deviceWrite(w http.ResponseWriter, r *http.Request) {
 	if d.MaxDuration > 0 {
 		fmt.Fprintf(&sb, "max_duration_seconds = %g\n", d.MaxDuration)
 	}
-	if d.MaxFiles > 0 || d.MaxName > 0 || d.MaxPath > 0 || d.Sanitize {
+	if d.MaxFiles > 0 || d.MaxName > 0 || d.MaxPath > 0 || d.Sanitize || d.DisplayLen > 0 {
 		sb.WriteString("\n[naming]\n")
+		if d.DisplayLen > 0 {
+			fmt.Fprintf(&sb, "display_length      = %d\n", d.DisplayLen)
+			if d.Rename != "" {
+				fmt.Fprintf(&sb, "rename              = %q\n", d.Rename)
+			}
+		}
 		if d.MaxFiles > 0 {
 			fmt.Fprintf(&sb, "max_files_per_dir   = %d\n", d.MaxFiles)
 		}

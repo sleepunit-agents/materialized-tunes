@@ -542,8 +542,18 @@ GUI can never disagree about what a plan says.
     is dual-mono"), never taste ("sum sounds better") — taste is local.
 - **Display-aware naming** (found on hardware 2026-07-17: Syntakt's list
   view crops names, so `BD A 808 Decay A 01..06` all display identically —
-  the distinguishing digits are past the crop). Escalating ideas, none
-  built yet:
+  the distinguishing digits are past the crop). **Ideas 1 and 2 shipped
+  2026-08-16**: `[naming] display_length = N` makes plan warn about names
+  identical within N chars of their folder-mates; `[naming] rename =
+  "distinguishing-first"` rewrites exactly those names by moving the
+  tokens that differ to the front, iterating until nothing clashes
+  (`BD A 808 Decay A 01` → `01 BD A 808 Decay A` → `A 01 BD A 808 Decay`
+  once the A/B variants collide too). Untouched names stay untouched;
+  results pin in the lock. Syntakt template ships `16` (≤18 by the
+  hardware observation; nobody has counted). The vendor-grammar version
+  (SFM `take_suffix` → always front) is still open — the generic
+  collision-driven policy needs no vendor knowledge and turned out to be
+  enough. Escalating ideas as originally written:
   1. `display_length` heuristic per device + plan warning when multiple
      output names share their first N chars (cheap, high value).
   2. Opt-in "distinguishing-first" rename policy (move discriminating

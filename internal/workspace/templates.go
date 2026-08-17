@@ -24,6 +24,15 @@ max_duration_seconds = 5.0         # device hard limit; longer sources are exclu
 mode   = "staged"    # materialize writes a folder you drag into Elektron Transfer
 layout = "flatten"   # the Syntakt has no folders — 64 flat slots; colliding
                      # names get parent-dir prefixes automatically
+
+[naming]
+# The sample list crops names: on hardware (2026-07-17) "BD A 808 Decay A 01"
+# .."06" all displayed identically — the digits sat past the crop, so it's
+# ≤18 visible chars. 16 is the conservative guess until someone counts;
+# plan warns about names that collide within it, and the rename policy
+# moves the differing tokens to the front ("01 BD A 808 Decay A").
+display_length = 16
+rename         = "distinguishing-first"
 `,
 	"devices/octatrack.toml": `# Elektron Octatrack. 44.1kHz is the only rate it loads; 16-bit keeps
 # every file usable by both static and flex machines (static is 16-bit only).

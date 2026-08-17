@@ -3,6 +3,7 @@ package plan
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -471,5 +472,75 @@ as="808"
 	}
 	if len(p.Entries) != 1 || p.Entries[0].OutPath != "808/Kicks/BD 01.wav" || p.StrippedFormatTree != 0 {
 		t.Errorf("as over tree: %+v stripped=%d", p.Entries, p.StrippedFormatTree)
+	}
+}
+
+// TestDisplayAwareNaming: display_length warns about names a cropped
+// device browser can't tell apart; rename = "distinguishing-first" moves
+// the differing tokens to the front for exactly those names and leaves
+// everything else alone.
+func TestDisplayAwareNaming(t *testing.T) {
+	ws := testWorkspace(t, []catalog.Entry{
+		wavEntry("kit/BD A 808 Decay A 01.wav", 1, 48000, 16, 4800),
+		wavEntry("kit/BD A 808 Decay A 02.wav", 1, 48000, 16, 4800),
+		wavEntry("kit/BD A 808 Decay A 03.wav", 1, 48000, 16, 4800),
+		wavEntry("kit/SD Short.wav", 1, 48000, 16, 4800),
+		wavEntry("kit/SD Long.wav", 1, 48000, 16, 4800), // distinct within 8 chars ("SD Short" vs "SD Long")
+	}, nil)
+	writeProfile(t, ws, "storage/sq.toml", `name = "sq"
+kind = "quota"
+capacity_bytes = 33554432
+`)
+	// warn only
+	writeProfile(t, ws, "devices/warn.toml", syntaktDevice+`layout = "flatten"
+[naming]
+display_length = 16
+`)
+	writeView(t, ws, "w", `name="w"
+device="warn"
+storage="sq"
+[[include]]
+location="src"
+glob="**"
+`)
+	p, err := Build(ws, "w")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.DisplayClashes != 3 || p.Renamed != 0 {
+		t.Errorf("warn-only: clashes=%d renamed=%d", p.DisplayClashes, p.Renamed)
+	}
+	if len(p.Warnings) == 0 || !strings.Contains(p.Warnings[0], "distinguishing-first") {
+		t.Errorf("expected a hint to enable the rename policy: %v", p.Warnings)
+	}
+
+	// rename policy
+	writeProfile(t, ws, "devices/fix.toml", syntaktDevice+`layout = "flatten"
+[naming]
+display_length = 16
+rename = "distinguishing-first"
+`)
+	writeView(t, ws, "f", `name="f"
+device="fix"
+storage="sq"
+[[include]]
+location="src"
+glob="**"
+`)
+	p, err = Build(ws, "f")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, e := range p.Entries {
+		got[e.OutPath] = true
+	}
+	for _, want := range []string{"01 BD A 808 Decay A.wav", "02 BD A 808 Decay A.wav", "03 BD A 808 Decay A.wav", "SD Short.wav", "SD Long.wav"} {
+		if !got[want] {
+			t.Errorf("missing %q in %v", want, got)
+		}
+	}
+	if p.Renamed != 3 || p.DisplayClashes != 0 || len(p.Errors) != 0 {
+		t.Errorf("renamed=%d clashes=%d errors=%v", p.Renamed, p.DisplayClashes, p.Errors)
 	}
 }
