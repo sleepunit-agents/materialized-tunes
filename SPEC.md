@@ -788,6 +788,104 @@ filter over catalog metadata (duration/channels/rate/format), so it costs
 nothing. `catalog ls --device`, `catalog packs --device`, `catalog samples
 --device`, and the UI toggle are one predicate.
 
+### 11.6 Acquisition pointers and discovery `[proposed 2026-08-19]`
+
+The annotations repo is, by accident of doing its job, a *discovery*
+surface: a registry of pack identities is a catalogue of things that
+exist, and "you don't own this" is one lookup away from "here's where it
+is". That is a feature worth keeping only if the line between *sample
+management* and *sample sourcing* is drawn as data and checked by a
+machine, not left to whoever reviews the PR. The posture is Discogs: it
+lists every rare record ever pressed and points at no download.
+
+**Identity is unconditional; pointers are gated.** Any real pack may have
+an identity (`[pack]` + `[identity]`) — including out-of-print material
+nobody can sell you. Whether an identity carries an *acquisition pointer*
+is decided by its class:
+
+| class | meaning | pointer | discovery |
+|---|---|---|---|
+| `vendor-free` | rights-holder distributes it themselves at $0 (Blu Mar Ten, Goldbaby freebies, SFM freebies, SampleRadar) | vendor URL | shown as acquirable |
+| `vendor-paid` | rights-holder sells it | vendor store page | shown as acquirable; mtunes recognizes it by fingerprint if owned |
+| `distributor` | a third party the vendor explicitly licensed to distribute (Loopmasters' free label samplers, Splice, Bandcamp) | distributor page; `via = "<distributor vendor slug>"` | shown as acquirable |
+| `orphan` | out of print / delisted / vendor gone (Zero-G Jungle Warfare 1–3) | **none** | "recognized, not sourced" — never listed as acquirable |
+
+A fifth state, *user-local*, is not a class: packs with no public identity
+never enter the repo at all.
+
+**The unspoken deal with vendors, stated.** Showing someone a pack they
+don't own costs the vendor nothing and sends them a customer. Handing them
+the bytes — even free ones — takes the email/dollar/attention the vendor
+priced the freebie at. So every pointer is a *page*, never a file: the
+product page, the Bandcamp release, the free-download landing page where
+the vendor gets whatever they asked for. mtunes never completes the
+acquisition; it links out.
+
+**Enforcement, as lint (repo CI, `tools/lint.py`), not as etiquette:**
+
+- **L1 domain closure.** Every vendor record declares `domains`; every
+  pointer (`[acquisition] url`, `[pack] url`, `[meta] image`) must resolve
+  to a host inside the owning vendor's `domains` (subdomains included) —
+  or, for `class = "distributor"`, inside the `via` vendor's. A URL whose
+  host is declared nowhere fails. "Everyone knows where" is not a host.
+- **L2 pages, not bytes.** Pointer paths may not end in an archive or
+  audio extension (`.zip .rar .7z .wav .aif …`). Link to the page.
+- **L3 orphans carry no pointer.** `class = "orphan"` forbids
+  `[acquisition] url`. `discontinued = true` packs may *only* be orphans
+  and their `[pack] url` / `[meta] image` / `sources` are archival
+  pointers restricted to the root `hosts.toml` *reference* list (Discogs,
+  SoundOnSound, the Wayback Machine, …) — record-of-existence, never
+  source-of-copies.
+- **L4 distributors are vendors.** A `via` must name an existing vendor
+  record with `role = "distributor"` and its own `domains`.
+- **L5 relations resolve.** `[[relation]]` targets must exist; a
+  `basis = "sha"` relation is checked against the two manifests and fails
+  below the containment it claims.
+- **L6 observation.** `[acquisition]` carries `observed`; a pointer older
+  than 365 days is a warning, and an optional `--live` pass HEADs each
+  pointer (weekly CI, not per-PR) so link rot surfaces as data.
+
+**Subsets and samplers.** Vendors cut freebies from paid packs, bundle
+volumes, and re-issue. Two sources of that fact:
+
+1. **Content-derived**: when the free pack's manifest lines ⊂ the paid
+   pack's, the relation falls out of the identity layer with no assertion.
+2. **Asserted**: where the vendor re-encoded or renamed the freebie
+   (common), `[[relation]]` in the pack file — `type` ∈ `subset-of`,
+   `sampler-of`, `superseded-by`, `bundle-of`, `reissue-of`; `basis` ∈
+   `sha` (lint-verified), `vendor-states` (cite), `observed`.
+
+What it buys: `plan` and the UI say "you own JUNGLEJUNGLE; this freebie is
+100% contained — skip" (no second copy of the same bytes for someone who
+has them), and the reverse, "you have the sampler; the full pack exists
+at <vendor url>". The second sentence *is* the marketplace, and it is the
+honest form of one.
+
+**Discovery surface.** `catalog packs --discover` / the UI's "not in your
+library" filter list identities that (a) you don't hold (no `exact` /
+`partial` match) and (b) carry a pointer — acquirable classes only.
+Orphans appear under an explicit "recognized, not sourced" heading or not
+at all; they never appear next to a link. Discovery is read-only over
+annotations + catalog; no network beyond the existing og/resolver fetches.
+
+**Refusal, as a criterion.** mtunes has no `fetch`, no downloader, no
+"install this pack" — not for `vendor-free`, not for CC0. The binary's
+only network calls are vendor og metadata (§11.1) and marketplace
+resolvers (§11.3). The moment the tool acquires bytes it inherits every
+vendor's terms and moves its center off "correct subset onto a device,
+provable later". A downloader can be argued for later; it cannot be
+un-argued.
+
+**License classes.** `[acquisition] license` is a small enum so the UI can
+say what the click leads to without reproducing terms: `royalty-free`
+(vendor EULA, use in music OK, no redistribution — the default for houses),
+`cc0`, `cc-by`, `personal-use`, `purchase` (terms come with the sale),
+`unknown`. Refined by the source survey (notes/ in the annotations repo)
+before the tag comes off.
+
+Schema detail lives in the annotations repo's SCHEMA.md (`[vendor] domains
+/ role`, `[acquisition]`, `[[relation]]`, root `hosts.toml`).
+
 ## 12. Designed-for, not yet built
 
 Ordered roughly by how much the design already accommodates them.
@@ -920,4 +1018,5 @@ CHANGELOG.md.
 | 4.3 | Passthrough audio (`format = "source"`) | Live / Push / most desktop targets want curation and provenance, not transcoding. |
 | 4.5 | Preset roadmap: Live, Push 3, Move first; then eurorack/Polyend/Bitbox | What is on the desk, plus what samplebank already had. Facts from manuals only. |
 | 9 | `catalog loudness`, `verify --location` | The catalog is already a manifest; give it the verb. |
+| 11.6 | Acquisition pointers + discovery: pack classes (vendor-free / vendor-paid / distributor / orphan), vendor `domains`, `[acquisition]`, `[[relation]]`, six lint rules, no-fetch refusal | The registry is a discovery surface whether we like it or not; drawing the management-vs-sourcing line as lintable data keeps it a tool and not a piracy index, and link-out sends vendors their customer. |
 | 12 | Optional analysis sidecar, explicitly *not now* | Keeps the door open without bending the design toward it. |
