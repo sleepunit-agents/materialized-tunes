@@ -2,7 +2,8 @@
 
 Sample libraries for hardware samplers, treated as materialized views over an
 immutable, SHA-fingerprinted source library. See [SPEC.md](SPEC.md) for the
-full design; the short version:
+full design (current state) and [CHANGELOG.md](CHANGELOG.md) for the dated
+history; the short version:
 
 - **Sources are immutable** — Splice, Samples From Mars, etc., cataloged and
   hashed once, never modified.

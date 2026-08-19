@@ -1,13 +1,19 @@
-# materialized-tunes — v0 design spec
+# materialized-tunes — design spec
 
-Sample libraries for hardware samplers, treated as **materialized views over an
-immutable source library**. Sources are cataloged and SHA-fingerprinted once;
-device-specific libraries are rendered from declarative recipes, verified
-against storage constraints *before* any copying, and pinned by lockfiles so
-any past library is restorable years later.
+Sample libraries for hardware samplers (and DAWs), treated as **materialized
+views over an immutable source library**. Sources are cataloged and
+SHA-fingerprinted once; device-specific libraries are rendered from
+declarative recipes, verified against storage constraints *before* any
+copying, and pinned by lockfiles so any past library is restorable years
+later.
 
-Status: draft for markup. Anything tagged `[confirm]` is a value or decision
-that needs a real answer before implementation.
+Status: **living spec** — describes the tool as built on `main`. The dated
+trail (what shipped when, and the hardware observation that forced it) lives
+in [CHANGELOG.md](CHANGELOG.md). Markers used below:
+
+- `[confirm]` — a value or decision that still needs a real answer.
+- `[proposed 2026-08-19]` — a refinement proposed by Art, not yet decided.
+  Collected in §18 for review in one place; delete the tag when accepted.
 
 ---
 
@@ -57,6 +63,32 @@ Design choices baked in here:
   how many views use it. This is what makes a small-disk laptop workable
   against a big remote library.
 
+
+### 2.1 Workspace durability `[proposed 2026-08-19]`
+
+The workspace *is* the library definition plus every lockfile ever written.
+Restorability is only as good as the workspace's second copy, so:
+
+- `mtunes init --git` stays the default recommendation, and the workspace
+  gets a **remote** (a private GitHub repo; Art mirrors it nightly alongside
+  the loom vault). Locks and recipes are small text; `catalog/` is tens of
+  MB of JSONL and is worth versioning too (it is what `diff` compares
+  against, and it is the only record of a location that later disappears).
+  `cache/`, `annotations/`, `annotations-cache/` stay ignored — derived or
+  redistributable-not-ours.
+- `mtunes materialize` prints a one-line nag when the workspace has
+  uncommitted locks and a remote configured but not pushed. No auto-commit:
+  the UI never owns the files (§17), and neither does the CLI.
+- **Source-library durability is out of scope for the tool but not for
+  us:** the house archive at `E:\Sample-Archives` is single-copy on a
+  workstation drive. The recipe-plus-redownload argument covers vendors
+  that still exist; it does not cover digitized 90s sample CDs or
+  purchases whose vendors are gone. Plan of record: move the archive to
+  the mirrored spinner (`F:`) and treat `E:` as a working copy, or point
+  the canonical location at the NAS. Either way the catalog, with its
+  SHAs, is the manifest that would let a rebuilt archive prove itself
+  complete (`mtunes verify` against a location is the missing verb —
+  see §12).
 ## 3. Source locations
 
 ```toml
@@ -87,7 +119,7 @@ time — locally via header parsing/ffprobe; for `ssh` locations, via remote
 SFTP. `[confirm]` whether ffprobe is installed on the workstation (it almost
 certainly is via ffmpeg).
 
-v0 source formats: WAV, AIFF, FLAC. Anything else is cataloged (path + SHA)
+Source formats: WAV, AIFF, FLAC. Anything else is cataloged (path + SHA)
 but flagged unsupported-for-materialization. Format is decided by magic
 bytes, not extension (Rhythm Lab ships AIFFs named `.wav`).
 
@@ -110,7 +142,7 @@ same shape, assembled by us: `Docs\Artwork - <Pack>.<ext>` (vendor product
 image) and `Docs\<Pack> - About.md` (title, creator, counts, tags, product
 URL, vendor blurb, and a trailer noting the file is ours, not the vendor's).
 Non-audio, so it never touches a lockfile; it is the raw material for the
-pack-first browser (§11) — vendor grammar for the house archive is simply
+pack-first browser (§11.2) — vendor grammar for the house archive is simply
 "art and about live in `Docs\` at the pack root". Zero-G's Jungle Warfare is
 the degenerate case: discontinued, so the About is a research note, not a
 copy of a product page.
@@ -136,6 +168,45 @@ for name/slug/identity; docs fill whatever they leave empty. On the house
 archive this lifts 107 of 113 packs out of the fallback tier with zero
 network and zero annotation files.
 
+
+### 3.2 Catalog enrichment (derived facts about sources)
+
+Everything below is derived from the bytes or the paths of immutable
+sources, so it is keyed by SHA / catalog path, recomputed on rescan, and
+never user-authored. Two tiers by cost and trust:
+
+**In the catalog** (`catalog/<location>.jsonl`, cheap, authoritative):
+
+- Audio header facts: format (by magic bytes), duration, channels, rate,
+  bit depth.
+- **`audio.dual_mono`**: for every 2-channel integer-PCM WAV/AIFF on a local
+  location, whether L and R are identical (|L−R| ≤ 1 LSB@16-bit for every
+  frame). Remote and non-PCM sources stay unknown (`null`), and unknown
+  never folds. Entries scanned before the field existed are backfilled on
+  the next rescan.
+
+**In `annotations-cache/meta/<location>.jsonl`** (the harvest tier —
+grammar-derived, cheap to regenerate, never in a lockfile):
+
+- `harvest` derives bpm / key / category / tags from filename and folder
+  grammar (`_C#4`, `124 Bpm`, Camelot ` - 10A`, `Bass Lines 166.5/`) plus
+  the annotation layer's `[[category]]` and pack `[[dir]]` maps. Runs after
+  every scan and via `catalog harvest`; category globs match
+  case-insensitively.
+- The **instrument facet** (§11.4) is computed the same way — from what the
+  vendor labelled, never from audio analysis.
+
+`catalog dupes` reports groups of byte-identical sources (house archive:
+6,726 groups, 10,420 redundant copies, 1.6 GiB); views opt into rendering
+each group once with `dedup = "content"` (§6).
+
+**Loudness measurement** `[proposed 2026-08-19]` — see §4.4. Integrated
+loudness (LUFS) and true peak per source are derived facts like
+`dual_mono`, but cost a full decode per file (ffmpeg `ebur128`), so they
+are measured **lazily**: for the entries a plan selects when the view or
+device asks for normalization, then cached in the catalog by SHA so the
+second plan is free. Never a whole-library pass unless asked
+(`catalog loudness [--location L]`).
 ## 4. Device profiles
 
 Two real profiles, from the horses' mouths (Syntakt User Manual OS 1.40,
@@ -225,6 +296,129 @@ Notes:
   other transform (the OT won't load anything but 44.1k, so there is no
   "keep it as-is" option). No plan noise. **Decided 2026-07-17.**
 
+
+### 4.1 Display-aware naming
+
+Found on first hardware contact 2026-07-17: the Syntakt's list view crops
+names, so `BD A 808 Decay A 01..06` all display identically — the
+distinguishing digits are past the crop.
+
+- `[naming] display_length = N` — how many characters the device's browser
+  shows before cropping (0 = unknown). Plan warns about names identical
+  within N chars of their folder-mates. The Syntakt template ships 16 (≤18
+  by observation; nobody has counted).
+- `[naming] rename = "distinguishing-first"` — rewrites exactly those
+  names by moving the tokens that differ to the front, iterating until
+  nothing clashes (`BD A 808 Decay A 01` → `01 BD A 808 Decay A` → `A 01 BD
+  A 808 Decay` once the A/B variants collide too). Untouched names stay
+  untouched; results pin in the lock. Generic and collision-driven — it
+  needs no vendor knowledge, which turned out to be enough.
+
+### 4.2 Dual-mono
+
+`[audio] dual_mono = "keep" | "fold"` (default `keep`) for
+stereo-preserving devices: `fold` writes dual-mono sources (catalog verdict,
+§3.2) as mono — lossless, half the bytes, and what the sound actually is.
+Mono devices always fold dual-mono with `left` instead of the device
+downmix (the −3 dB pad is for summing two *different* signals). The choice
+is per entry and lands in the lock's ffmpeg args like any transform. Unknown
+(`null`) never folds.
+
+### 4.3 Passthrough audio `[proposed 2026-08-19]`
+
+Ableton Live, Push 3 (standalone) and most desktop targets load whatever
+the source already is; transcoding them is a lossy tax with no payoff. A
+device profile may say
+
+```toml
+[audio]
+format = "source"      # copy bytes verbatim; no ffmpeg, output SHA == source SHA
+```
+
+in which case plan's size math is source bytes (plus cluster rounding where
+the storage is a filesystem), materialize copies and verifies by hash, and
+the lock records `transform = null`. Everything else — layout, naming,
+sanitize, dedup, format-tree strip, storage fit, lockfile, restore — works
+unchanged. This turns mtunes into the curation + provenance layer for DAW
+libraries, which is most of what §4.5 needs. Optional knobs for partial
+passthrough (`format = "source"` but `bit_depth = 24` to cap 32-bit float
+sources) are a refinement; the all-or-nothing version is the useful one.
+
+### 4.4 Loudness normalization `[proposed 2026-08-19]`
+
+Sources span digitized 90s sample CDs and 2026 marketplace packs; they are
+not level-matched to each other, and some aren't matched to themselves.
+A hardware sampler with one output level per slot wants them brought into a
+band. This is a **device default with a view override**, because headroom
+is a device fact (eurorack wants −14 LUFS-ish for the modular level) while
+"should this collection be normalized" is taste.
+
+```toml
+# devices/<name>.toml
+[audio.loudness]
+mode        = "lufs"     # "none" (default) | "lufs" | "peak"
+target      = -14.0      # LUFS for mode=lufs; dBFS for mode=peak
+true_peak   = -1.0       # dBTP ceiling; gain is clamped so no output exceeds it
+```
+
+```toml
+# views/<name>.toml — overrides the device default for this recipe only
+[loudness]
+mode = "none"
+```
+
+Semantics (decided by what pins cleanly):
+
+- **Linear gain only.** Measure each source's integrated loudness and true
+  peak (§3.2, cached by SHA), compute `gain = target − measured_I`, clamp
+  so `measured_TP + gain ≤ true_peak`, and apply `volume=<gain>dB` in the
+  ffmpeg chain before the downmix/resample stages. No dynamics, no
+  limiter: samplebank's single-pass `loudnorm` (without measured values it
+  runs the filter in *dynamic* mode) is gain-riding, which smears
+  transients on one-shots — exactly the material this is for. Linear gain
+  is deterministic, bit-exact across ffmpeg versions for integer output,
+  and costs nothing in size math.
+- **Per-file, not per-collection.** Each entry's measured values and
+  applied gain are recorded in its lock entry; a restore reproduces the
+  gain, not a re-measurement.
+- `mode = "peak"` is the one-shot-friendly alternative (normalize the
+  sample peak to `target` dBFS): integrated LUFS over a 200 ms kick is a
+  meaningful number but not a musically useful one, and EBU's gating
+  behaves oddly on very short material. Default recommendation: `peak` for
+  one-shot-heavy devices (Syntakt, Digitakt), `lufs` for loop libraries
+  and eurorack players. `[confirm]` the defaults per preset.
+- Measurement is on the **source**, before the device's downmix, so the
+  cached value is device-independent. The −3 dB fold pad and mono summing
+  shift loudness by at most ~1 LU on true-stereo material; that error is
+  accepted and documented rather than paying for a per-device measurement
+  pass. `[confirm]` acceptable.
+- Plan reports the gain distribution (min / median / max, and how many
+  entries were peak-clamped) so a recipe full of quiet CD rips is visible
+  before it's rendered. A clamp is info, not a warning: the ceiling is the
+  policy.
+
+### 4.5 Device preset roadmap `[proposed 2026-08-19]`
+
+Presets (UI `/api/presets`, workspace templates) are prefills, not gospel;
+the profile schema is what matters. Current: Octatrack, Digitakt, Digitakt
+II, Syntakt, Model:Samples, SP-404MKII, Deluge, generic card. Missing, in
+priority order given what is actually on the desk:
+
+| Preset | Shape | What the schema needs |
+|---|---|---|
+| **Ableton Live (User Library)** | `format = "source"` (§4.3), `mode = "card"` to a folder under *Places*, `layout = "mirror"` | Passthrough. Live writes `.asd` analysis sidecars next to samples — device-written, keyed to output identity: the sidecar-sync case in §12. |
+| **Ableton Push 3 standalone** | as Live; target is the Push's internal drive over USB/network | Passthrough. `[confirm]` transport (Push appears as a drive / SMB share when standalone) and any path-length or character quirks. |
+| **Ableton Move** | `mode = "staged"` — samples import through Move Manager (`move.local`) — `layout = "mirror"` (Move browses folders) | `[confirm]` from the Move manual: accepted formats (WAV/AIFF/MP3 at least), any rate/depth/length/count limits, storage size. A staged-folder device like the Syntakt, but folder-aware. |
+| **Elektron Digitakt / Digitakt II / Model:Samples** | already present | Add `max_duration_seconds` / slot counts from their manuals, same sourcing rigor as §13. |
+| **1010music Bitbox (mk2 / micro)** | card, FAT32/exFAT, `layout = "mirror"`, 16/24-bit 44.1/48 k stereo | Straight from samplebank's preset; `[confirm]` current firmware limits. |
+| **Sherpa Raw Waves V2** | card, 16-bit 44.1 k **mono**, "stations" as subfolders | `loudness` (§4.4) is the original itch (−14 LUFS). `stations` = a mirror layout where each top-level `as` is a station — no new schema. |
+| **Torso S-4** | card, stereo 48 k | From samplebank's preset; `[confirm]`. |
+| **Polyend Play / Tracker** | card, 16-bit 44.1 k, strict folder/name rules | `[confirm]` from manuals; the Polyend packs in the house archive already ship a `16 bit mono` tree for them. |
+| **Roland SP-404MKII** | present | `[confirm]` the import-folder naming the device expects. |
+
+Rule of engagement for adding any of these: facts come from the manual
+(URL + section + date in §13), the first real card/folder gets a note in
+CHANGELOG.md, and nothing is asserted that hasn't been looked up.
 ## 5. Storage profiles
 
 Two kinds. A **filesystem** is a mounted card/drive; a **quota** is
@@ -295,7 +489,7 @@ glob     = "packs/*breaks*/**"
 
 [[exclude]]
 glob = "**/Ableton*/**"           # vendor parallel-format trees, DAW project
-[[exclude]]                       # files, etc. — v0 vendor intelligence is you
+[[exclude]]                       # files, etc.; format_tree (below) handles the common case
 glob = "**/*.asd"
 ```
 
@@ -312,14 +506,19 @@ glob = "**/*.asd"
   dirs ("KitA - Kick 01.wav"), only where needed; still-identical names
   fall through to the collision error. Templating layouts remain post-v0.
 - Excludes apply across all includes.
-- **Auto vendor grouping** (idea, 2026-07-18): a layout option that prefixes
-  output with a vendor dir *conditionally* — vendors contributing multiple
-  packs group ("SFM/808 From Mars/…"), single-pack vendors stay flat
-  ("Jungle Jungle/…"). Wants the vendor-annotations pack layer (pack
-  identity answers "how many packs does this vendor have in this view");
-  until then, per-include `as` does it explicitly, which is how ot-florida
-  ships. Display names for locations (config `label`?) are part of this.
-
+- `format_tree = "strip"` (default) drops the vendor's parallel-format
+  level from output paths using annotations (`[formats] canonical_dir` /
+  `parallel_dirs`, or a pack `[[dir]]` with `role = "format-tree"`): `808
+  From Mars/WAV/Kicks/x` → `808 From Mars/Kicks/x`, `ASMR/ASMR 24 bit
+  stereo/y` → `ASMR/y`. Category dirs at pack root are never trees (Rhythm
+  Lab, BMT, Polyend Heights); unknown vendors mirror; an include whose glob
+  root already reaches into the tree is left to its `as`. *Which* tree to
+  select is still the recipe's job (`"keep"` to disable).
+- `dedup = "content"` renders byte-identical sources once (first output
+  path in sort order; deterministic, pinned). Opt-in, because a DAW kit
+  folder wants its members even when they duplicate the one-shots folder.
+- `[loudness]` overrides the device's normalization default for this recipe
+  (§4.4) `[proposed 2026-08-19]`.
 ## 7. Plan (pre-flight)
 
 `mtunes plan <view>` prints, without touching any file:
@@ -435,38 +634,38 @@ mtunes diff <lock>                        # lock vs current catalog + recipe:
 explicit choice between `restore` (exactly as it was) and `materialize`
 (recipe against today's catalog), with the delta visible first.
 
-## 9. CLI surface (complete v0 list)
+## 9. CLI surface
 
 ```
-mtunes init <dir>                 # scaffold a workspace (offers git init)
-mtunes location add|list|remove
-mtunes scan [<location>]          # build/refresh catalog (remote-hashes ssh locations)
+mtunes init <dir> [--git]         # scaffold a workspace (+ git init, .gitattributes, .gitignore)
+mtunes location add|list|remove   # add: --type local|ssh --root … [--layout vendor-dirs] [--vendor slug] [--rescan]
+mtunes scan [<location>]          # build/refresh catalog (remote-hashes ssh locations);
+                                  # then harvest + resolve for that location
 mtunes catalog status [--json]    # per-location counts, sizes, last-scan
 mtunes catalog ls [--device D] [--ineligible] [--location L] [--glob G] [--json]
                                   # --device = the device lens: only what can ride
+mtunes catalog packs [--device D] [--location L] [--json]   # pack-first browse (§11)
+mtunes catalog samples [--instrument I] [--family F] [--category C] [--key K]
+                       [--bpm B] [--pack P] [--device D] [--json]   # cross-pack rows (§11.4)
+mtunes catalog harvest [<location>]   # re-derive bpm/key/category/tags (§3.2)
+mtunes catalog resolve [<location>]   # marketplace pack identity via vendor API (§11.3)
+mtunes catalog dupes [<location>…] [--json]   # byte-identical groups (§3.2)
 mtunes plan <view> [--json]
 mtunes materialize <view> [--to <path>] [--force]   # --to defaults to view target
-mtunes catalog packs [--device D] [--location L] [--json]
-#   pack-first browsing (v0.3): tier 1 (location's `vendor` slug → workspace
-#   annotations/ checkout: names, urls, og meta, identity match exact/partial)
-#   and tier 3 (top-level dirs, honest fallback) are live; tier 2 heuristic
-#   inference for unknown vendors remains designed-for.
-#   Enrichment split (decided 2026-07-26): the annotations repo distributes
-#   FACTS AND POINTERS only (names, slugs, urls, image urls, hashes, counts);
-#   vendor prose (og:description) and image bytes are fetched by mtunes from
-#   the pack's url on demand and cached in the workspace (annotations-cache/,
-#   never committed, never redistributed). UI reads the cache; the repo
-#   stays legally boring. Fetch-on-demand is designed-for, not yet built.
-mtunes restore <lock> --to <path>
-mtunes verify --card <path>
-mtunes diff <lock> [--json]
+mtunes restore <view|lock> --to <path>               # newest lock for a view, or a lock path
+mtunes verify [<view|lock>] --card <path>
+mtunes diff <view|lock> [--json]
 mtunes cache status|clear
+mtunes ui [--addr 127.0.0.1:7315]     # embedded browser UI (§15)
 ```
 
-`--json` everywhere is the machine interface: the future GUI (and any
-script) consumes the same structs the human reports render, so CLI and
-GUI can never disagree about what a plan says.
+`--json` everywhere is the machine interface: the UI (and any script)
+consumes the same structs the human reports render, so CLI and UI can
+never disagree about what a plan says.
 
+`[proposed 2026-08-19]`: `mtunes catalog loudness [<location>]` (§3.2) and
+`mtunes verify --location <name>` — a location against its own catalog, the
+verb that turns the catalog into a manifest for a rebuilt archive (§2.1).
 ## 10. Implementation notes (Go)
 
 - CLI: `spf13/cobra`. TOML: `BurntSushi/toml`. Globs: `bmatcuk/doublestar`.
@@ -481,185 +680,169 @@ GUI can never disagree about what a plan says.
 - Hashing: SHA-256 throughout, byte-level. No audio-content fingerprinting.
 - Concurrency: parallel hash/transcode workers, single-writer catalog.
 
-## 11. Explicitly out of scope for v0 (but designed-for)
+## 11. Vendor annotations, pack browsing, facets
 
-- **Sidecar sync** (Octatrack `.ot` etc.): mutable, device-written files,
-  keyed to **output artifact identity** (source SHA + transform params) —
-  not to the view — so slices follow the sample across views. The lockfile
-  already records everything needed to key them.
-- Vendor-aware format-tree selection (auto-pick WAV vs Ableton-rack folders
-  per device). v0 answer: recipe excludes. **Half shipped 2026-08-16**: the
-  *output* side — a view's `format_tree = "strip"` (default) drops the
-  vendor's format-tree level from output paths using annotations
-  (`[formats] canonical_dir` / `parallel_dirs`, or a pack `[[dir]]` with
-  `role = "format-tree"`): `808 From Mars/WAV/Kicks/x` → `808 From Mars/
-  Kicks/x`, `ASMR/ASMR 24 bit stereo/y` → `ASMR/y`. Category dirs at pack
-  root are never trees (Rhythm Lab, BMT, Polyend Heights); unknown vendors
-  mirror; an include whose glob root already reaches into the tree is left
-  to its `as`. Selection (which tree to *pick*) is still the recipe's job.
-- Direct device upload for staged devices (skipping the Transfer drag-and-
-  drop) — e.g. via SysEx/SDS the way elektroid does it. v0 answer: hand the
-  staging folder to Transfer.
-- GUI (long-term likely; the Go core should stay cleanly separable from the
-  CLI for a future Wails frontend).
-  - **Pack-first browsing**: packs are the mental unit, so the browser
-    groups by pack — a derived presentation layer over catalog paths, no
-    storage change. Three tiers: (1) known vendor → pack grammar in the
-    vendor profile ("SFM: top-level dirs are packs, WAV/ is canonical,
-    sibling zip is the archival original"); (2) unknown vendor → heuristic
-    inference (audio critical mass, docs/artwork at dir root, sibling-zip
-    pattern, shallow depth), cached as correctable annotations; (3) no
-    idea → top-level dirs pose as packs, honest degraded mode. Content-SHA
-    pack identity makes declared/inferred packs recognizable across users.
-    API: `catalog packs [--device D] --json` — pack summaries with
-    per-device eligible counts and converted sizes, computed from the
-    catalog alone.
-  - **Device lens**: when building a collection for a device, filter the
-    entire browse view to only what CAN materialize for it — too long,
-    untranscodable, wrong-shaped stuff just disappears. This is the plan
-    engine's eligibility predicates run as a live filter; everything needed
-    (duration/channels/rate/format) is already in the catalog, so it costs
-    nothing to evaluate. A CLI precursor (`catalog ls --device syntakt`)
-    would be nearly free to add.
-### Instrument facet and cross-pack search (2026-08-17)
+The catalog is paths and hashes; *meaning* — which pack a file belongs to,
+who made it, what it is — comes from a separate, inert data layer and from
+the packs themselves. None of it changes a byte of any source, and the
+resolved per-file values a transform depends on are pinned in the lockfile,
+so shared data evolving never changes a restore.
 
-Packs are the browsing unit, but a jungle pack still holds 69 vocals and
-16 pianos — the instrument facet is how you reach them without abandoning
-pack-first browsing. Sources, in the order they are trusted:
+### 11.1 The annotations repo (facts, not taste)
 
-1. **What the vendor labelled.** `01. Bass Drum/`, `TA_Kick_Loop_124_D.wav`.
-   The annotations repo carries a shared `instruments.toml` (canonical id,
-   family, the words vendors write, `avoid` traps) applied to every vendor,
-   plus per-vendor `[[instrument]]` blocks for abbreviations only
+`sample-vendor-annotations` (checked out at `<workspace>/annotations/`,
+gitignored) is a schema-versioned, code-free set of TOML files per vendor:
+names, slugs, aliases, product URLs, image URLs, content hashes, counts,
+format-tree grammar (`[formats]`), category maps, `[install]` paths,
+`[meta] description` for discontinued packs; plus shared `tags.toml`
+(canonical tag vocabulary → `annotations.TagMap`) and `instruments.toml`
+(§11.4). House rules:
+
+- **Facts only, never taste.** "This pack's stereo is dual-mono" belongs;
+  "sum sounds better" does not — taste is local. The test: two independent
+  observers would write the same annotation.
+- **Redistribution boundary (decided 2026-07-26):** the repo ships facts
+  and *pointers*. Vendor prose (og:description) and image bytes are fetched
+  by mtunes from the pack's URL on demand into
+  `<workspace>/annotations-cache/` — never committed, never redistributed.
+  The UI reads the cache; the repo stays legally boring.
+- **Pack houses vs marketplaces (decided 2026-08-16):** houses (SFM,
+  Polyend, Zero-G, …) have finite catalogs and are annotated per pack.
+  Marketplaces (Splice) list more packs daily and every user's library is a
+  different partial subset, so the repo ships their *grammar* plus
+  `[packs] resolver = "<strategy>"` (§11.3).
+- Observation dates on everything; inert data means a community
+  contributions repo is low-risk long-term.
+
+### 11.2 Pack-first browsing (three tiers + docs)
+
+Packs are the mental unit, so `catalog packs` and the UI group by pack — a
+derived presentation layer over catalog paths, no storage change. A pack row
+carries `dir` (catalog prefix), `name`, `vendor`, identity match (`exact` /
+`partial` with fraction, by content hash), per-device eligible counts and
+converted sizes. Sources of pack identity, most trusted first:
+
+1. **Known vendor** — the location's `vendor` slug (single-vendor root) or
+   `layout = "vendor-dirs"` matched by slug / name / alias → the annotations
+   repo's pack grammar.
+2. **Docs tier** — what the pack ships: `Docs/Artwork*`, `Docs/*About*`
+   (`.md` / `.rtf` stripped to prose / `.txt`), root `*Cover*.png`, exposed
+   as `catalog:<location>/<path>` refs resolved by `/api/art` and
+   `/api/blurb` (only cataloged paths resolve; remote goes through the
+   object cache). Annotations win for name/slug/identity; docs fill what
+   they leave empty. Lifts 107/113 house-archive packs out of fallback.
+3. **Honest fallback** — top-level dirs pose as packs, no badge, and the UI
+   must not make this feel broken.
+
+(Tier "unknown vendor → heuristic inference" sits between 1 and 3 and is
+not built; §12.)
+
+### 11.3 Marketplace resolvers
+
+`internal/resolve` implements per-vendor strategies. `splice-graphql`: one
+public unauthenticated query per pack dir, probed by a sample's path within
+the pack (strict match — no wrong-pack attribution; basename search,
+multi-probe) → parent pack's name/slug/provider/URL/cover/tags, cached per
+pack in `annotations-cache/resolve/<vendor>/` (negatives too, re-asked after
+30 days). Runs after every scan of such a location and via `catalog
+resolve`; browse reads the cache exactly like a repo pack.
+
+**A vendor's free API is a favour.** Rate policy is per strategy: a burst
+for small jobs (a new pack resolves instantly), a pace after it, a per-run
+cap so a 220-pack library resolves over several runs, and a cooldown
+persisted in `_state.json` that survives the process — Splice 429s
+`assetsSearch` for hours after a few hundred rapid queries (measured
+2026-08-17), and walking straight back into a limit still in force is the
+failure to avoid. Per-SAMPLE calls do not scale; pack-level resolution is
+fine and cached; filtering never depends on enrichment.
+
+### 11.4 Instrument facet and cross-pack search
+
+A jungle pack still holds 69 vocals and 16 pianos; the instrument facet is
+how you reach them without abandoning pack-first browsing. Sources, in
+trust order:
+
+1. **What the vendor labelled** — `01. Bass Drum/`,
+   `TA_Kick_Loop_124_D.wav`. `instruments.toml` carries canonical id,
+   family, the words vendors write, and `avoid` traps, applied to every
+   vendor; per-vendor `[[instrument]]` blocks carry abbreviations only
    unambiguous inside one library (SFM's `CH`/`HH`/`BD`). Every label on a
-   path is collected and the most specific wins (earliest in the lexicon) —
-   machine names land in filenames, so `04. Rimshot/Rimshot TOM 31.wav` has
-   to read as a rimshot while `Drums/Kick 01.wav` stays a kick. 86% of the
-   house archive and 97% of Splice carry one.
-2. **Vendor APIs**, for marketplaces — but per-SAMPLE calls do not scale:
-   Splice 429s `assetsSearch` for hours after a few hundred rapid queries
-   (measured 2026-08-17). Pack-level resolution is fine and cached; per-file
-   enrichment must stay opportunistic. Filtering never depends on it.
-3. **Never** audio analysis or asking the user to tag a 160k-file library.
-   Unlabelled samples stay unlabelled and simply don't match.
+   path is collected and the most specific wins (earliest in the lexicon),
+   so `04. Rimshot/Rimshot TOM 31.wav` reads as a rimshot while
+   `Drums/Kick 01.wav` stays a kick. 86% of the house archive and 97% of
+   Splice carry one.
+2. **Vendor APIs**, pack-level only (§11.3).
+3. **Never** audio analysis, and never asking the user to tag a 160k-file
+   library. Unlabelled samples stay unlabelled and simply don't match.
 
-Surfaced by `catalog samples` (`--instrument/--family/--category/--key/
---bpm/--pack/--device`, `--json`) and by the UI's filter bar, which swaps
-the Library from pack cards to cross-pack sample rows while any filter is
-set, with instrument facet counts and the device lens still applied.
+Surfaced by `catalog samples` and the UI's filter bar, which swaps the
+Library from pack cards to cross-pack sample rows while any filter is set,
+with facet counts and the device lens still applied.
 
-**Resolver rate limiting.** A vendor's free API is a favour. Policies are
-per strategy: a burst for small jobs (a new pack resolves instantly), a
-pace after it, a per-run cap so a 220-pack library resolves over several
-runs, and a cooldown persisted in `annotations-cache/resolve/<vendor>/
-_state.json` that survives the process — otherwise every scan walks
-straight back into a limit that is still in force. Cached answers keep
-working throughout.
+### 11.5 Device lens
 
-- Tagging, preview/audition, audio-content dedup. **Status 2026-08-16**:
-  audition shipped with the UI (v0.4); **content dedup shipped** — a view's
-  `dedup = "content"` renders identical bytes once (first output path in
-  sort order; deterministic, pinned), opt-in because a DAW kit folder wants
-  its members even when they duplicate the one-shots folder; `catalog
-  dupes` reports the groups (house archive: 6,726 groups, 10,420 redundant
-  copies, 1.6 GiB); **per-file metadata harvest shipped** — `harvest`
-  derives bpm/key/category/tags from filename and folder grammar
-  (`_C#4`, `124 Bpm`, Camelot ` - 10A`, `Bass Lines 166.5/`) plus the
-  annotation layer's `[[category]]` and pack `[[dir]]` maps into
-  `annotations-cache/meta/<location>.jsonl` (the UI's bpm/key/cat
-  columns), after every scan and via `catalog harvest`. Audio-content
-  (perceptual) dedup and free-form tagging remain open.
-- **Source annotations**: a metadata cascade over the (still immutable)
-  sources, most-specific wins:
-  `device default → vendor profile → vendor group/era → pack override →
-  local annotation`. Split by who could have written each layer: vendor
-  facts (Splice layout rules; SFM era groups like "tape-era packs are
-  dual-mono"; which parallel format tree to prefer) are shareable data
-  about the product itself; local annotations are the user's taste and
-  exceptions, and always win. The resolved per-file value is pinned in the
-  lockfile like any transform param, so shared data evolving never changes
-  a restore.
-  - **Pack identity by content, not path**: packs are recognizable from
-    their file SHAs (already cataloged) — a vendor entry can match "these
-    hashes = 808 From Mars" regardless of folder names. Path globs are the
-    fallback for unfingerprinted packs.
-  - **Community vendor DB** is viable long-term: annotations are inert
-    data (no code execution), so a public contributions repo is low-risk.
-    House rules: schema-versioned files; facts only ("this pack's stereo
-    is dual-mono"), never taste ("sum sounds better") — taste is local.
-    **Marketplaces (decided 2026-08-16)**: pack *houses* (SFM, Polyend,
-    Zero-G) have finite catalogs and are annotated per pack in the repo;
-    *marketplaces* (Splice) list more packs daily and every user's library
-    is a different partial subset, so the repo ships their grammar only
-    plus `[packs] resolver = "<strategy>"`. `internal/resolve` implements
-    the strategy (`splice-graphql`: one public unauthenticated query per
-    pack dir, probed by a sample's path within the pack → parent pack's
-    name/slug/provider/URL/cover/tags), paced and 429-aware, and caches
-    facts per pack in `annotations-cache/resolve/<vendor>/` (negatives
-    too, re-asked after 30 days). browse reads that cache exactly like a
-    repo pack; the art endpoint trusts its cover URLs. Runs after every
-    scan of such a location and via `catalog resolve`. Vendor tag labels
-    are canonicalized through the repo's `tags.toml` (now implemented in
-    Go: `annotations.TagMap`).
-- **Display-aware naming** (found on hardware 2026-07-17: Syntakt's list
-  view crops names, so `BD A 808 Decay A 01..06` all display identically —
-  the distinguishing digits are past the crop). **Ideas 1 and 2 shipped
-  2026-08-16**: `[naming] display_length = N` makes plan warn about names
-  identical within N chars of their folder-mates; `[naming] rename =
-  "distinguishing-first"` rewrites exactly those names by moving the
-  tokens that differ to the front, iterating until nothing clashes
-  (`BD A 808 Decay A 01` → `01 BD A 808 Decay A` → `A 01 BD A 808 Decay`
-  once the A/B variants collide too). Untouched names stay untouched;
-  results pin in the lock. Syntakt template ships `16` (≤18 by the
-  hardware observation; nobody has counted). The vendor-grammar version
-  (SFM `take_suffix` → always front) is still open — the generic
-  collision-driven policy needs no vendor knowledge and turned out to be
-  enough. Escalating ideas as originally written:
-  1. `display_length` heuristic per device + plan warning when multiple
-     output names share their first N chars (cheap, high value).
-  2. Opt-in "distinguishing-first" rename policy (move discriminating
-     tokens to the front). PREFERRED DIRECTION (2026-07-17), and it slots
-     into the vendor annotation layer: a vendor's naming grammar is a fact
-     ("SFM: trailing take number → front"), so the rule ships with the
-     vendor profile and applies everywhere that vendor appears.
-  3. Common-token compression: tokens shared by EVERY name in a flat
-     export carry zero information — strip them deterministically,
-     maximizing distinguishing info per visible character (git-style
-     unique abbreviation, but for sample names).
-- **Dual-mono detection**: if L ≈ R, take one channel, skip the −3 dB pad —
-  no decision needed and lossless by definition. **Shipped 2026-08-16**,
-  moved to scan time rather than materialize: local locations analyze
-  every 2-channel integer-PCM WAV/AIFF (|L−R| ≤ 1 LSB@16-bit for every
-  frame) and store `audio.dual_mono` in the catalog; entries scanned
-  before the field existed are backfilled on the next rescan (31,627
-  stereo files in 6 s on the house archive; 3,146 dual-mono — 10%). Remote
-  sources and non-PCM stay unknown (nil), and unknown never folds. Mono
-  devices fold dual-mono sources with `left` instead of the device
-  downmix; stereo-preserving devices opt in with `[audio] dual_mono =
-  "fold"` (default `keep`). The choice is per entry and lands in the
-  lock's ffmpeg args like any transform. Leaves annotations for genuine
-  taste calls on true-stereo material only.
+When building for a device, the whole browse surface filters to what CAN
+materialize for it — too long, untranscodable, wrong-shaped material
+disappears. It is the plan engine's eligibility predicates run as a live
+filter over catalog metadata (duration/channels/rate/format), so it costs
+nothing. `catalog ls --device`, `catalog packs --device`, `catalog samples
+--device`, and the UI toggle are one predicate.
 
-## 12. Open questions for markup
+## 12. Designed-for, not yet built
 
-Resolved 2026-07-17:
+Ordered roughly by how much the design already accommodates them.
 
-- Over-length sources are auto-excluded (shown in plan, no trim code in v0).
-- Below-rate sources convert silently.
-- Workspace is a user-chosen synced/git dir via `mtunes init`, no dotdir
-  default.
-- Octatrack `[naming]`: no documented hard limits exist; ship conservative
-  warn-level heuristics (see §4).
-- Storage `reserve` defaults to 10% everywhere — "how full are we willing
-  to go" is an explicit policy knob, never an accident.
-- **Lockfiles are kept forever.** They are the history; `restore` is the
-  `git revert` equivalent. (And if the workspace is a git repo, they're
-  literally versioned too.)
+- **Sidecar sync** (Octatrack `.ot`, Ableton `.asd`): mutable,
+  device-written files keyed to **output artifact identity** (source SHA +
+  transform params), not to the view, so slices and analysis follow the
+  sample across views. The lockfile already records everything needed to
+  key them. Becomes urgent the moment Live is a target (§4.5).
+- **Vendor-grammar rename** (SFM `take_suffix` → always front) and
+  **common-token compression** (strip tokens shared by every name in a
+  flat export — git-style unique abbreviation for sample names). The
+  generic collision-driven `distinguishing-first` (§4.1) has been enough so
+  far.
+- **Auto vendor grouping**: a layout option that prefixes output with a
+  vendor dir *conditionally* — multi-pack vendors group ("SFM/808 From
+  Mars/…"), single-pack vendors stay flat. Pack identity now answers "how
+  many packs does this vendor have in this view"; per-include `as` does it
+  explicitly today.
+- **Tier-2 pack inference** for unknown vendors: heuristic (audio critical
+  mass, docs/artwork at dir root, sibling-zip pattern, shallow depth),
+  cached as correctable annotations.
+- **Local annotation layer**: the user's own overrides at the bottom of the
+  cascade (`device default → vendor → pack → local`), always winning. Taste
+  lives here, never in the repo.
+- **Direct device upload** for staged devices (SysEx/SDS the way elektroid
+  does it); v0 answer remains: hand the folder to Transfer.
+- **Perceptual (audio-content) dedup** and **free-form tagging**. Byte dedup
+  shipped; these stay open and may stay open — see the instrument facet's
+  third rule.
+- **Optional analysis sidecar** `[proposed 2026-08-19]`: if audio analysis
+  (BPM/key detection, CLAP embeddings) ever earns a place, it is an
+  *enrichment tier* like harvest — `annotations-cache/analysis/<location>.jsonl`,
+  SHA-keyed, filled by a GPU box at its leisure, never consulted by plan or
+  materialize, never in a lockfile, and only for material the vendor left
+  unlabelled. The catalog's shape makes this additive whenever; nothing
+  about the current design should bend toward it now.
+- **GUI beyond the embedded UI**: the Wails shell is presentation only by
+  design; richer native integration (drag a card in, pick a target folder)
+  waits until the HTTP contract stops changing weekly.
 
-Still open, deferred until the Octatrack becomes a target: true usable
-bytes of the 32GB CF card (`diskutil info` when mounted).
+## 13. Open questions
 
-## 13. Device fact sources
+- True usable bytes of the 32 GB Octatrack CF card (`diskutil info` when
+  mounted) — deferred until the Octatrack becomes a target again.
+- Loudness defaults per preset and the source-side measurement
+  approximation (§4.4) `[confirm]`.
+- Ableton Move / Push 3 / Live facts for §4.5 presets — manuals not yet
+  read; nothing asserted yet.
+- Whether `catalog/` belongs in the workspace git history (§2.1 says yes;
+  tens of MB of JSONL that churns on every scan is the cost).
+
+Resolved questions and their dates are in CHANGELOG.md.
+
+## 14. Device fact sources
 
 - [Syntakt User Manual OS 1.40](https://www.elektron.se/wp-content/uploads/2026/03/Syntakt-User-Manual_ENG_OS1.40_260304.pdf)
   §6.2.4: 64 slots / 32 MB / 5 s per sample / 16-bit 48 kHz mono wav /
@@ -669,7 +852,13 @@ bytes of the 32GB CF card (`diskutil info` when mounted).
   flex = 16/24-bit 44.1 kHz wav/aiff mono/stereo; audio pool folder max
   1,024 files.
 
-## 14. UI (v0.4)
+- To be sourced before their presets ship (§4.5): Ableton Move manual
+  (sample import limits), Push 3 standalone file handling, Digitakt /
+  Digitakt II / Model:Samples manuals (sample memory, slot counts,
+  duration), 1010music Bitbox, Sherpa Raw Waves V2, Torso S-4, Polyend Play
+  / Tracker. Until a line appears here with URL + section + date, the
+  preset is a prefill, not a fact.
+## 15. UI
 
 `mtunes ui` serves the browser UI from the binary (go:embed, localhost
 only, no toolchain): Library (pack browser, device lens, identity badges,
@@ -685,7 +874,7 @@ write phase pills (the pipeline is per-file concurrent, not phased — a
 single honest progress bar instead), restore copies the CLI command
 rather than writing to a target picked in a browser.
 
-## 15. Desktop shell (Wails)
+## 16. Desktop shell (Wails)
 
 `cmd/mtunes-desktop` wraps the identical embedded UI in a native window:
 Wails v2 serves ui.Assets() and falls through to the same /api/* handler
@@ -695,7 +884,7 @@ Wails v2 serves ui.Assets() and falls through to the same /api/* handler
 remains the toolchain-free path; the desktop shell is presentation only —
 no bindings, no IPC, one HTTP contract.
 
-## 16. Authoring in the UI (v0.5)
+## 17. Authoring in the UI
 
 The UI writes as well as reads, but never takes ownership of the files:
 recipes, device and storage profiles stay hand-editable TOML, and UI edits
@@ -717,3 +906,18 @@ files are generated wholesale.
   field is editable, because the next box out is one we've never seen;
   storage capacity can be measured from a mounted volume instead of
   looked up.
+
+## 18. Proposed refinements — 2026-08-19 (review list)
+
+Everything tagged `[proposed 2026-08-19]` above, in one place. Accept by
+deleting the tag; reject by deleting the section and noting it in
+CHANGELOG.md.
+
+| § | Proposal | One-line case |
+|---|---|---|
+| 2.1 | Workspace remote + unpushed-lock nag; archive second copy | Restorability has a SPOF while locks live on one disk; the archive is single-copy on a workstation drive. |
+| 3.2 / 4.4 | Loudness: lazy SHA-cached measurement, linear-gain normalization, `lufs` or `peak`, device default + view override | 90s sample CDs vs Splice packs aren't level-matched; samplebank's dynamic `loudnorm` smears one-shots; linear gain pins exactly. |
+| 4.3 | Passthrough audio (`format = "source"`) | Live / Push / most desktop targets want curation and provenance, not transcoding. |
+| 4.5 | Preset roadmap: Live, Push 3, Move first; then eurorack/Polyend/Bitbox | What is on the desk, plus what samplebank already had. Facts from manuals only. |
+| 9 | `catalog loudness`, `verify --location` | The catalog is already a manifest; give it the verb. |
+| 12 | Optional analysis sidecar, explicitly *not now* | Keeps the door open without bending the design toward it. |
