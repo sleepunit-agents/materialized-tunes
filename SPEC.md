@@ -889,6 +889,22 @@ headline rule — link the page, never the file, because vendor download
 URLs rotate and bypass the page the vendor wants you on — is lint L2 plus
 `observed`.
 
+**License display posture** `[ratified 2026-08-19]`: the recorded license
+is a ceiling on claims, not a badge mandate. A consumer may surface
+`uncleared` quietly or not at all — but may never present a pack under a
+license class it doesn't carry. Concretely: only `license =
+"royalty-free"` may ever be labelled royalty-free; saying nothing is
+always allowed, upgrading never is. (Jonathan: "fine not to show uncleared
+as long as we don't claim royalty free.")
+
+**Curators are not distributors** `[ratified 2026-08-19]`: `role =
+"distributor"` is reserved for parties the rights-holder demonstrably
+licensed to distribute (Loopmasters' label samplers, Splice, Bandcamp).
+Curation surfaces — BPB, KVR threads, blogs, "best free packs" roundups —
+never get distributor records, however useful they are for *finding*
+packs: the pointer goes past them to the vendor's own page, always. If a
+licensing relationship can't be evidenced, there is no `via`.
+
 Schema detail lives in the annotations repo's SCHEMA.md (`[vendor] domains
 / role`, `[acquisition]`, `[[relation]]`, root `hosts.toml`).
 
