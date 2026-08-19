@@ -5,3 +5,7 @@
 /mtunes-desktop
 /mtunes-desktop.exe
 .claude/launch.json
+# editor/build litter
+*~
+*.exe
+*.exe~
