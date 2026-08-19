@@ -878,10 +878,16 @@ un-argued.
 
 **License classes.** `[acquisition] license` is a small enum so the UI can
 say what the click leads to without reproducing terms: `royalty-free`
-(vendor EULA, use in music OK, no redistribution — the default for houses),
-`cc0`, `cc-by`, `personal-use`, `purchase` (terms come with the sale),
-`unknown`. Refined by the source survey (notes/ in the annotations repo)
-before the tag comes off.
+(use in music incl. commercial, no redistribution — the overwhelming
+majority of houses and SampleRadar), `cc0` / `cc-by` / `cc-by-nc`
+(Freesound-style), `informal-free` ("use it, donate if you like", no
+written terms — Legowelt), `uncleared` (all-rights-reserved or contains
+third-party material the publisher didn't clear — Blu Mar Ten's "samples
+of commercial tracks, at your own risk"), `purchase`, `unknown`. The
+2026-08-19 source survey (annotations repo `notes/`) is the evidence; its
+headline rule — link the page, never the file, because vendor download
+URLs rotate and bypass the page the vendor wants you on — is lint L2 plus
+`observed`.
 
 Schema detail lives in the annotations repo's SCHEMA.md (`[vendor] domains
 / role`, `[acquisition]`, `[[relation]]`, root `hosts.toml`).
