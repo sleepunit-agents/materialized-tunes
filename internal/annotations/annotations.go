@@ -79,10 +79,33 @@ type Pack struct {
 	SamplesListed int      `toml:"samples_listed" json:"samples_listed,omitempty"` // vendor's own count; honest denominator for partial copies
 	Tags          []string `toml:"tags" json:"tags,omitempty"`                     // canonical tags (see tags.toml in the annotations repo)
 	Archives      []string `toml:"archives" json:"archives,omitempty"`
+	Discontinued  bool     `toml:"discontinued" json:"discontinued,omitempty"` // out of print; [pack] url/[meta] image are archival pointers
 
-	Meta     Meta     `json:"meta,omitempty"`
-	Identity Identity `json:"identity,omitempty"`
-	Dirs     []Dir    `json:"dirs,omitempty"`
+	Meta        Meta         `json:"meta,omitempty"`
+	Identity    Identity     `json:"identity,omitempty"`
+	Acquisition *Acquisition `json:"acquisition,omitempty"`
+	Relations   []Relation   `json:"relations,omitempty"`
+	Dirs        []Dir        `json:"dirs,omitempty"`
+}
+
+// Acquisition mirrors SCHEMA [acquisition] — where someone who doesn't own
+// the pack may go. The pointer is always a page, never a file (SPEC §11.6);
+// orphans carry no pointer at all.
+type Acquisition struct {
+	Class   string `toml:"class" json:"class"`               // vendor-free | vendor-paid | distributor | orphan
+	URL     string `toml:"url" json:"url,omitempty"`         // the page the vendor wants the customer on
+	Via     string `toml:"via" json:"via,omitempty"`         // distributor vendor slug, iff class = "distributor"
+	Gate    string `toml:"gate" json:"gate,omitempty"`       // none | email | account | purchase
+	License string `toml:"license" json:"license,omitempty"` // ceiling on claims — never upgrade on display
+}
+
+// Relation mirrors SCHEMA [[relation]] — subsets, samplers, bundles.
+type Relation struct {
+	Type   string `toml:"type" json:"type"`             // subset-of | sampler-of | superseded-by | bundle-of | reissue-of
+	Pack   string `toml:"pack" json:"pack"`             // "<vendor slug>/<pack slug>"
+	Basis  string `toml:"basis" json:"basis,omitempty"` // sha | vendor-states | observed
+	Source string `toml:"source" json:"source,omitempty"`
+	Note   string `toml:"note" json:"note,omitempty"`
 }
 
 type Meta struct {
@@ -232,10 +255,13 @@ func loadVendor(dir string) (*Vendor, error) {
 				SamplesListed int      `toml:"samples_listed"`
 				Tags          []string `toml:"tags"`
 				Archives      []string `toml:"archives"`
+				Discontinued  bool     `toml:"discontinued"`
 			} `toml:"pack"`
-			Meta     Meta     `toml:"meta"`
-			Identity Identity `toml:"identity"`
-			Dir      []Dir    `toml:"dir"`
+			Meta        Meta         `toml:"meta"`
+			Identity    Identity     `toml:"identity"`
+			Acquisition *Acquisition `toml:"acquisition"`
+			Relation    []Relation   `toml:"relation"`
+			Dir         []Dir        `toml:"dir"`
 		}
 		data, err := os.ReadFile(pf)
 		if err != nil {
@@ -247,8 +273,9 @@ func loadVendor(dir string) (*Vendor, error) {
 		v.Packs = append(v.Packs, Pack{
 			Name: f.Pack.Name, Slug: f.Pack.Slug, Dir: f.Pack.Dir,
 			URL: f.Pack.URL, Provider: f.Pack.Provider, SamplesListed: f.Pack.SamplesListed,
-			Tags: f.Pack.Tags, Archives: f.Pack.Archives,
-			Meta: f.Meta, Identity: f.Identity, Dirs: f.Dir,
+			Tags: f.Pack.Tags, Archives: f.Pack.Archives, Discontinued: f.Pack.Discontinued,
+			Meta: f.Meta, Identity: f.Identity,
+			Acquisition: f.Acquisition, Relations: f.Relation, Dirs: f.Dir,
 		})
 	}
 	return v, nil

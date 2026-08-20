@@ -19,6 +19,10 @@ const S = {
   owned: JSON.parse(localStorage.getItem('mtunes.owned') || '{}'),
   lensMenu: false, onlyOwned: JSON.parse(localStorage.getItem('mtunes.onlyOwned') || 'false'),
   search: '', locFilter: '',
+  // discover: the registry with the ownership filter flipped. Library is
+  // always the default on load; obtainable-only is always on again next
+  // session — both deliberate (SPEC §11.6).
+  discover: false, obtainable: true, disc: null, discBusy: false,
   view: null,                      // selected recipe name
   pf: null, pfBusy: false, disabled: new Set(),
   run: { status: 'idle' }, runLog: ['[idle] no run started this session'],
@@ -82,6 +86,12 @@ async function loadPacks() {
   const q = new URLSearchParams();
   if (S.lens) q.set('device', S.lens);
   S.packs = await api('/api/packs?' + q) || [];
+}
+
+async function loadDiscover() {
+  S.discBusy = true; render();
+  try { S.disc = await api('/api/discover') || []; } catch (e) { S.disc = []; }
+  S.discBusy = false; render();
 }
 
 async function loadPreflight() {
@@ -364,8 +374,101 @@ async function loadSamples() {
   S.samplesBusy = false; render();
 }
 
+/* ---------- discover: browse what you don't have ----------
+   Thin cards on purpose: registry identity only (name, vendor, art,
+   description, license ceiling, relations, the pointer). No auditioning,
+   no per-hit browsing — mtunes doesn't hold the bytes; previewing is the
+   vendor's job on the page we link to. The license value is a ceiling on
+   claims: only royalty-free is ever LABELLED royalty-free. */
+
+const segToggle = () => `<div class="seg">
+  <span class="${S.discover ? '' : 'on'}" data-act="disc-off">Library</span>
+  <span class="${S.discover ? 'on' : ''}" data-act="disc-on">Discover</span>
+</div>`;
+
+const LICENSE_BADGE = { 'royalty-free': 'royalty-free', 'cc0': 'CC0', 'cc-by': 'CC BY', 'cc-by-nc': 'CC BY-NC', 'informal-free': 'free · informal' };
+const obtainable = (r) => ['vendor-free', 'vendor-paid', 'distributor'].includes(r.class) && r.url;
+
+// Relation + containment hints against the library. skip = you already hold
+// this content one way or another; upgrade = you own a taste of it and the
+// full thing exists at the vendor — the single best discovery row there is.
+function discHints(r) {
+  const hints = []; let skip = false, upgrade = false;
+  if (r.have_fraction >= 0.999) { hints.push('all of this content is already in your library'); skip = true; }
+  else if (r.have_fraction > 0) hints.push(`${Math.round(r.have_fraction * 100)}% of this content is already in your library`);
+  for (const rel of r.relations || []) {
+    if (!rel.owned) continue;
+    const sub = rel.type === 'subset-of' || rel.type === 'sampler-of';
+    if (sub && !rel.inverse) { hints.push(`contained in ${rel.pack} — you own it`); skip = true; }
+    else if (sub && rel.inverse) { hints.push(`you own its ${rel.type === 'sampler-of' ? 'sampler' : 'subset'}: ${rel.pack}`); upgrade = true; }
+    else if (rel.type === 'superseded-by' && !rel.inverse) { hints.push(`superseded by ${rel.pack} — you own it`); skip = true; }
+    else if (rel.type === 'superseded-by' && rel.inverse) { hints.push(`newer edition of ${rel.pack}, which you own`); upgrade = true; }
+    else if (rel.type === 'bundle-of' && rel.inverse) { hints.push(`inside ${rel.pack} — you own the bundle`); skip = true; }
+    else if (rel.type === 'reissue-of' && !rel.inverse) { hints.push(`reissue of ${rel.pack} — you own it`); skip = true; }
+    else hints.push(`${rel.type.replace(/-/g, ' ')} ${rel.pack} (owned)`);
+  }
+  return { hints, skip, upgrade };
+}
+
+function discCard(r, ghost) {
+  const art = r.image
+    ? `<div class="art"><img src="/api/art?u=${encodeURIComponent(r.image)}" loading="lazy" onerror="this.parentNode.classList.add('none');this.remove();this.textContent='/'"></div>`
+    : `<div class="art" style="background:linear-gradient(135deg,hsl(${artHue(r.name)},38%,42%),hsl(${artHue(r.name)},45%,24%))">${esc(r.name[0] || '?')}</div>`;
+  const badges = [];
+  if (r.class === 'vendor-free' || (r.class === 'distributor' && r.gate !== 'purchase')) badges.push('<span class="badge free">free</span>');
+  if (r.class === 'vendor-paid' || (r.class === 'distributor' && r.gate === 'purchase')) badges.push('<span class="badge paid">paid</span>');
+  if (r.discontinued) badges.push('<span class="badge orphan">out of print</span>');
+  const lic = LICENSE_BADGE[r.license]; // ceiling on claims: anything else says nothing
+  if (lic) badges.push(`<span class="badge lic">${esc(lic)}</span>`);
+  const { hints, skip, upgrade } = discHints(r);
+  const hintHtml = hints.slice(0, 2).map(h => `<div class="hint ${upgrade && !skip ? 'upgrade' : ''}" title="${esc(h)}">${esc(h)}</div>`).join('');
+  const via = r.class === 'distributor' && r.via ? ` · via ${esc(r.via)}` : '';
+  const stats = r.samples_listed ? `<div class="stats">vendor lists ${n(r.samples_listed)} samples</div>` : '';
+  const link = obtainable(r)
+    ? `<a class="get-link" href="${esc(r.url)}" target="_blank" title="${esc(r.gate && r.gate !== 'none' ? 'vendor page — asks for ' + r.gate : 'vendor page')}">get it ↗</a>`
+    : '';
+  return `<div class="pack thin ${ghost || skip ? 'ghost' : ''}" title="${esc(r.description || '')}">${art}
+    <div class="body">
+      <div class="name" title="${esc(r.name)}">${esc(r.name)}</div>
+      <div class="vline"><span class="vendor">${esc(r.vendor)}${via}</span>${badges.join('')}</div>
+      ${hintHtml}${stats}
+    </div>${link}</div>`;
+}
+
+function renderDiscover() {
+  const q = S.search.toLowerCase();
+  const all = (S.disc || []).filter(r =>
+    !q || r.name.toLowerCase().includes(q) || r.vendor.toLowerCase().includes(q) || (r.tags || []).some(tg => tg.includes(q)));
+  const acq = all.filter(obtainable);
+  const rest = all.filter(r => !obtainable(r));
+  // upgrades float, already-covered content sinks
+  const rank = (r) => { const h = discHints(r); return h.upgrade && !h.skip ? 0 : h.skip ? 2 : 1; };
+  acq.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+
+  const head = `
+    <div class="screen-head">
+      <h1>Discover</h1>${segToggle()}
+      <span class="sum">${S.discBusy ? 'loading…' : `${acq.length} obtainable${rest.length ? ` · ${rest.length} recognized only` : ''}`}</span>
+      <div style="flex:1"></div>
+      <span class="chip ${S.obtainable ? 'active' : ''}" data-act="obtainable" title="acquirable packs only — flip it off to see the out-of-print tail">obtainable${S.obtainable ? ' ✓' : ''}</span>
+      <div class="search">⌕ <input id="search" placeholder="Search packs…" value="${esc(S.search)}"><span class="kbd">⌘K</span></div>
+    </div>
+    <div class="disc-note" style="padding:8px 18px 0">Everything here is in the community registry because someone owns it. Cards are thin on purpose — previews live on the vendor's page, and that's where the link goes.</div>`;
+
+  if (S.discBusy && !S.disc) return head + `<div style="font:400 11px var(--mono);color:var(--fg-faint);padding:20px">loading…</div>`;
+  const grid = acq.length
+    ? `<div class="grid">${acq.map(r => discCard(r, false)).join('')}</div>`
+    : `<div style="font:400 11.5px var(--mono);color:var(--fg-faint);padding:24px 18px">nothing to discover — every annotated pack is already in your library.</div>`;
+  const tail = !S.obtainable && rest.length ? `
+    <div class="disc-sect">RECOGNIZED, NOT SOURCED</div>
+    <div class="disc-note">These existed — that's real information — but there's no legitimate source we'd point you at. Out-of-print reference material, not a storefront.</div>
+    <div class="grid">${rest.map(r => discCard(r, true)).join('')}</div>` : '';
+  return head + grid + tail;
+}
+
 function renderLibrary() {
   if (S.packOpen) return renderPackDetail();
+  if (S.discover) return renderDiscover();
   if (sampleMode()) return renderSamples();
   const q = S.search.toLowerCase();
   const rows = S.packs.filter(p =>
@@ -411,7 +514,7 @@ function renderLibrary() {
 
   return `
     <div class="screen-head">
-      <h1>Library</h1><span class="sum">${sum}</span>
+      <h1>Library</h1>${segToggle()}<span class="sum">${sum}</span>
       <div style="flex:1"></div>
       ${locs.map(l => `<span class="chip ${S.locFilter === l ? 'active' : ''}" data-act="loc" data-l="${esc(l)}" title="${S.locFilter === l ? 'click to clear' : 'only ' + esc(l)}">${esc(l)}${S.locFilter === l ? ' ✕' : ''}</span>`).join('')}
       <div class="search">⌕ <input id="search" placeholder="Search packs…" value="${esc(S.search)}"><span class="kbd">⌘K</span></div>
@@ -986,6 +1089,9 @@ function wire() {
         localStorage.setItem('mtunes.onlyOwned', JSON.stringify(S.onlyOwned)); render();
       }
       if (act === 'loc') { S.locFilter = (S.locFilter === el.dataset.l) ? '' : el.dataset.l; render(); }
+      if (act === 'disc-on') { S.discover = true; stopPlayback(); S.packOpen = null; S.pd = null; if (!S.disc) loadDiscover(); else render(); }
+      if (act === 'disc-off') { S.discover = false; render(); }
+      if (act === 'obtainable') { S.obtainable = !S.obtainable; render(); }
       if (act === 'f-inst') { S.fInst = (S.fInst === el.dataset.v) ? '' : el.dataset.v; applyFilters(); }
       if (act === 'clear-filters') {
         S.fInst = S.fKey = S.fBpm = S.fCat = '';

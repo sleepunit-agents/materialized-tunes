@@ -94,7 +94,26 @@
   .chip.active { color: var(--teal); border-color: rgba(61,196,207,.4); }
   .lens-note { font: 400 11px var(--mono); color: var(--fg-faint); }
 
+  .seg { display: flex; border: 1px solid var(--bord-raise); border-radius: 5px; overflow: hidden; user-select: none; }
+  .seg span { font: 600 11px var(--sans); color: var(--fg-dim); padding: 4px 12px; cursor: pointer; }
+  .seg span:hover { color: var(--fg); }
+  .seg span.on { background: var(--bg-sel); color: var(--fg); cursor: default; }
+
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; padding: 14px 18px 18px; }
+  /* discover: thin cards on purpose — registry identity only, the ownership
+     boundary made visible. Ghost = the recognized-not-sourced tail. */
+  .pack.thin { cursor: default; }
+  .pack.ghost { opacity: .55; }
+  .badge.free { color: var(--green); border-color: rgba(87,196,138,.35); }
+  .badge.paid { color: var(--fg-dim); border-color: var(--bord-raise); }
+  .badge.lic { color: var(--teal); border-color: rgba(61,196,207,.35); }
+  .badge.orphan { color: var(--fg-faint); border-color: var(--bord-raise); font-weight: 500; }
+  .hint { font: 400 10.5px var(--sans); color: var(--fg-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hint.upgrade { color: var(--amber); }
+  .get-link { font: 600 10.5px var(--sans); color: var(--teal); border: 1px solid rgba(61,196,207,.35); border-radius: 4px; padding: 2px 9px; text-decoration: none; white-space: nowrap; align-self: center; flex: none; }
+  .get-link:hover { background: rgba(13,138,148,.14); }
+  .disc-sect { font: 600 9px var(--sans); color: var(--fg-faint); letter-spacing: .1em; padding: 16px 18px 0; }
+  .disc-note { font: 400 10.5px var(--sans); color: var(--fg-ghost); padding: 2px 18px 0; }
   .pack { background: var(--bg-card); border: 1px solid var(--bord-card); border-radius: 6px; padding: 11px; display: flex; gap: 11px; cursor: pointer; }
   .pack:hover { border-color: var(--bord-hover); }
   .art { width: 46px; height: 46px; border-radius: 4px; flex: none; display: flex; align-items: center; justify-content: center; font: 700 16px var(--sans); color: rgba(255,255,255,.85); overflow: hidden; }

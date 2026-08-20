@@ -71,6 +71,7 @@ func Handler(ws *workspace.Workspace) http.Handler {
 	mux.HandleFunc("/api/summary", s.summary)
 	mux.HandleFunc("/api/devices", s.devices)
 	mux.HandleFunc("/api/packs", s.packs)
+	mux.HandleFunc("/api/discover", s.discover)
 	mux.HandleFunc("/api/views", s.views)
 	mux.HandleFunc("/api/preflight", s.preflight)
 	mux.HandleFunc("/api/materialize", s.materialize)
@@ -173,6 +174,18 @@ func (s *Server) packs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	rows, err := browse.Rows(s.ws, dev, r.URL.Query().Get("location"))
+	if err != nil {
+		jsonErr(w, 500, err)
+		return
+	}
+	jsonOut(w, rows)
+}
+
+// discover serves the registry with the ownership filter flipped: annotated
+// identities nothing in the catalog matches (SPEC §11.6). Read-only over
+// annotations + catalogs; the client applies the obtainable filter.
+func (s *Server) discover(w http.ResponseWriter, _ *http.Request) {
+	rows, err := browse.Discover(s.ws)
 	if err != nil {
 		jsonErr(w, 500, err)
 		return

@@ -23,11 +23,12 @@ import (
 
 // Row is one pack summary — annotated when the location names a vendor.
 type Row struct {
-	Location string `json:"location"`
-	Dir      string `json:"dir"`  // catalog path prefix of the pack ("808 From Mars", or "Samples From Mars/808 From Mars" under vendor-dirs)
-	Name     string `json:"name"` // display name: annotated pack name, else the pack's own directory name
-	Vendor   string `json:"vendor,omitempty"`
-	Tier     string `json:"tier"` // "vendor" (annotations) | "docs" (art/about shipped in the pack) | "top-level-dirs" (honest fallback)
+	Location   string `json:"location"`
+	Dir        string `json:"dir"`  // catalog path prefix of the pack ("808 From Mars", or "Samples From Mars/808 From Mars" under vendor-dirs)
+	Name       string `json:"name"` // display name: annotated pack name, else the pack's own directory name
+	Vendor     string `json:"vendor,omitempty"`
+	VendorSlug string `json:"vendor_slug,omitempty"` // set when the row resolved against an annotated vendor
+	Tier       string `json:"tier"` // "vendor" (annotations) | "docs" (art/about shipped in the pack) | "top-level-dirs" (honest fallback)
 
 	Slug          string   `json:"slug,omitempty"`
 	URL           string   `json:"url,omitempty"`
@@ -123,6 +124,7 @@ func Rows(ws *workspace.Workspace, dev *profile.Device, location string) ([]Row,
 			}
 			if vendor != nil {
 				row.Tier = "vendor"
+				row.VendorSlug = vendor.Slug
 				if row.Vendor == "" {
 					row.Vendor = vendor.Name
 				}

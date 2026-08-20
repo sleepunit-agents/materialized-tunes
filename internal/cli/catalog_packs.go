@@ -10,12 +10,15 @@ import (
 	"github.com/jbarket/materialized-tunes/internal/browse"
 	"github.com/jbarket/materialized-tunes/internal/plan"
 	"github.com/jbarket/materialized-tunes/internal/profile"
+	"github.com/jbarket/materialized-tunes/internal/workspace"
 )
 
 var (
 	packsDevice   string
 	packsLocation string
 	packsJSON     bool
+	packsDiscover bool
+	packsAll      bool
 )
 
 var catalogPacksCmd = &cobra.Command{
@@ -26,6 +29,9 @@ var catalogPacksCmd = &cobra.Command{
 		ws, err := openWorkspace()
 		if err != nil {
 			return err
+		}
+		if packsDiscover {
+			return runDiscover(ws)
 		}
 		var dev *profile.Device
 		if packsDevice != "" {
@@ -58,9 +64,54 @@ var catalogPacksCmd = &cobra.Command{
 	},
 }
 
+// runDiscover lists registry identities you don't hold (SPEC §11.6).
+// Obtainable classes only by default; --all adds the "recognized, not
+// sourced" tail (orphans, unclassified) — reference material, never a
+// storefront, so it stays behind the flag.
+func runDiscover(ws *workspace.Workspace) error {
+	rows, err := browse.Discover(ws)
+	if err != nil {
+		return err
+	}
+	if !packsAll {
+		kept := rows[:0]
+		for _, r := range rows {
+			if r.Obtainable() {
+				kept = append(kept, r)
+			}
+		}
+		rows = kept
+	}
+	if packsJSON {
+		return json.NewEncoder(os.Stdout).Encode(rows)
+	}
+	for _, r := range rows {
+		line := fmt.Sprintf("%-18s %-52s", r.Vendor, r.Name)
+		if r.Obtainable() {
+			line += fmt.Sprintf(" %-12s %s", r.Class, r.URL)
+		} else {
+			line += " recognized, not sourced"
+		}
+		if r.HaveFraction >= 0.999 {
+			line += "   [content already in library]"
+		} else if r.HaveFraction > 0 {
+			line += fmt.Sprintf("   [%d%% of content already in library]", int(r.HaveFraction*100))
+		}
+		for _, rel := range r.Relations {
+			if rel.Owned && rel.Inverse {
+				line += fmt.Sprintf("   [you own its %s: %s]", rel.Type, rel.Pack)
+			}
+		}
+		fmt.Println(line)
+	}
+	return nil
+}
+
 func init() {
 	catalogPacksCmd.Flags().StringVar(&packsDevice, "device", "", "apply the device lens: eligible counts and converted sizes")
 	catalogPacksCmd.Flags().StringVar(&packsLocation, "location", "", "limit to one location")
 	catalogPacksCmd.Flags().BoolVar(&packsJSON, "json", false, "machine output, one array")
+	catalogPacksCmd.Flags().BoolVar(&packsDiscover, "discover", false, "flip the filter: annotated packs NOT in your library, acquirable classes first")
+	catalogPacksCmd.Flags().BoolVar(&packsAll, "all", false, "with --discover: include the recognized-not-sourced tail (orphans, unclassified)")
 	catalogCmd.AddCommand(catalogPacksCmd)
 }
