@@ -868,6 +868,26 @@ Orphans appear under an explicit "recognized, not sourced" heading or not
 at all; they never appear next to a link. Discovery is read-only over
 annotations + catalog; no network beyond the existing og/resolver fetches.
 
+**Discover view posture** `[ratified 2026-08-20]`:
+
+- **Default view is your library; Discover is a toggle**, not a unified
+  list with owned badges. No wishlist / "mark as wanted" in v0 — intent
+  has no home here yet, and that's deliberate scope control.
+- **Obtainable-only, on by default.** Discover ships with an
+  "obtainable" filter enabled: only acquirable classes (`vendor-free`,
+  `vendor-paid`, `distributor`) show. Turning it off reveals orphans
+  under the "recognized, not sourced" heading. The default exists so the
+  tool never leads with "go get Jungle Warfare 3" when the honest answer
+  is "you can, but not in any way we're helping with" — the orphan tail
+  is reference material you opt into, not a storefront.
+- **Thin cards are intentional.** An unowned pack shows registry-level
+  identity only: name, vendor, description, artwork, license ceiling,
+  relations, the pointer. No sample auditioning, no per-hit browsing, no
+  mixing unowned content into planning views — mtunes doesn't hold the
+  bytes, and previewing is the vendor's job on the page we link to. The
+  asymmetry between a rich owned pack and a thin discover card is the
+  ownership boundary made visible, not a gap to fill.
+
 **Refusal, as a criterion.** mtunes has no `fetch`, no downloader, no
 "install this pack" — not for `vendor-free`, not for CC0. The binary's
 only network calls are vendor og metadata (§11.1) and marketplace
