@@ -23,8 +23,9 @@ import (
 
 func (s *Server) viewWrite(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Action  string `json:"action"` // create | add-rule | remove-rule | set-target
+		Action  string `json:"action"` // create | add-rule | remove-rule | set-target | rename
 		Name    string `json:"name"`
+		NewName string `json:"new_name"` // rename
 		Device  string `json:"device"`
 		Storage string `json:"storage"`
 		Target  string `json:"target"`
@@ -40,11 +41,20 @@ func (s *Server) viewWrite(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, 400, err)
 		return
 	}
-	if !nameOK.MatchString(req.Name) {
-		jsonErr(w, 400, fmt.Errorf("recipe name must be lowercase letters, digits, - or _"))
+	if !recipeNameOK.MatchString(req.Name) {
+		jsonErr(w, 400, fmt.Errorf("recipe name must be letters, digits, - or _"))
 		return
 	}
 	path := filepath.Join(s.ws.Root, "views", req.Name+".toml")
+
+	if req.Action == "rename" {
+		if err := s.renameView(req.Name, req.NewName); err != nil {
+			jsonErr(w, 400, err)
+			return
+		}
+		jsonOut(w, map[string]string{"status": "ok", "view": req.NewName})
+		return
+	}
 
 	switch req.Action {
 	case "create":
@@ -136,6 +146,55 @@ func (s *Server) viewWrite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonOut(w, map[string]string{"status": "ok", "view": req.Name})
+}
+
+// Recipe names are case-preserving: the name is usually also the folder a
+// device sees ("Samples"), so the host's casing is the user's call. Devices
+// and storages stay lowercase (they are referenced from recipes by name).
+var recipeNameOK = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
+
+// renameView moves views/<old>.toml to views/<new>.toml, rewrites its name
+// key, and carries the lock history (locks/<old>/) along so `restore`,
+// `diff` and the Cards screen keep finding it. Past lockfiles still record
+// the old name inside — that is history, left alone.
+func (s *Server) renameView(oldName, newName string) error {
+	if !recipeNameOK.MatchString(newName) {
+		return fmt.Errorf("recipe name must be letters, digits, - or _")
+	}
+	if oldName == newName {
+		return nil
+	}
+	oldPath := filepath.Join(s.ws.Root, "views", oldName+".toml")
+	newPath := filepath.Join(s.ws.Root, "views", newName+".toml")
+	data, err := os.ReadFile(oldPath)
+	if err != nil {
+		return fmt.Errorf("no such recipe: %s", oldName)
+	}
+	// Case-only renames on case-insensitive filesystems (Windows, macOS)
+	// stat the same file, so only refuse when it is genuinely another recipe.
+	if _, err := os.Stat(newPath); err == nil && !strings.EqualFold(oldName, newName) {
+		return fmt.Errorf("recipe %q already exists", newName)
+	}
+	out := setScalar(string(data), "name", newName)
+	if err := os.WriteFile(oldPath, []byte(out), 0o644); err != nil {
+		return err
+	}
+	if err := os.Rename(oldPath, newPath); err != nil {
+		return err
+	}
+	oldLocks := filepath.Join(s.ws.Root, "locks", oldName)
+	newLocks := filepath.Join(s.ws.Root, "locks", newName)
+	if st, err := os.Stat(oldLocks); err == nil && st.IsDir() {
+		if _, err := os.Stat(newLocks); err != nil || strings.EqualFold(oldName, newName) {
+			if err := os.Rename(oldLocks, newLocks); err != nil {
+				return fmt.Errorf("recipe renamed but its lock folder did not follow: %w", err)
+			}
+		}
+	}
+	if _, err := view.Load(s.ws.Root, newName); err != nil {
+		return fmt.Errorf("renamed, but %s.toml no longer parses: %w", newName, err)
+	}
+	return nil
 }
 
 // removeIncludeBlock drops the n-th [[include]] block (0-based) along with

@@ -92,6 +92,7 @@ func Handler(ws *workspace.Workspace) http.Handler {
 	mux.HandleFunc("/api/storage", s.storageWrite)
 	mux.HandleFunc("/api/storages", s.storages)
 	mux.HandleFunc("/api/volumes", s.volumes)
+	mux.HandleFunc("/api/dirs", s.dirs)
 	return mux
 }
 

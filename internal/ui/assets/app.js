@@ -28,7 +28,7 @@ const S = {
   run: { status: 'idle' }, runLog: ['[idle] no run started this session'],
   selCard: 0, locks: [], diff: null, diffBusy: false,
   locations: [], suggestions: [], scans: {}, addForm: null,
-  storages: [], presets: [], volumes: [], devForm: null, stoForm: null, newRecipe: null, addTo: null,
+  storages: [], presets: [], volumes: [], devForm: null, stoForm: null, newRecipe: null, addTo: null, dirPick: null, renaming: false,
   packOpen: null, pd: null, pdFolder: '', pdDesc: '', descOpen: false,
   // cross-pack sample filters: any of these set switches the Library from
   // pack cards to sample rows. Packs stay the default unit; this is the
@@ -207,6 +207,7 @@ function render() {
     ${tabbar()}
     <div class="main">${screens[S.screen]()}</div>
     ${addToPicker()}
+    ${dirPicker()}
     ${statusbar()}
   `;
   wire();
@@ -227,6 +228,51 @@ function addToPicker() {
       </div>
       <div style="font:400 10px var(--sans);color:var(--fg-faint)">Appends an [[include]] block to the recipe's TOML — your comments and hand edits stay put.</div>
     </div>`;
+}
+
+/* ---------- folder picker ----------
+   A browser tab cannot hand us a real path from <input type=file>, so the
+   picker is ours: /api/dirs walks the host filesystem one level at a time.
+   dirPick = { path, data, onPick, title }. The path box stays editable —
+   typing is still the fastest way in when you know where you are going. */
+function dirPicker() {
+  const d = S.dirPick;
+  if (!d) return '';
+  const data = d.data || { entries: [], roots: [] };
+  const rows = data.entries.map(e => `<div class="dp-row" data-act="dp-go" data-path="${esc(e.path)}">📁 ${esc(e.name)}</div>`).join('')
+    || `<div style="font:400 11px var(--mono);color:var(--fg-faint);padding:8px">${data.error ? esc(data.error) : 'no subfolders — pick this one, or type a new folder name onto the path above'}</div>`;
+  const roots = data.roots.map(r => `<span class="dp-root ${r.path === data.path ? 'on' : ''}" data-act="dp-go" data-path="${esc(r.path)}">${esc(r.name)}</span>`).join('');
+  return `<div class="menu-veil" data-act="dp-cancel" style="background:rgba(0,0,0,.45)"></div>
+    <div style="position:fixed;z-index:7;left:50%;top:18%;transform:translateX(-50%);width:620px;max-height:70vh;background:#16191c;border:1px solid #2f353b;border-radius:8px;box-shadow:0 16px 48px rgba(0,0,0,.6);padding:16px;display:flex;flex-direction:column;gap:10px">
+      <span style="font:600 13px var(--sans)">${esc(d.title || 'Choose a folder')}</span>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">${roots}</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span class="restore-btn" data-act="dp-up" title="up one level" ${data.parent ? '' : 'style="opacity:.3;pointer-events:none"'}>↑</span>
+        ${inp('dp-path', 'path', d.path)}
+        <span class="restore-btn" data-act="dp-type" title="go to the typed path">go</span>
+      </div>
+      <div style="overflow:auto;min-height:120px;max-height:38vh;border:1px solid var(--bord-raise);border-radius:4px;background:var(--bg-raise)">${rows}</div>
+      <div style="display:flex;gap:8px;align-items:center;justify-content:flex-end">
+        <span style="flex:1;font:400 10px var(--sans);color:var(--fg-faint)">The folder does not need to exist yet — materialize creates it. Existing files there are left alone; only recipe output is written.</span>
+        <span class="restore-btn" data-act="dp-cancel">cancel</span>
+        <span class="mat-btn" style="margin:0;padding:6px 16px;font-size:11px" data-act="dp-pick">use this folder</span>
+      </div>
+    </div>`;
+}
+
+async function dirPickGo(path) {
+  const d = S.dirPick;
+  if (!d) return;
+  const data = await api('/api/dirs?path=' + encodeURIComponent(path || ''));
+  d.data = data || { entries: [], roots: [] };
+  d.path = (data && data.path) || path;
+  render();
+  document.getElementById('dp-path')?.focus();
+}
+
+function openDirPicker(title, start, onPick) {
+  S.dirPick = { title, path: start || '', data: null, onPick };
+  dirPickGo(start || '');
 }
 
 function titlebar() {
@@ -870,12 +916,13 @@ function renderRecipe() {
     <div style="background:var(--bg-card);border:1px solid var(--bord-hover);border-radius:6px;padding:13px;display:flex;flex-direction:column;gap:9px;margin-bottom:12px;max-width:640px">
       <span style="font:600 12.5px var(--sans)">New recipe</span>
       <div style="display:flex;gap:8px">
-        ${inp('nr-name', 'name (lowercase)', '')}
+        ${inp('nr-name', 'name (letters, digits, - _)', '')}
         ${sel('nr-device', S.devices.map(d => [d.name, d.name]), nr.device, '160px')}
         ${sel('nr-storage', S.storages.map(s => [s.name, s.name]), nr.storage, '170px')}
       </div>
       <div style="display:flex;gap:8px;align-items:center">
-        ${inp('nr-target', 'target folder (~/Desktop/…) — optional', '')}
+        ${inp('nr-target', 'target folder — optional', nr.target || '')}
+        <span class="restore-btn" data-act="nr-browse" title="browse for a folder">browse…</span>
         <span class="restore-btn" data-act="recipe-cancel">cancel</span>
         <span class="mat-btn" style="margin:0;padding:6px 16px;font-size:11px" data-act="recipe-create">create</span>
       </div>
@@ -886,15 +933,17 @@ function renderRecipe() {
       <span style="font:600 14px var(--sans)">Recipe</span>
       <select id="view-pick" style="font:500 11.5px var(--mono);color:var(--fg-dim);background:var(--bg-raise);border:1px solid var(--bord-raise);border-radius:4px;padding:3px 8px">${viewOpts}</select>
       ${pf ? `<span class="rtag dev">${esc(pf.device)}</span><span class="rtag" style="cursor:default">${esc(pf.storage)}</span>` : ''}
-      <span class="rtag" data-act="set-target" title="click to change">${vmeta.target ? esc(vmeta.target) : '+ set target'}</span>
+      <span class="rtag" data-act="set-target" title="choose the folder this recipe materializes into">${vmeta.target ? esc(vmeta.target) : '+ set target'}</span>
+      ${S.renaming ? `${inp('rn-name', 'new name', S.view, '160px')}<span class="restore-btn" data-act="rename-cancel">cancel</span><span class="mat-btn" style="margin:0;padding:4px 12px;font-size:11px" data-act="rename-save">rename</span>`
+        : `<span class="restore-btn" data-act="rename-start" title="rename this recipe">rename</span>`}
       <div style="flex:1"></div>
       <span class="restore-btn" data-act="recipe-new">+ new recipe</span>
     </div>
     <div style="font:400 11px var(--sans);color:var(--fg-faint);margin-bottom:2px">Toggling a rule previews it; ✕ removes it from the recipe file. Add rules from the Library.</div>
     ${nrForm}`;
 
-  if (!pf) return `<div class="recipe-grid"><div class="recipe-left">${head}
-    <div style="font:400 11px var(--mono);color:var(--fg-faint);padding:24px 4px">running pre-flight…</div></div>
+  if (!pf || pf.error || !pf.rules) return `<div class="recipe-grid"><div class="recipe-left">${head}
+    <div style="font:400 11px var(--mono);color:${pf && pf.error ? 'var(--warn)' : 'var(--fg-faint)'};padding:24px 4px">${pf && pf.error ? 'pre-flight failed: ' + esc(pf.error) : 'running pre-flight…'}</div></div>
     <div class="preflight"></div></div>`;
 
   const rules = pf.rules.map((r, i) => {
@@ -1144,8 +1193,27 @@ function wire() {
         viewAction({ action:'remove-rule', name: S.view, index: i }).then(ok => { if (ok) { S.disabled = new Set(); loadPreflight(); } });
       }
       if (act === 'set-target') {
-        const val = prompt('Materialize target for ' + S.view + ':', (S.views.find(v=>v.name===S.view)||{}).target || '~/Desktop/' + S.view);
-        if (val != null) viewAction({ action:'set-target', name: S.view, target: val }).then(ok => ok && loadPreflight());
+        const cur = (S.views.find(v=>v.name===S.view)||{}).target || '';
+        openDirPicker('Materialize target for ' + S.view, cur, val => viewAction({ action:'set-target', name: S.view, target: val }).then(ok => ok && loadPreflight()));
+      }
+      if (act === 'nr-browse') {
+        const box = document.getElementById('nr-target');
+        openDirPicker('Target folder for the new recipe', box.value, val => { S.newRecipe.target = val; render(); document.getElementById('nr-target').value = val; });
+      }
+      if (act === 'rename-start') { S.renaming = true; render(); document.getElementById('rn-name')?.select(); }
+      if (act === 'rename-cancel') { S.renaming = false; render(); }
+      if (act === 'rename-save') {
+        const nn = document.getElementById('rn-name').value.trim();
+        if (!nn || nn === S.view) { S.renaming = false; render(); return; }
+        viewAction({ action:'rename', name: S.view, new_name: nn }).then(ok => { if (ok) { S.view = nn; S.renaming = false; S.pf = null; S.toast = `renamed to ${nn}`; loadPreflight(); setTimeout(()=>{S.toast='';render();}, 3000); } });
+      }
+      if (act === 'dp-cancel') { S.dirPick = null; render(); }
+      if (act === 'dp-go') { dirPickGo(el.dataset.path); }
+      if (act === 'dp-up') { if (S.dirPick?.data?.parent) dirPickGo(S.dirPick.data.parent); }
+      if (act === 'dp-type') { dirPickGo(document.getElementById('dp-path').value); }
+      if (act === 'dp-pick') {
+        const d = S.dirPick; const val = (document.getElementById('dp-path').value || d.path || '').trim();
+        S.dirPick = null; if (val) d.onPick(val); else render();
       }
       if (act === 'add-to') {
         S.addTo = { location: el.dataset.loc, glob: el.dataset.glob, label: el.dataset.label, as: el.dataset.as || '' };
@@ -1281,6 +1349,8 @@ function renderPreservingSearch() {
 window.addEventListener('keydown', (e) => {
   if (e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) {
     if (e.key === 'Escape') e.target.blur();
+    if (e.key === 'Enter' && e.target.id === 'dp-path') dirPickGo(e.target.value);
+    if (e.key === 'Enter' && e.target.id === 'rn-name') document.querySelector('[data-act="rename-save"]')?.click();
     return;
   }
   const map = { 1: 'library', 2: 'recipe', 3: 'run', 4: 'cards', 5: 'sources' };
