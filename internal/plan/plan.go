@@ -74,6 +74,21 @@ type Collision struct {
 	Sources []string `json:"sources"` // "location:path"
 }
 
+// Overlap is a pair of includes that both pick the same sources but send
+// them to different output prefixes, so every shared file lands twice.
+// Almost always a recipe that grew a location-wide "**" rule on top of
+// older per-pack rules; the narrower rule is the one to drop.
+type Overlap struct {
+	Location string `json:"location"`
+	RuleA    int    `json:"rule_a"` // include index (0-based, in recipe order)
+	GlobA    string `json:"glob_a"`
+	AsA      string `json:"as_a"`
+	RuleB    int    `json:"rule_b"`
+	GlobB    string `json:"glob_b"`
+	AsB      string `json:"as_b"`
+	Files    int    `json:"files"` // sources picked by both
+}
+
 type Plan struct {
 	View    *view.View       `json:"view"`
 	Device  *profile.Device  `json:"device"`
@@ -96,7 +111,8 @@ type Plan struct {
 	UnparseableAudio   []Skip `json:"unparseable_audio,omitempty"`
 
 	Collisions []Collision `json:"collisions,omitempty"`
-	Errors     []string    `json:"errors"` // any error ⇒ materialize refuses
+	Overlaps   []Overlap   `json:"overlaps,omitempty"` // sources landing twice via includes with different prefixes
+	Errors     []string    `json:"errors"`             // any error ⇒ materialize refuses
 	Warnings   []string    `json:"warnings"`
 
 	// Aliases: sources that were selected but render under another
@@ -269,7 +285,9 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 	var selection []picked
 	seen := map[string]bool{} // location:path:as — the same source through two
 	// includes with the same prefix is one output, not a collision
-	for _, inc := range v.Include {
+	first := map[string]int{}   // location:path → index of the include that picked it first
+	overlap := map[[2]int]int{} // {first include, later include with a different As} → shared sources
+	for ii, inc := range v.Include {
 		cat := catalogs[inc.Location]
 		paths := make([]string, 0, len(cat))
 		for p := range cat {
@@ -298,8 +316,28 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 				continue
 			}
 			seen[key] = true
+			if fi, dup := first[inc.Location+"\x00"+sp]; dup {
+				overlap[[2]int{fi, ii}]++
+			} else {
+				first[inc.Location+"\x00"+sp] = ii
+			}
 			selection = append(selection, picked{inc, cat[sp]})
 		}
+	}
+
+	for pair, n := range overlap {
+		a, b := v.Include[pair[0]], v.Include[pair[1]]
+		p.Overlaps = append(p.Overlaps, Overlap{Location: a.Location, RuleA: pair[0], GlobA: a.Glob, AsA: a.As, RuleB: pair[1], GlobB: b.Glob, AsB: b.As, Files: n})
+	}
+	sort.Slice(p.Overlaps, func(i, j int) bool {
+		if p.Overlaps[i].RuleA != p.Overlaps[j].RuleA {
+			return p.Overlaps[i].RuleA < p.Overlaps[j].RuleA
+		}
+		return p.Overlaps[i].RuleB < p.Overlaps[j].RuleB
+	})
+	for _, o := range p.Overlaps {
+		p.Warnings = append(p.Warnings, fmt.Sprintf("%d %s files land twice: rule %d (%s → %s) and rule %d (%s → %s) send them to different folders — drop the narrower rule",
+			o.Files, o.Location, o.RuleA+1, o.GlobA, prefixLabel(o.AsA), o.RuleB+1, o.GlobB, prefixLabel(o.AsB)))
 	}
 
 	for _, pk := range selection {
@@ -504,6 +542,15 @@ func (st *treeStripper) strip(p string) (string, bool) {
 	}
 	out := append(append([]string{}, segs[:packIdx+1]...), segs[packIdx+2:]...)
 	return strings.Join(out, "/"), true
+}
+
+// prefixLabel names an include's output prefix for humans: the As value
+// or "mirror" when the source tree is kept as-is.
+func prefixLabel(as string) string {
+	if as == "" {
+		return "mirror"
+	}
+	return strings.TrimSuffix(as, "/") + "/"
 }
 
 // outputPath maps a source path to its output path: mirror by default, or

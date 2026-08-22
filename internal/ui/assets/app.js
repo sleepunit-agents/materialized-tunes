@@ -972,14 +972,25 @@ function renderRecipe() {
     <div style="font:400 11px var(--mono);color:${pf && pf.error ? 'var(--warn)' : 'var(--fg-faint)'};padding:24px 4px">${pf && pf.error ? 'pre-flight failed: ' + esc(pf.error) : 'running pre-flight…'}</div></div>
     <div class="preflight"></div></div>`;
 
+  // Rules whose files also land elsewhere via a wider rule with a different
+  // prefix (the "added a location-wide ** on top of per-pack rules" case).
+  // The narrower rule is the odd one out: flag it and offer to drop it.
+  const twice = {};
+  for (const o of (pf.plan && pf.plan.overlaps) || []) {
+    const wide = o.glob_b.length < o.glob_a.length ? o : { ...o, rule_a: o.rule_b, rule_b: o.rule_a };
+    // wide.rule_a is now the narrower rule, wide.rule_b the one that covers it
+    twice[wide.rule_a] = { other: wide.rule_b, files: o.files };
+  }
   const rules = pf.rules.map((r, i) => {
     const on = r.enabled;
     const name = r.as || (r.glob.split('/')[0].replace(/[*{}]/g, '') || r.location);
+    const dup = twice[i];
+    const dupHtml = dup ? `<span class="rpath" style="color:var(--warn)">⚠ ${n(dup.files)} of these also land via rule ${dup.other + 1} in a different folder — <span data-act="rule-remove" data-i="${i}" style="text-decoration:underline;cursor:pointer;position:relative;z-index:1">remove this rule</span></span>` : '';
     return `<div class="rule ${on ? '' : 'off'}">
       <span data-act="rule" data-i="${i}" style="position:absolute;inset:0;cursor:pointer"></span>
       <span class="ck ${on ? 'on' : ''}">${on ? '✓' : ''}</span>
       <div class="body"><span class="rname">${esc(name)} <span style="font:400 10px var(--mono);color:var(--fg-faint)">${esc(r.location)}</span></span>
-      <span class="rpath">${esc(r.glob)}</span></div>
+      <span class="rpath">${esc(r.glob)}</span>${dupHtml}</div>
       <span class="match">${n(r.files)} files · ${fmtB(r.converted_bytes)}</span>
       <span data-act="rule-remove" data-i="${i}" title="remove this rule from the recipe" style="font:500 12px var(--mono);color:var(--fg-ghost);cursor:pointer;padding:0 2px">✕</span>
     </div>`;

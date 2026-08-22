@@ -263,9 +263,11 @@ func (s *Server) preflight(w http.ResponseWriter, r *http.Request) {
 
 	enabled := *v
 	enabled.Include = nil
+	var origIdx []int // enabled position → index in the recipe
 	for i, inc := range v.Include {
 		if !off[i] {
 			enabled.Include = append(enabled.Include, inc)
+			origIdx = append(origIdx, i)
 		}
 	}
 	var p *plan.Plan
@@ -279,7 +281,11 @@ func (s *Server) preflight(w http.ResponseWriter, r *http.Request) {
 	out := map[string]any{"view": req.View, "device": v.Device, "storage": v.Storage, "rules": rules}
 	if p != nil {
 		out["files"] = len(p.Entries)
-		p.Entries = nil // the UI wants the verdict, not 84k rows
+		p.Entries = nil             // the UI wants the verdict, not 84k rows
+		for i := range p.Overlaps { // plan indexes enabled rules; the UI shows all of them
+			p.Overlaps[i].RuleA = origIdx[p.Overlaps[i].RuleA]
+			p.Overlaps[i].RuleB = origIdx[p.Overlaps[i].RuleB]
+		}
 		out["plan"] = p
 	}
 	jsonOut(w, out)

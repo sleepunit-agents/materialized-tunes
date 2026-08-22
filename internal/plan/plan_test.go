@@ -681,3 +681,68 @@ func TestPassthrough(t *testing.T) {
 		t.Error("stereo source on a mono device folds → transcode")
 	}
 }
+
+// A location-wide "**" rule added on top of an older per-pack rule with a
+// different prefix sends the shared files to two places. The plan must say
+// so, naming both rules, rather than silently doubling the output.
+func TestPlanOverlapDifferentPrefixes(t *testing.T) {
+	ws := testWorkspace(t, []catalog.Entry{
+		wavEntry("Grit/a.wav", 1, 48000, 16, 1000),
+		wavEntry("Grit/b.wav", 1, 48000, 16, 1000),
+		wavEntry("Other/c.wav", 1, 48000, 16, 1000),
+	}, nil)
+	writeProfile(t, ws, "devices/syntakt.toml", syntaktDevice)
+	writeProfile(t, ws, "storage/sq.toml", quotaStorage)
+	writeView(t, ws, "v", `name="v"
+device="syntakt"
+storage="sq"
+[[include]]
+location="src"
+glob="Grit/**"
+[[include]]
+location="src"
+glob="**"
+as="SPLICE"
+`)
+	p, err := Build(ws, "v")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Overlaps) != 1 {
+		t.Fatalf("overlaps=%+v, want exactly one", p.Overlaps)
+	}
+	o := p.Overlaps[0]
+	if o.RuleA != 0 || o.RuleB != 1 || o.Files != 2 || o.AsB != "SPLICE" {
+		t.Errorf("overlap = %+v", o)
+	}
+	if len(p.Entries) != 5 { // 2 bare + 3 under SPLICE
+		t.Errorf("entries=%d want 5", len(p.Entries))
+	}
+	found := false
+	for _, w := range p.Warnings {
+		if strings.Contains(w, "land twice") && strings.Contains(w, "rule 1 (Grit/** → mirror)") && strings.Contains(w, "rule 2 (** → SPLICE/)") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("warnings=%v", p.Warnings)
+	}
+
+	// Same prefix twice is not an overlap — it is one output.
+	writeView(t, ws, "w", `name="w"
+device="syntakt"
+storage="sq"
+[[include]]
+location="src"
+glob="Grit/**"
+[[include]]
+location="src"
+glob="**"
+`)
+	if p, err = Build(ws, "w"); err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Overlaps) != 0 || len(p.Entries) != 3 {
+		t.Errorf("same-prefix: overlaps=%+v entries=%d", p.Overlaps, len(p.Entries))
+	}
+}
