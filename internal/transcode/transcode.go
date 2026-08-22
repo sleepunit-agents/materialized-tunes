@@ -9,6 +9,8 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+
+	"github.com/jbarket/materialized-tunes/internal/proc"
 	"strings"
 )
 
@@ -55,7 +57,7 @@ func BuildArgs(inChannels int, deviceChannels, downmix string, inRate, outRate, 
 func Run(ctx context.Context, inPath string, args []string, outPath string) error {
 	full := append([]string{"-hide_banner", "-loglevel", "error", "-y", "-i", inPath}, args...)
 	full = append(full, outPath)
-	cmd := exec.CommandContext(ctx, "ffmpeg", full...)
+	cmd := proc.Quiet(exec.CommandContext(ctx, "ffmpeg", full...))
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -66,7 +68,7 @@ func Run(ctx context.Context, inPath string, args []string, outPath string) erro
 
 // Version reports the ffmpeg version string for lockfile tooling records.
 func Version(ctx context.Context) string {
-	out, err := exec.CommandContext(ctx, "ffmpeg", "-version").Output()
+	out, err := proc.Quiet(exec.CommandContext(ctx, "ffmpeg", "-version")).Output()
 	if err != nil {
 		return "unknown"
 	}

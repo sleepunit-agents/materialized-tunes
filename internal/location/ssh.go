@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+
+	"github.com/jbarket/materialized-tunes/internal/proc"
 	"runtime"
 	"strconv"
 	"strings"
@@ -67,7 +69,7 @@ func (s *SSH) command(ctx context.Context, remote string, stdin io.Reader) *exec
 	// back to a direct connection, but never try to *become* master — see
 	// ensureMaster for why racing to the socket corrupts concurrent pulls.
 	args := append(sessionOpts(), s.host, remote)
-	cmd := exec.CommandContext(ctx, "ssh", args...)
+	cmd := proc.Quiet(exec.CommandContext(ctx, "ssh", args...))
 	cmd.Stdin = stdin
 	return cmd
 }
@@ -90,20 +92,20 @@ func (s *SSH) ensureMaster(ctx context.Context) {
 	if time.Since(s.checkedAt) < masterRecheck {
 		return
 	}
-	check := exec.CommandContext(ctx, "ssh", "-o", controlPath, "-O", "check", s.host)
+	check := proc.Quiet(exec.CommandContext(ctx, "ssh", "-o", controlPath, "-O", "check", s.host))
 	if check.Run() == nil {
 		s.checkedAt = time.Now()
 		return
 	}
 	// No live master: connect once, alone, and let ControlPersist fork it
 	// into the background for everyone else.
-	prime := exec.CommandContext(ctx, "ssh",
+	prime := proc.Quiet(exec.CommandContext(ctx, "ssh",
 		"-o", "BatchMode=yes",
 		"-o", "ConnectTimeout=15",
 		"-o", "ControlMaster=auto",
 		"-o", controlPath,
 		"-o", "ControlPersist=120",
-		s.host, "true")
+		s.host, "true"))
 	prime.Run()
 	s.checkedAt = time.Now()
 }
