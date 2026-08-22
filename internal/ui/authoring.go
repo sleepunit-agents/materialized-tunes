@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/BurntSushi/toml"
 	"github.com/jbarket/materialized-tunes/internal/profile"
 	"github.com/jbarket/materialized-tunes/internal/view"
 )
@@ -34,6 +35,11 @@ func (s *Server) viewWrite(w http.ResponseWriter, r *http.Request) {
 		Glob     string `json:"glob"`
 		As       string `json:"as"`
 		Note     string `json:"note"`
+		// ReplaceLocation: drop every existing [[include]] for Location
+		// before appending — the "one rule for all of splice" button,
+		// which would otherwise stack on top of per-pack rules and land
+		// the same files twice (see plan.Overlaps).
+		ReplaceLocation bool `json:"replace_location"`
 		// remove-rule
 		Index int `json:"index"`
 	}
@@ -88,9 +94,17 @@ func (s *Server) viewWrite(w http.ResponseWriter, r *http.Request) {
 			jsonErr(w, 404, err)
 			return
 		}
+		src := string(data)
+		replaced := 0
+		if req.ReplaceLocation {
+			if src, replaced, err = removeIncludesForLocation(src, req.Location); err != nil {
+				jsonErr(w, 400, err)
+				return
+			}
+		}
 		var sb strings.Builder
-		sb.Write(data)
-		if !strings.HasSuffix(string(data), "\n") {
+		sb.WriteString(src)
+		if !strings.HasSuffix(src, "\n") {
 			sb.WriteString("\n")
 		}
 		sb.WriteString("\n")
@@ -105,6 +119,8 @@ func (s *Server) viewWrite(w http.ResponseWriter, r *http.Request) {
 			jsonErr(w, 500, err)
 			return
 		}
+		jsonOut(w, map[string]any{"status": "ok", "view": req.Name, "replaced": replaced})
+		return
 
 	case "remove-rule":
 		data, err := os.ReadFile(path)
@@ -195,6 +211,33 @@ func (s *Server) renameView(oldName, newName string) error {
 		return fmt.Errorf("renamed, but %s.toml no longer parses: %w", newName, err)
 	}
 	return nil
+}
+
+// removeIncludesForLocation drops every [[include]] whose location is loc
+// (comments attached to each go with it) and reports how many went. The
+// TOML is parsed once to find them and edited textually so hand-written
+// lines elsewhere survive.
+func removeIncludesForLocation(src, loc string) (string, int, error) {
+	var v struct {
+		Include []view.Include `toml:"include"`
+	}
+	if err := toml.Unmarshal([]byte(src), &v); err != nil {
+		return "", 0, fmt.Errorf("recipe does not parse: %w", err)
+	}
+	removed := 0
+	// walk backwards so earlier indexes stay valid as blocks vanish
+	for i := len(v.Include) - 1; i >= 0; i-- {
+		if v.Include[i].Location != loc {
+			continue
+		}
+		out, err := removeIncludeBlock(src, i)
+		if err != nil {
+			return "", 0, err
+		}
+		src = out
+		removed++
+	}
+	return src, removed, nil
 }
 
 // removeIncludeBlock drops the n-th [[include]] block (0-based) along with

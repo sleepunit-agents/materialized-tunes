@@ -228,8 +228,12 @@ function groupRule(group) {
   const as = packs.some(p => p.provider) ? loc.toUpperCase() : '';
   const tops = new Set(packs.map(p => p.dir.split('/')[0]));
   const nested = packs.every(p => p.dir.includes('/'));
-  if (group === loc) return { location: loc, glob: '**', as, label: `all of ${loc} (${packs.length} packs)` };
-  if (nested && tops.size === 1) {
+  // A group whose packs sit at the top of their location IS that location
+  // (the chip reads "Splice", the location is "splice" — don't compare
+  // names, look at the layout). Whole-location rule, and it REPLACES any
+  // narrower rules for the location so new packs just fall in.
+  if (!nested) return { location: loc, glob: '**', as, label: `all of ${group} (${packs.length} packs)`, replace: true };
+  if (tops.size === 1) {
     const top = [...tops][0];
     return { location: loc, glob: `${top}/**`, as: as ? `${as}/${top}` : '', label: `all of ${group} (${packs.length} packs)` };
   }
@@ -242,7 +246,8 @@ function addToPicker() {
   return `<div class="menu-veil" data-act="add-to-cancel" style="background:rgba(0,0,0,.45)"></div>
     <div style="position:fixed;z-index:7;left:50%;top:34%;transform:translateX(-50%);width:520px;background:#16191c;border:1px solid #2f353b;border-radius:8px;box-shadow:0 16px 48px rgba(0,0,0,.6);padding:16px;display:flex;flex-direction:column;gap:10px">
       <span style="font:600 13px var(--sans)">Add to recipe</span>
-      <div style="font:400 11px var(--mono);color:var(--fg-dim);background:var(--bg-raise);border:1px solid var(--bord-raise);border-radius:4px;padding:7px 9px;word-break:break-all">${esc(a.location)} : ${esc(a.glob)}</div>
+      <div style="font:400 11px var(--mono);color:var(--fg-dim);background:var(--bg-raise);border:1px solid var(--bord-raise);border-radius:4px;padding:7px 9px;word-break:break-all">${esc(a.location)} : ${esc(a.glob)}${a.as ? ` → ${esc(a.as)}/` : ''}</div>
+      ${a.replace !== undefined ? `<label style="display:flex;gap:6px;align-items:center;font:400 11px var(--sans);color:var(--fg-dim);cursor:pointer"><input type="checkbox" id="at-replace" ${a.replace ? 'checked' : ''}> replace every existing <b>${esc(a.location)}</b> rule in the recipe with this one — packs you add later just fall in</label>` : ''}
       <div style="display:flex;gap:8px;align-items:center">
         ${sel('at-view', S.views.map(v => [v.name, `${v.name} — ${v.device}`]), S.view)}
         <span class="restore-btn" data-act="add-to-cancel">cancel</span>
@@ -1272,8 +1277,9 @@ function wire() {
         const v = document.getElementById('at-view').value;
         const a = S.addTo;
         const rules = a.rules || [a];
-        (async () => { for (const r of rules) { if (!await viewAction({ action:'add-rule', name: v, location: r.location, glob: r.glob, as: r.as, note: 'added from the library: ' + r.label })) return false; } return true; })()
-          .then(ok => { if (ok) { S.toast = `added to ${v}`; S.addTo = null; if (S.view === v) { S.pf = null; loadPreflight(); } else render(); setTimeout(()=>{S.toast='';render();}, 3000); } });
+        const replace = !!document.getElementById('at-replace')?.checked;
+        (async () => { for (const r of rules) { if (!await viewAction({ action:'add-rule', name: v, location: r.location, glob: r.glob, as: r.as, replace_location: replace, note: 'added from the library: ' + r.label })) return false; } return true; })()
+          .then(ok => { if (ok) { S.toast = replace ? `${v}: ${a.location} is now one rule` : `added to ${v}`; S.addTo = null; if (S.view === v) { S.pf = null; loadPreflight(); } else render(); setTimeout(()=>{S.toast='';render();}, 3000); } });
       }
       if (act === 'new-source') { S.addForm = { name: '', type: 'local', root: '', rescan: 'manual' }; S.toast = ''; render(); }
       if (act === 'cancel-add') { S.addForm = null; S.toast = ''; render(); }
