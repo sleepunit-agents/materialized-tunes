@@ -7,6 +7,29 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.7 — 2026-08-22 (materialize throughput on Windows)
+
+First materialize from the desktop build on Windows, against a DAW-profile
+recipe: thousands of cmd windows flashing and ~1 s per file. Three fixes,
+each driven by the same observation — for a drum hit, the ffmpeg *process*
+costs far more than the transcode.
+
+- **No console windows** (`internal/proc`): the windowsgui exe spawns
+  ffmpeg/ssh with `CREATE_NO_WINDOW`. Each spawn was also a conhost.exe
+  start and a Defender rescan of ffmpeg.exe.
+- **Copy path**: a PCM WAV already at the device's rate/depth/channels is
+  byte-copied, no ffmpeg. `transform.copy` in the lock; `out_bytes` exact.
+  Universal, not daw-only — a copy is more reproducible than a transcode.
+- **Batched ffmpeg**: transcodes are chunked (≤64 files, ≤24k chars of
+  argv for the Windows command-line cap) into one process:
+  `-i a -i b … -map 0:a:0 <args> out_a -map 1:a:0 <args> out_b`. Every
+  option we use is per-output in ffmpeg, so outputs are byte-identical to
+  standalone runs (tested: fold + resample + depth cases hash equal) and
+  the lock keeps recording per-entry args. A failing batch retries per
+  file so the skip lands on the bad source. `MTUNES_BATCH=1` disables;
+  `MTUNES_WORKERS` still sets concurrency. Linux (cheap spawn): 2.2×;
+  Windows: expected much larger since spawn was the runtime.
+
 ## v0.6 — 2026-08-16 → 2026-08-17 (house archive, annotations, facets)
 
 Built against the house archive (`E:\Sample-Archives`, 113 packs, ~160k

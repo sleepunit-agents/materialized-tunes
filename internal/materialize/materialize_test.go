@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -134,5 +135,74 @@ func TestRunOneCopyPassthroughNeedsNoFFmpeg(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(target, "out", "bd.wav.mtunes-part")); err == nil {
 		t.Error("temp file must not linger")
+	}
+}
+
+func TestBatchJobsChunksTranscodesAndIsolatesCopies(t *testing.T) {
+	t.Setenv("MTUNES_BATCH", "3")
+	var jobs []job
+	for i := range 7 {
+		jobs = append(jobs, job{srcPath: fmt.Sprintf("s%d.wav", i), outRel: fmt.Sprintf("o%d.wav", i), args: []string{"-ar", "48000"}})
+	}
+	jobs = append(jobs, job{srcPath: "c.wav", outRel: "c.wav", copy: true})
+	units := batchJobs(jobs)
+	var sizes []int
+	for _, u := range units {
+		sizes = append(sizes, len(u))
+	}
+	if fmt.Sprint(sizes) != "[3 3 1 1]" {
+		t.Errorf("unit sizes = %v, want [3 3 1 1] (chunks of 3, copy alone)", sizes)
+	}
+}
+
+// A bad source inside a batch must fail only itself: the batch ffmpeg
+// fails as a whole, the per-file retry attributes the error, and the
+// good entries in the same batch still render.
+func TestRunUnitBatchFailureFallsBackPerFile(t *testing.T) {
+	ffmpeg, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("ffmpeg not on PATH")
+	}
+	dir := t.TempDir()
+	gen := func(name string) {
+		out, err := exec.Command(ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+			"-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100:duration=0.02",
+			"-ac", "2", "-c:a", "pcm_s16le", filepath.Join(dir, name)).CombinedOutput()
+		if err != nil {
+			t.Fatalf("%v: %s", err, out)
+		}
+	}
+	gen("good1.wav")
+	gen("good2.wav")
+	os.WriteFile(filepath.Join(dir, "bad.wav"), []byte("RIFF this is not audio"), 0o644)
+
+	ws := testWorkspace(t, nil)
+	ws.Config.Locations[0].Root = dir
+	locs := map[string]location.Location{}
+	l, err := location.New(ws.Config.Locations[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	locs["src"] = l
+
+	args := []string{"-ar", "48000", "-c:a", "pcm_s24le", "-map_metadata", "-1", "-bitexact"}
+	var unit []job
+	for _, n := range []string{"good1.wav", "bad.wav", "good2.wav"} {
+		b, _ := os.ReadFile(filepath.Join(dir, n))
+		sum := sha256.Sum256(b)
+		unit = append(unit, job{loc: "src", srcPath: n, srcSHA: hex.EncodeToString(sum[:]), outRel: "out/" + n, args: args})
+	}
+	target := t.TempDir()
+	results, fails := runUnit(context.Background(), locs, unit, t.TempDir(), target)
+	if len(fails) != 1 || fails[0].OutRel != "out/bad.wav" {
+		t.Errorf("fails = %+v, want just out/bad.wav", fails)
+	}
+	if len(results) != 2 {
+		t.Errorf("results = %+v, want the two good files", results)
+	}
+	for _, d := range results {
+		if d.outBytes == 0 || d.outSHA == "" {
+			t.Errorf("result not finished: %+v", d)
+		}
 	}
 }

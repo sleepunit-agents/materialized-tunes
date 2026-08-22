@@ -237,7 +237,7 @@ func runJobs(ctx context.Context, ws *workspace.Workspace, jobs []job, target st
 		count    int
 		wg       sync.WaitGroup
 	)
-	ch := make(chan job)
+	ch := make(chan []job)
 	cctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -245,32 +245,31 @@ func runJobs(ctx context.Context, ws *workspace.Workspace, jobs []job, target st
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for j := range ch {
-				d, err := runOne(cctx, locs[j.loc], j, cacheDir, target)
+			for unit := range ch {
+				ds, fails := runUnit(cctx, locs, unit, cacheDir, target)
 				mu.Lock()
-				switch {
-				case err != nil && cctx.Err() != nil:
-					// aborting anyway; in-flight cancellation noise, not a skip
-				case err != nil:
-					skips = append(skips, Skip{OutRel: j.outRel, Err: err.Error()})
-					if len(skips) > maxSkips && firstErr == nil {
-						firstErr = fmt.Errorf("%d entries failed (last: %s: %v) — this is systemic, not per-file; aborting", len(skips), j.outRel, err)
-						cancel()
-					}
-				default:
-					results = append(results, d)
-					count++
-					if progress != nil {
-						progress(count, len(jobs))
+				results = append(results, ds...)
+				count += len(ds)
+				if progress != nil && len(ds) > 0 {
+					progress(count, len(jobs))
+				}
+				if cctx.Err() == nil {
+					// aborting anyway otherwise; in-flight cancellation noise, not a skip
+					for _, f := range fails {
+						skips = append(skips, f)
+						if len(skips) > maxSkips && firstErr == nil {
+							firstErr = fmt.Errorf("%d entries failed (last: %s: %s) — this is systemic, not per-file; aborting", len(skips), f.OutRel, f.Err)
+							cancel()
+						}
 					}
 				}
 				mu.Unlock()
 			}
 		}()
 	}
-	for _, j := range jobs {
+	for _, unit := range batchJobs(jobs) {
 		select {
-		case ch <- j:
+		case ch <- unit:
 		case <-cctx.Done():
 		}
 	}
@@ -286,19 +285,159 @@ func runJobs(ctx context.Context, ws *workspace.Workspace, jobs []job, target st
 	return results, skips, nil
 }
 
+// batchJobs groups work into units for the worker pool. Copies run one per
+// unit (they're already just I/O); transcodes are chunked so one ffmpeg
+// process renders many outputs — on Windows the spawn (conhost + Defender
+// rescan of ffmpeg.exe) costs more than transcoding a drum hit, so per-file
+// ffmpeg was the long pole. Chunks respect the command-line length cap.
+// MTUNES_BATCH overrides the chunk size (1 disables batching).
+func batchJobs(jobs []job) [][]job {
+	maxItems := transcode.MaxBatchItems
+	if s := os.Getenv("MTUNES_BATCH"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			maxItems = n
+		}
+	}
+	var units [][]job
+	var cur []job
+	chars := 0
+	flush := func() {
+		if len(cur) > 0 {
+			units = append(units, cur)
+			cur, chars = nil, 0
+		}
+	}
+	for _, j := range jobs {
+		if j.copy {
+			units = append(units, []job{j})
+			continue
+		}
+		// outRel stands in for the absolute output path; target is added
+		// later but the headroom in MaxBatchChars covers it.
+		c := transcode.ItemChars(transcode.Item{In: j.srcPath, Args: j.args, Out: j.outRel}) + 64
+		if len(cur) >= maxItems || chars+c > transcode.MaxBatchChars {
+			flush()
+		}
+		cur = append(cur, j)
+		chars += c
+	}
+	flush()
+	return units
+}
+
+// runUnit renders one unit: a single copy job, or a batch of transcodes.
+// Entries whose output already exists at the planned size resume (hash,
+// no render); the rest go through one ffmpeg. If that batch fails, each
+// entry is retried on its own so the failure lands on the file that
+// caused it rather than on the whole chunk.
+func runUnit(ctx context.Context, locs map[string]location.Location, unit []job, cacheDir, target string) ([]done, []Skip) {
+	if len(unit) == 1 && unit[0].copy {
+		d, err := runOne(ctx, locs[unit[0].loc], unit[0], cacheDir, target)
+		if err != nil {
+			return nil, []Skip{{OutRel: unit[0].outRel, Err: err.Error()}}
+		}
+		return []done{d}, nil
+	}
+
+	type pending struct {
+		job
+		src, outPath string
+	}
+	var (
+		results []done
+		fails   []Skip
+		todo    []pending
+	)
+	for _, j := range unit {
+		outPath := filepath.Join(target, filepath.FromSlash(j.outRel))
+		if d, ok := resume(j, outPath); ok {
+			results = append(results, d)
+			continue
+		}
+		src, err := cache.Ensure(ctx, locs[j.loc], j.srcPath, j.srcSHA, cacheDir)
+		if err == nil {
+			err = os.MkdirAll(filepath.Dir(outPath), 0o755)
+		}
+		if err != nil {
+			fails = append(fails, Skip{OutRel: j.outRel, Err: err.Error()})
+			continue
+		}
+		todo = append(todo, pending{job: j, src: src, outPath: outPath})
+	}
+	if len(todo) == 0 {
+		return results, fails
+	}
+
+	items := make([]transcode.Item, len(todo))
+	for i, p := range todo {
+		items[i] = transcode.Item{In: p.src, Args: p.args, Out: p.outPath}
+	}
+	ok := make([]bool, len(todo))
+	if err := transcode.RunBatch(ctx, items); err == nil {
+		for i := range ok {
+			ok[i] = true
+		}
+	} else if ctx.Err() != nil {
+		return results, fails
+	} else {
+		for i, it := range items {
+			if err := transcode.Run(ctx, it.In, it.Args, it.Out); err != nil {
+				fails = append(fails, Skip{OutRel: todo[i].outRel, Err: err.Error()})
+				continue
+			}
+			ok[i] = true
+		}
+	}
+	for i, p := range todo {
+		if !ok[i] {
+			continue
+		}
+		d, err := finish(p.job, p.outPath)
+		if err != nil {
+			fails = append(fails, Skip{OutRel: p.outRel, Err: err.Error()})
+			continue
+		}
+		results = append(results, d)
+	}
+	return results, fails
+}
+
+// resume reports an existing output that can be reused in place. A
+// deterministic render hitting its exact planned byte size is almost
+// surely a previous run's output — hash it into the lock instead of
+// re-rendering. An interrupted write won't match (truncated), and entries
+// whose first run warned actual≠planned re-render, which is only wasteful,
+// never wrong. In Restore, planned is the locked byte count, so resume
+// applies there too and the lock-hash check still runs.
+func resume(j job, outPath string) (done, bool) {
+	info, err := os.Stat(outPath)
+	if err != nil || j.planned <= 0 || info.Size() != j.planned {
+		return done{}, false
+	}
+	sum, err := cache.HashFile(outPath)
+	if err != nil {
+		return done{}, false
+	}
+	return done{job: j, outSHA: sum, outBytes: info.Size(), reused: true}, true
+}
+
+// finish hashes and sizes a rendered output into its done record.
+func finish(j job, outPath string) (done, error) {
+	sum, err := cache.HashFile(outPath)
+	if err != nil {
+		return done{}, err
+	}
+	info, err := os.Stat(outPath)
+	if err != nil {
+		return done{}, err
+	}
+	return done{job: j, outSHA: sum, outBytes: info.Size()}, nil
+}
+
 func runOne(ctx context.Context, loc location.Location, j job, cacheDir, target string) (done, error) {
 	outPath := filepath.Join(target, filepath.FromSlash(j.outRel))
-
-	// Resume: a deterministic transcode hitting its exact planned byte size
-	// is almost surely a previous run's output — hash it into the lock
-	// instead of re-rendering. An interrupted write won't match (truncated),
-	// and entries whose first run warned actual≠planned re-render, which is
-	// only wasteful, never wrong. In Restore, planned is the locked byte
-	// count, so resume applies there too and the lock-hash check still runs.
-	if info, err := os.Stat(outPath); err == nil && j.planned > 0 && info.Size() == j.planned {
-		if sum, err := cache.HashFile(outPath); err == nil {
-			return done{job: j, outSHA: sum, outBytes: info.Size(), reused: true}, nil
-		}
+	if d, ok := resume(j, outPath); ok {
+		return d, nil
 	}
 
 	src, err := cache.Ensure(ctx, loc, j.srcPath, j.srcSHA, cacheDir)
@@ -315,15 +454,7 @@ func runOne(ctx context.Context, loc location.Location, j job, cacheDir, target 
 	} else if err := transcode.Run(ctx, src, j.args, outPath); err != nil {
 		return done{}, err
 	}
-	sum, err := cache.HashFile(outPath)
-	if err != nil {
-		return done{}, err
-	}
-	info, err := os.Stat(outPath)
-	if err != nil {
-		return done{}, err
-	}
-	return done{job: j, outSHA: sum, outBytes: info.Size()}, nil
+	return finish(j, outPath)
 }
 
 // copyFile writes src's bytes to dst through a temp file so an interrupted
