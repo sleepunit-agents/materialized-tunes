@@ -585,7 +585,7 @@ function renderLibrary() {
       <h1>Library</h1>${segToggle()}<span class="sum">${sum}</span>
       <div style="flex:1"></div>
       ${locs.map(l => `<span class="chip ${S.locFilter === l ? 'active' : ''}" data-act="loc" data-l="${esc(l)}" title="${S.locFilter === l ? 'click to clear' : 'only ' + esc(l)}">${esc(l)}${S.locFilter === l ? ' ✕' : ''}</span>`).join('')}
-      ${S.locFilter && !S.lens ? `<span class="chip" data-act="add-group" data-g="${esc(S.locFilter)}" title="add every ${esc(S.locFilter)} pack to a recipe as one rule" style="border-style:dashed">+ all ${n(rows.length)}</span>` : ''}
+      ${S.locFilter ? `<span class="chip active" data-act="add-group" data-g="${esc(S.locFilter)}" title="add every ${esc(S.locFilter)} pack to a recipe as one rule">+ add all ${n(rows.length)} to recipe</span>` : ''}
       <div class="search">⌕ <input id="search" placeholder="Search packs…" value="${esc(S.search)}"><span class="kbd">⌘K</span></div>
       <div style="position:relative">
         <div class="lens-btn ${S.lens ? 'on' : ''}" data-act="toggle-menu">
