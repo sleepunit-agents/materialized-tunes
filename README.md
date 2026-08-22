@@ -51,6 +51,11 @@ and otherwise from what the packs themselves ship (`Docs/Artwork*`,
 
 ## Building
 
+Don't want a Go toolchain? Every push to `main` builds Windows binaries in
+CI — grab `mtunes-desktop.exe` / `mtunes.exe` from the rolling
+[`latest` pre-release](https://github.com/sleepunit-agents/materialized-tunes/releases/tag/latest).
+Tags `v*` get a proper versioned release.
+
 Requires Go and ffmpeg (used by `materialize`/`restore`; must be on PATH).
 Runs on macOS, Linux, and Windows.
 

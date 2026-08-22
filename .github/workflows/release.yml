@@ -1,0 +1,85 @@
+# Builds Windows binaries on every push to main and attaches them to a rolling
+# "latest" pre-release, so nobody has to install Go to try the newest build.
+# Tagging v* produces a proper versioned release with the same assets.
+#
+# Wails v2 on Windows needs no CGO, so this cross-compiles from Linux.
+name: release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build
+        env:
+          GOOS: windows
+          GOARCH: amd64
+          CGO_ENABLED: "0"
+        run: |
+          set -euo pipefail
+          VERSION="$(git describe --tags --always --dirty)"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          mkdir -p dist
+          go build -trimpath -ldflags "-s -w" \
+            -o dist/mtunes.exe ./cmd/mtunes
+          go build -trimpath -tags desktop,production -ldflags "-s -w -H windowsgui" \
+            -o dist/mtunes-desktop.exe ./cmd/mtunes-desktop
+          (cd dist && sha256sum *.exe > SHA256SUMS.txt)
+          ls -la dist
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtunes-windows-${{ env.VERSION }}
+          path: dist/*
+
+      # Rolling pre-release: tag "latest" always points at the newest main build.
+      - name: Move "latest" tag
+        if: github.ref == 'refs/heads/main'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -f latest
+          git push -f origin latest
+
+      - name: Publish rolling pre-release
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: latest (main @ ${{ env.VERSION }})
+          prerelease: true
+          body: |
+            Rolling build of `main` — commit `${{ github.sha }}`.
+            Download `mtunes-desktop.exe` (GUI) or `mtunes.exe` (CLI); no Go toolchain needed.
+          files: dist/*
+          fail_on_unmatched_files: true
+
+      - name: Publish versioned release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: dist/*
+          fail_on_unmatched_files: true
