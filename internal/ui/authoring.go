@@ -333,6 +333,7 @@ func (s *Server) deviceWrite(w http.ResponseWriter, r *http.Request) {
 		Sanitize    bool    `json:"sanitize"`
 		DisplayLen  int     `json:"display_length"`
 		Rename      string  `json:"rename"`
+		Companions  bool    `json:"companions"`
 		Overwrite   bool    `json:"overwrite"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&d); err != nil {
@@ -386,6 +387,12 @@ func (s *Server) deviceWrite(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(&sb, "\n[filesystem]\ntype = %q\n", d.Filesystem)
 	}
 	fmt.Fprintf(&sb, "\n[delivery]\nmode   = %q\nlayout = %q\n", d.Mode, d.Layout)
+	if d.Companions {
+		sb.WriteString("\n# Ableton documents ride along with their sample refs rewritten to where the\n")
+		sb.WriteString("# samples landed. anchor = \"user-library\" assumes the recipe target is\n")
+		sb.WriteString("# <User Library>/<user_library_prefix> — racks then resolve on Push too.\n")
+		sb.WriteString("[companions]\ntypes  = [\"adg\", \"adv\", \"als\"]\nanchor = \"user-library\"\nuser_library_prefix = \"Samples\"\n")
+	}
 	if err := os.WriteFile(path, []byte(sb.String()), 0o644); err != nil {
 		jsonErr(w, 500, err)
 		return

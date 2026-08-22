@@ -16,6 +16,7 @@ import (
 	"runtime"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -79,18 +80,28 @@ type job struct {
 	args     []string
 	copy     bool // passthrough: copy the source bytes, no ffmpeg
 	planned  int64
+
+	companion bool              // Ableton document: sample refs rewritten
+	refs      map[string]string // Restore: recorded ref → sample OutPath; nil in Materialize (resolved live)
+	cc        *companionCtx
 }
 
 type done struct {
 	job
 	outSHA   string
 	outBytes int64
-	reused   bool // resume path: existing output reused, not rendered
+	reused   bool              // resume path: existing output reused, not rendered
+	refs     map[string]string // companion: ref key → sample OutPath, as written
+	warning  string            // companion: unresolved refs
 }
 
 // Materialize renders every plan entry into target and writes the lock.
 func Materialize(ctx context.Context, ws *workspace.Workspace, p *plan.Plan, target string, progress func(int, int)) (*Outcome, error) {
 	jobs := make([]job, len(p.Entries))
+	var cc *companionCtx
+	if p.Companions > 0 {
+		cc = newCompanionCtx(p, absTarget(target))
+	}
 	for i, e := range p.Entries {
 		jobs[i] = job{
 			loc: e.Location, srcPath: e.SourcePath, srcSHA: e.SHA256, srcBytes: e.SourceSize,
@@ -98,6 +109,9 @@ func Materialize(ctx context.Context, ws *workspace.Workspace, p *plan.Plan, tar
 			args:    entryArgs(p, e),
 			copy:    e.Copy,
 			planned: e.OutBytes,
+		}
+		if e.Companion {
+			jobs[i].companion, jobs[i].cc, jobs[i].planned = true, cc, 0 // size unknown until rewritten
 		}
 	}
 
@@ -121,7 +135,7 @@ func Materialize(ctx context.Context, ws *workspace.Workspace, p *plan.Plan, tar
 	for _, d := range results {
 		l.Entries = append(l.Entries, lock.Entry{
 			Source:    lock.Source{Location: d.loc, Path: d.srcPath, SHA256: d.srcSHA, Bytes: d.srcBytes},
-			Transform: lock.Transform{FFmpegArgs: d.args, Copy: d.copy},
+			Transform: lock.Transform{FFmpegArgs: d.args, Copy: d.copy, Companion: d.companion, Refs: d.refs},
 			Output:    lock.Output{Path: d.outRel, SHA256: d.outSHA, Bytes: d.outBytes},
 		})
 		l.Totals.Files++
@@ -131,7 +145,10 @@ func Materialize(ctx context.Context, ws *workspace.Workspace, p *plan.Plan, tar
 		if d.reused {
 			out.Resumed++
 		}
-		if d.outBytes != d.planned {
+		if d.warning != "" {
+			out.Warnings = append(out.Warnings, d.warning)
+		}
+		if !d.companion && d.outBytes != d.planned {
 			out.Warnings = append(out.Warnings, fmt.Sprintf(
 				"%s: actual %d bytes vs %d planned (fit math was %+d bytes off — resampler boundary or an unexpected header layout)",
 				d.outRel, d.outBytes, d.planned, d.outBytes-d.planned))
@@ -158,11 +175,22 @@ func Materialize(ctx context.Context, ws *workspace.Workspace, p *plan.Plan, tar
 // failure — the recorded tooling versions make it diagnosable.
 func Restore(ctx context.Context, ws *workspace.Workspace, l *lock.Lock, lockPath, target string, progress func(int, int)) (*Outcome, error) {
 	jobs := make([]job, len(l.Entries))
+	var cc *companionCtx
 	for i, e := range l.Entries {
 		jobs[i] = job{
 			loc: e.Source.Location, srcPath: e.Source.Path, srcSHA: e.Source.SHA256,
 			srcBytes: e.Source.Bytes, outRel: e.Output.Path, args: e.Transform.FFmpegArgs,
 			copy: e.Transform.Copy, planned: e.Output.Bytes,
+		}
+		if e.Transform.Companion {
+			if cc == nil {
+				cc = &companionCtx{dev: l.Device.Companions, target: strings.TrimSuffix(strings.ReplaceAll(absTarget(target), `\`, "/"), "/")}
+			}
+			refs := e.Transform.Refs
+			if refs == nil {
+				refs = map[string]string{}
+			}
+			jobs[i].companion, jobs[i].cc, jobs[i].refs = true, cc, refs
 		}
 	}
 	results, skips, err := runJobs(ctx, ws, jobs, target, progress)
@@ -182,9 +210,14 @@ func Restore(ctx context.Context, ws *workspace.Workspace, l *lock.Lock, lockPat
 			out.Resumed++
 		}
 		if want := wantSHA[d.outRel]; want != d.outSHA {
-			out.Warnings = append(out.Warnings, fmt.Sprintf(
-				"%s: output differs from lock (locked with ffmpeg %s, now %s) — audio is equivalent, bytes are not",
-				d.outRel, l.Tooling["ffmpeg"], transcode.Version(ctx)))
+			if d.companion {
+				out.Warnings = append(out.Warnings, fmt.Sprintf(
+					"%s: output differs from lock — the absolute sample paths inside follow the target, so restoring elsewhere changes bytes (refs are the same)", d.outRel))
+			} else {
+				out.Warnings = append(out.Warnings, fmt.Sprintf(
+					"%s: output differs from lock (locked with ffmpeg %s, now %s) — audio is equivalent, bytes are not",
+					d.outRel, l.Tooling["ffmpeg"], transcode.Version(ctx)))
+			}
 		}
 	}
 	if l.Device.Delivery.Mode == "card" {
@@ -308,7 +341,7 @@ func batchJobs(jobs []job) [][]job {
 		}
 	}
 	for _, j := range jobs {
-		if j.copy {
+		if j.copy || j.companion {
 			units = append(units, []job{j})
 			continue
 		}
@@ -331,7 +364,7 @@ func batchJobs(jobs []job) [][]job {
 // entry is retried on its own so the failure lands on the file that
 // caused it rather than on the whole chunk.
 func runUnit(ctx context.Context, locs map[string]location.Location, unit []job, cacheDir, target string) ([]done, []Skip) {
-	if len(unit) == 1 && unit[0].copy {
+	if len(unit) == 1 && (unit[0].copy || unit[0].companion) {
 		d, err := runOne(ctx, locs[unit[0].loc], unit[0], cacheDir, target)
 		if err != nil {
 			return nil, []Skip{{OutRel: unit[0].outRel, Err: err.Error()}}
@@ -447,7 +480,15 @@ func runOne(ctx context.Context, loc location.Location, j job, cacheDir, target 
 	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
 		return done{}, err
 	}
-	if j.copy {
+	if j.companion {
+		refs, st, err := rewriteCompanion(j.cc, j, src, outPath)
+		if err != nil {
+			return done{}, err
+		}
+		d, err := finish(j, outPath)
+		d.refs, d.warning = refs, unresolvedWarning(j.outRel, st)
+		return d, err
+	} else if j.copy {
 		if err := copyFile(src, outPath); err != nil {
 			return done{}, err
 		}
@@ -455,6 +496,15 @@ func runOne(ctx context.Context, loc location.Location, j job, cacheDir, target 
 		return done{}, err
 	}
 	return finish(j, outPath)
+}
+
+// absTarget makes the target absolute so the paths written into
+// companions are usable by Live on this machine.
+func absTarget(target string) string {
+	if abs, err := filepath.Abs(target); err == nil {
+		return abs
+	}
+	return target
 }
 
 // copyFile writes src's bytes to dst through a temp file so an interrupted

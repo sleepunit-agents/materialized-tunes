@@ -53,7 +53,8 @@ type Entry struct {
 	OutDepth    int    `json:"out_depth"`
 	OutFrames   int64  `json:"out_frames"`
 	OutBytes    int64  `json:"out_bytes"`
-	Copy        bool   `json:"copy,omitempty"` // source already is the device format: copied byte-for-byte, no ffmpeg
+	Copy        bool   `json:"copy,omitempty"`      // source already is the device format: copied byte-for-byte, no ffmpeg
+	Companion   bool   `json:"companion,omitempty"` // Ableton document: sample refs rewritten to the materialized paths; OutBytes is the source size (estimate)
 
 	InChannels int     `json:"in_channels"`
 	InRate     int     `json:"in_rate"`
@@ -86,6 +87,7 @@ type Plan struct {
 	Renamed            int    `json:"renamed,omitempty"`              // outputs renamed distinguishing-first for the device display
 	DualMonoFolded     int    `json:"dual_mono_folded,omitempty"`     // stereo sources with identical channels rendered as one channel, no pad
 	Copied             int    `json:"copied,omitempty"`               // sources already in device format, copied without transcoding
+	Companions         int    `json:"companions,omitempty"`           // Ableton documents riding along, sample refs rewritten at materialize
 	Deduped            int    `json:"deduped,omitempty"`              // identical-content sources dropped by dedup = "content"
 	DisplayClashes     int    `json:"display_clashes,omitempty"`      // names still identical within naming.display_length
 	LimitedFrom        int    `json:"limited_from,omitempty"`         // eligible count before the view's limit truncated it
@@ -96,6 +98,11 @@ type Plan struct {
 	Collisions []Collision `json:"collisions,omitempty"`
 	Errors     []string    `json:"errors"` // any error ⇒ materialize refuses
 	Warnings   []string    `json:"warnings"`
+
+	// Aliases: sources that were selected but render under another
+	// entry's output (content dedup). location\x00path → out_path, so a
+	// companion referencing the dropped duplicate still resolves.
+	Aliases map[string]string `json:"-"`
 
 	TotalBytes   int64 `json:"total_bytes"`   // sum of exact output bytes
 	TotalOnDisk  int64 `json:"total_on_disk"` // after cluster rounding (filesystem kind; else == TotalBytes)
@@ -110,6 +117,8 @@ type Plan struct {
 // listing. Empty reason means eligible.
 func Eligibility(dev *profile.Device, ce catalog.Entry) (reason string) {
 	switch {
+	case ce.Audio == nil && ce.AudioErr == "" && dev.Companion(ce.Path):
+		return ""
 	case ce.Audio == nil && ce.AudioErr != "":
 		return "unparseable audio: " + ce.AudioErr
 	case ce.Audio == nil:
@@ -309,6 +318,28 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 			continue
 		}
 
+		srcForOut := ce.Path
+		if st := strippers[loc]; st != nil && !globCoversTree(pk.inc, st.vendorDirs) {
+			if stripped, ok := st.strip(ce.Path); ok {
+				srcForOut = stripped
+				p.StrippedFormatTree++
+			}
+		}
+		if ce.Audio == nil { // companion document
+			p.Companions++
+			p.Entries = append(p.Entries, Entry{
+				Location:   loc,
+				SourcePath: ce.Path,
+				SHA256:     ce.SHA256,
+				SourceSize: ce.Size,
+				OutPath:    outputPath(pk.inc, srcForOut, true),
+				OutBytes:   ce.Size,
+				Companion:  true,
+				InFormat:   strings.ToLower(strings.TrimPrefix(path.Ext(ce.Path), ".")),
+			})
+			continue
+		}
+
 		outCh, dualMono := OutputChannels(dev, ce)
 		if dualMono {
 			p.DualMonoFolded++
@@ -321,19 +352,12 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 			p.Copied++
 		}
 
-		srcForOut := ce.Path
-		if st := strippers[loc]; st != nil && !globCoversTree(pk.inc, st.vendorDirs) {
-			if stripped, ok := st.strip(ce.Path); ok {
-				srcForOut = stripped
-				p.StrippedFormatTree++
-			}
-		}
 		p.Entries = append(p.Entries, Entry{
 			Location:    loc,
 			SourcePath:  ce.Path,
 			SHA256:      ce.SHA256,
 			SourceSize:  ce.Size,
-			OutPath:     outputPath(pk.inc, srcForOut),
+			OutPath:     outputPath(pk.inc, srcForOut, false),
 			OutChannels: outCh,
 			DualMono:    dualMono,
 			OutRate:     dev.Audio.SampleRate,
@@ -353,14 +377,18 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 	if v.Dedup == "content" {
 		// Identical bytes render once — the first output path in sort order
 		// wins, so the choice is deterministic and pins in the lock.
-		seenSHA := map[string]bool{}
+		seenSHA := map[string]string{}
 		kept := p.Entries[:0]
 		for _, e := range p.Entries {
-			if seenSHA[e.SHA256] {
+			if out, dup := seenSHA[e.SHA256]; dup {
 				p.Deduped++
+				if p.Aliases == nil {
+					p.Aliases = map[string]string{}
+				}
+				p.Aliases[e.Location+"\x00"+e.SourcePath] = out // kept entry's location\x00path; resolved to its OutPath below
 				continue
 			}
-			seenSHA[e.SHA256] = true
+			seenSHA[e.SHA256] = e.Location + "\x00" + e.SourcePath
 			kept = append(kept, e)
 		}
 		p.Entries = kept
@@ -384,6 +412,16 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 	if dev.Naming.Rename == "distinguishing-first" && dev.Naming.DisplayLength > 0 {
 		p.Renamed = distinguishingFirst(p.Entries, dev.Naming.DisplayLength, dev.Naming.CaseSensitive)
 		sort.Slice(p.Entries, func(i, j int) bool { return p.Entries[i].OutPath < p.Entries[j].OutPath })
+	}
+
+	if len(p.Aliases) > 0 {
+		outOf := map[string]string{}
+		for _, e := range p.Entries {
+			outOf[e.Location+"\x00"+e.SourcePath] = e.OutPath
+		}
+		for k, kept := range p.Aliases {
+			p.Aliases[k] = outOf[kept]
+		}
 	}
 
 	p.checkCollisions()
@@ -469,13 +507,17 @@ func (st *treeStripper) strip(p string) (string, bool) {
 }
 
 // outputPath maps a source path to its output path: mirror by default, or
-// the include's As prefix replacing the glob's static root. The extension
-// always becomes .wav (that is what a transcode means).
-func outputPath(inc view.Include, srcPath string) string {
+// the include's As prefix replacing the glob's static root. For audio the
+// extension always becomes .wav (that is what a transcode means);
+// companion documents keep theirs.
+func outputPath(inc view.Include, srcPath string, companion bool) string {
 	out := srcPath
 	if inc.As != "" {
 		root := view.GlobRoot(inc.Glob)
 		out = strings.TrimSuffix(inc.As, "/") + "/" + strings.TrimPrefix(srcPath, root)
+	}
+	if companion {
+		return out
 	}
 	ext := path.Ext(out)
 	return strings.TrimSuffix(out, ext) + ".wav"

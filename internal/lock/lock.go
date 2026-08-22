@@ -43,6 +43,11 @@ type Source struct {
 type Transform struct {
 	FFmpegArgs []string `json:"ffmpeg_args"`
 	Copy       bool     `json:"copy,omitempty"` // byte-for-byte copy of the source; FFmpegArgs empty
+	// Companion: an Ableton document whose sample refs were rewritten.
+	// Refs maps each reference as the source wrote it to the output path
+	// it now points at, so restore replays the exact rewrite.
+	Companion bool              `json:"companion,omitempty"`
+	Refs      map[string]string `json:"refs,omitempty"`
 }
 
 type Output struct {

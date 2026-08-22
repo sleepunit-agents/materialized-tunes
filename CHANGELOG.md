@@ -7,6 +7,19 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.8 — 2026-08-22 (Ableton companions)
+
+Splice packs come with Drum Racks. Materializing for Push dropped them
+(non-audio), and copying them would not have helped — the racks reference
+samples by the path the pack author had. `[companions]` on the device
+profile (§4.4): `.adg/.adv/.als` ride along, plan lays them out with the
+audio, materialize rewrites each `<FileRef>` to the materialized output
+path (User-Library-relative, type 5, plus the absolute path) and the lock
+pins the ref map so restore replays it. Unresolved refs (samples not in
+the recipe) stay as written and warn. Both Live 11+ and Live ≤10 FileRef
+dialects handled; `.alp` rejected. Needs the Push to say whether type-5
+paths resolve standalone — untested on hardware as of this entry.
+
 ## v0.7 — 2026-08-22 (materialize throughput on Windows)
 
 First materialize from the desktop build on Windows, against a DAW-profile

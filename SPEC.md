@@ -200,7 +200,7 @@ grammar-derived, cheap to regenerate, never in a lockfile):
 6,726 groups, 10,420 redundant copies, 1.6 GiB); views opt into rendering
 each group once with `dedup = "content"` (§6).
 
-**Loudness measurement** `[proposed 2026-08-19]` — see §4.4. Integrated
+**Loudness measurement** `[proposed 2026-08-19]` — see §4.5. Integrated
 loudness (LUFS) and true peak per source are derived facts like
 `dual_mono`, but cost a full decode per file (ffmpeg `ebur128`), so they
 are measured **lazily**: for the entries a plan selects when the view or
@@ -344,7 +344,59 @@ libraries, which is most of what §4.5 needs. Optional knobs for partial
 passthrough (`format = "source"` but `bit_depth = 24` to cap 32-bit float
 sources) are a refinement; the all-or-nothing version is the useful one.
 
-### 4.4 Loudness normalization `[proposed 2026-08-19]`
+### 4.4 Companions — Ableton documents (shipped 2026-08-22)
+
+Packs ship Drum Racks (`.adg`), presets (`.adv`) and sets (`.als`) next to
+their audio. They are gzipped XML whose `<FileRef>` blocks name samples by
+path — the path the pack author had — and mtunes renames paths on the way
+out (the `as` prefix, format-tree strip, collision renames, `.aif → .wav`).
+Copied blindly they open as pads of "missing sample"; Live on a desktop
+can hunt by filename, Push standalone mostly cannot. So:
+
+```toml
+[companions]
+types  = ["adg", "adv", "als"]   # empty/absent = drop them (hardware samplers)
+anchor = "user-library"           # | "document"
+user_library_prefix = "Samples"   # where the recipe target sits inside the Live User Library
+```
+
+- **Plan** treats a selected companion as an entry of its own: output
+  path follows the same `as`/strip/sanitize/rename rules as audio (the
+  extension is kept), `out_bytes` is the source size (a close estimate —
+  the rewritten gzip is not size-predictable). Counted as `companions`.
+- **Materialize** decodes, resolves every reference to a selected source
+  and rewrites it to that source's *output* path, re-encodes
+  deterministically (no gzip mtime) and hashes it into the lock like any
+  output. Resolution, in order: the relative path as written, anchored at
+  the companion's directory and each parent; the absolute path's longest
+  tail that is a selected source; a basename unique within the nearest
+  enclosing directory (ambiguous = unresolved — guessing would wire a
+  wrong pad). Content-dedup aliases resolve to the kept copy. Unresolved
+  refs are left exactly as the pack wrote them and reported as a warning
+  per document ("3 of 16 sample refs are not in this recipe").
+- **What is written**: `RelativePathType` 5 (User-Library-relative) with
+  `RelativePath = <prefix>/<out_path>` for `anchor = "user-library"`, or
+  type 3 with a path relative to the document for `"document"`; the
+  absolute `Path` (Live 11+) gets the target path for the machine that
+  ran materialize. Live ≤10 `RelativePathElement` lists and `<Name>` are
+  rewritten the same way and the stale `SearchHint/PathHint` cleared.
+  Nothing outside `<FileRef>` blocks is touched; `OriginalFileSize`/`Crc`
+  are left as the pack wrote them.
+- **Lock** records `transform.companion = true` and `transform.refs`
+  (reference as written → output path), so restore replays the exact
+  rewrite without resolving. Diff reports `new transform` when a sample a
+  document points at no longer lands where the lock wrote it. The
+  absolute `Path` follows the target, so restoring to a different
+  directory changes bytes — a warning, the references are the same.
+- `.alp` is a pack installer archive, not a document; it is rejected in
+  `types`.
+
+On-device status: the XML dialects and `RelativePathType` semantics are
+from Live's own files and community tooling, fixtured in
+`internal/ableton`; whether Push 3 standalone resolves type-5 paths from a
+relocated User Library is the thing only the hardware can say.
+
+### 4.5 Loudness normalization `[proposed 2026-08-19]`
 
 Sources span digitized 90s sample CDs and 2026 marketplace packs; they are
 not level-matched to each other, and some aren't matched to themselves.
@@ -397,7 +449,7 @@ Semantics (decided by what pins cleanly):
   before it's rendered. A clamp is info, not a warning: the ceiling is the
   policy.
 
-### 4.5 Device preset roadmap `[proposed 2026-08-19]`
+### 4.6 Device preset roadmap `[proposed 2026-08-19]`
 
 Presets (UI `/api/presets`, workspace templates) are prefills, not gospel;
 the profile schema is what matters. Current: Octatrack, Digitakt, Digitakt
@@ -518,7 +570,7 @@ glob = "**/*.asd"
   path in sort order; deterministic, pinned). Opt-in, because a DAW kit
   folder wants its members even when they duplicate the one-shots folder.
 - `[loudness]` overrides the device's normalization default for this recipe
-  (§4.4) `[proposed 2026-08-19]`.
+  (§4.5) `[proposed 2026-08-19]`.
 ## 7. Plan (pre-flight)
 
 `mtunes plan <view>` prints, without touching any file:
@@ -936,7 +988,7 @@ Ordered roughly by how much the design already accommodates them.
   device-written files keyed to **output artifact identity** (source SHA +
   transform params), not to the view, so slices and analysis follow the
   sample across views. The lockfile already records everything needed to
-  key them. Becomes urgent the moment Live is a target (§4.5).
+  key them. Becomes urgent the moment Live is a target (§4.6).
 - **Vendor-grammar rename** (SFM `take_suffix` → always front) and
   **common-token compression** (strip tokens shared by every name in a
   flat export — git-style unique abbreviation for sample names). The
@@ -974,8 +1026,8 @@ Ordered roughly by how much the design already accommodates them.
 - True usable bytes of the 32 GB Octatrack CF card (`diskutil info` when
   mounted) — deferred until the Octatrack becomes a target again.
 - Loudness defaults per preset and the source-side measurement
-  approximation (§4.4) `[confirm]`.
-- Ableton Move / Push 3 / Live facts for §4.5 presets — manuals not yet
+  approximation (§4.5) `[confirm]`.
+- Ableton Move / Push 3 / Live facts for §4.6 presets — manuals not yet
   read; nothing asserted yet.
 - Whether `catalog/` belongs in the workspace git history (§2.1 says yes;
   tens of MB of JSONL that churns on every scan is the cost).
@@ -992,7 +1044,7 @@ Resolved questions and their dates are in CHANGELOG.md.
   flex = 16/24-bit 44.1 kHz wav/aiff mono/stereo; audio pool folder max
   1,024 files.
 
-- To be sourced before their presets ship (§4.5): Ableton Move manual
+- To be sourced before their presets ship (§4.6): Ableton Move manual
   (sample import limits), Push 3 standalone file handling, Digitakt /
   Digitakt II / Model:Samples manuals (sample memory, slot counts,
   duration), 1010music Bitbox, Sherpa Raw Waves V2, Torso S-4, Polyend Play
@@ -1056,9 +1108,9 @@ CHANGELOG.md.
 | § | Proposal | One-line case |
 |---|---|---|
 | 2.1 | Workspace remote + unpushed-lock nag; archive second copy | Restorability has a SPOF while locks live on one disk; the archive is single-copy on a workstation drive. |
-| 3.2 / 4.4 | Loudness: lazy SHA-cached measurement, linear-gain normalization, `lufs` or `peak`, device default + view override | 90s sample CDs vs Splice packs aren't level-matched; samplebank's dynamic `loudnorm` smears one-shots; linear gain pins exactly. |
+| 3.2 / 4.5 | Loudness: lazy SHA-cached measurement, linear-gain normalization, `lufs` or `peak`, device default + view override | 90s sample CDs vs Splice packs aren't level-matched; samplebank's dynamic `loudnorm` smears one-shots; linear gain pins exactly. |
 | 4.3 | Passthrough audio (`format = "source"`) | Live / Push / most desktop targets want curation and provenance, not transcoding. |
-| 4.5 | Preset roadmap: Live, Push 3, Move first; then eurorack/Polyend/Bitbox | What is on the desk, plus what samplebank already had. Facts from manuals only. |
+| 4.6 | Preset roadmap: Live, Push 3, Move first; then eurorack/Polyend/Bitbox | What is on the desk, plus what samplebank already had. Facts from manuals only. |
 | 9 | `catalog loudness`, `verify --location` | The catalog is already a manifest; give it the verb. |
 | 11.6 | Acquisition pointers + discovery: pack classes (vendor-free / vendor-paid / distributor / orphan), vendor `domains`, `[acquisition]`, `[[relation]]`, six lint rules, no-fetch refusal | The registry is a discovery surface whether we like it or not; drawing the management-vs-sourcing line as lintable data keeps it a tool and not a piracy index, and link-out sends vendors their customer. |
 | 12 | Optional analysis sidecar, explicitly *not now* | Keeps the door open without bending the design toward it. |

@@ -22,6 +22,42 @@ type Device struct {
 	Naming     Naming     `toml:"naming" json:"naming"`
 	Filesystem Filesystem `toml:"filesystem" json:"filesystem"`
 	Delivery   Delivery   `toml:"delivery" json:"delivery"`
+	Companions Companions `toml:"companions" json:"companions"`
+}
+
+// Companions: non-audio files that ride along with the samples because
+// they reference them — Ableton drum racks (.adg), presets (.adv), sets
+// (.als). They are gzipped XML carrying sample paths, so materialize
+// rewrites those paths to where the samples landed. Empty Types = drop
+// them (hardware samplers). Anchor is how the rewritten paths resolve:
+// "user-library" (the target sits inside the Live User Library, at
+// UserLibraryPrefix — racks then resolve on any machine or Push that
+// holds the library) or "document" (relative to the companion file
+// itself). .alp is a pack installer, never a companion.
+type Companions struct {
+	Types             []string `toml:"types" json:"types,omitempty"`
+	Anchor            string   `toml:"anchor" json:"anchor,omitempty"`
+	UserLibraryPrefix string   `toml:"user_library_prefix" json:"user_library_prefix,omitempty"`
+}
+
+// Companion reports whether a path's extension is a companion type for
+// this device.
+func (d *Device) Companion(p string) bool {
+	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(p), "."))
+	for _, t := range d.Companions.Types {
+		if t == ext {
+			return true
+		}
+	}
+	return false
+}
+
+// PathType is the Ableton RelativePathType to write for the anchor.
+func (c Companions) PathType() string {
+	if c.Anchor == "document" {
+		return "3"
+	}
+	return "5"
 }
 
 type Audio struct {
@@ -120,6 +156,30 @@ func LoadDevice(workspaceRoot, name string) (*Device, error) {
 	default:
 		return nil, fmt.Errorf("device %s: audio.dual_mono must be keep or fold", name)
 	}
+	for i, t := range d.Companions.Types {
+		t = strings.ToLower(strings.TrimPrefix(t, "."))
+		d.Companions.Types[i] = t
+		switch t {
+		case "adg", "adv", "als":
+		case "alp":
+			return nil, fmt.Errorf("device %s: companions.types: .alp is a pack installer, not a document — install it in Live", name)
+		default:
+			return nil, fmt.Errorf("device %s: companions.types: unknown type %q (adg, adv, als)", name, t)
+		}
+	}
+	switch d.Companions.Anchor {
+	case "":
+		if len(d.Companions.Types) > 0 {
+			d.Companions.Anchor = "user-library"
+		}
+	case "user-library", "document":
+	default:
+		return nil, fmt.Errorf("device %s: companions.anchor must be user-library or document", name)
+	}
+	if d.Companions.Anchor == "user-library" && d.Companions.UserLibraryPrefix == "" {
+		d.Companions.UserLibraryPrefix = "Samples"
+	}
+	d.Companions.UserLibraryPrefix = strings.Trim(strings.ReplaceAll(d.Companions.UserLibraryPrefix, "\\", "/"), "/")
 	switch d.Naming.Rename {
 	case "", "distinguishing-first":
 	default:

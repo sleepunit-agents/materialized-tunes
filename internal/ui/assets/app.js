@@ -887,6 +887,9 @@ function renderDevices() {
         <label style="font:400 11px var(--sans);color:var(--fg-dim);display:flex;align-items:center;gap:5px">
           <input type="checkbox" id="dv-san" ${d.sanitize ? 'checked' : ''}> sanitize names (# & ')
         </label>
+        <label style="font:400 11px var(--sans);color:var(--fg-dim);display:flex;align-items:center;gap:5px" title="Ableton racks/presets/sets (.adg .adv .als) ride along with their sample refs rewritten to the materialized paths — for a target inside the Live User Library">
+          <input type="checkbox" id="dv-comp" ${d.companions ? 'checked' : ''}> Ableton racks (.adg/.adv/.als)
+        </label>
         <div style="flex:1"></div>
         <span class="restore-btn" data-act="dev-cancel">cancel</span>
         <span class="mat-btn" style="margin:0;padding:6px 16px;font-size:11px" data-act="dev-save">create device</span>
@@ -1190,6 +1193,7 @@ function wire() {
           max_duration_seconds: parseFloat(g('dv-dur')) || 0, max_files_per_dir: parseInt(g('dv-maxfiles')) || 0,
           max_filename_length: parseInt(g('dv-maxname')) || 0, sanitize: document.getElementById('dv-san').checked,
           display_length: parseInt(g('dv-display')) || 0,
+          companions: document.getElementById('dv-comp').checked,
           rename: (document.getElementById('dv-rename').checked && parseInt(g('dv-display')) > 0) ? 'distinguishing-first' : '' };
         api('/api/device', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) })
           .then(async r => { if (r.error) { S.toast = r.error; render(); return; }

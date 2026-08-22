@@ -27,14 +27,17 @@ func Compute(l *Lock, p *plan.Plan, catalogSHAs map[string]map[string]string) *D
 	d := &Diff{}
 
 	type current struct {
-		sha  string
-		args []string
-		copy bool
+		sha       string
+		args      []string
+		copy      bool
+		companion bool
 	}
 	inPlan := map[string]current{}
+	outPaths := map[string]bool{}
 	for _, e := range p.Entries {
 		key := e.Location + "\x00" + e.SourcePath
-		inPlan[key] = current{sha: e.SHA256, args: planArgs(p, e), copy: e.Copy}
+		inPlan[key] = current{sha: e.SHA256, args: planArgs(p, e), copy: e.Copy, companion: e.Companion}
+		outPaths[e.OutPath] = true
 	}
 	inLock := map[string]Entry{}
 	for _, e := range l.Entries {
@@ -66,7 +69,11 @@ func Compute(l *Lock, p *plan.Plan, catalogSHAs map[string]map[string]string) *D
 		switch {
 		case cur.sha != e.Source.SHA256:
 			d.ContentDrift = append(d.ContentDrift, name)
-		case cur.copy != e.Transform.Copy, !equalArgs(cur.args, e.Transform.FFmpegArgs):
+		case cur.companion != e.Transform.Companion, cur.copy != e.Transform.Copy, !equalArgs(cur.args, e.Transform.FFmpegArgs):
+			d.NewTransform = append(d.NewTransform, name)
+		case cur.companion && refsMoved(e.Transform.Refs, outPaths):
+			// a sample this document points at no longer lands where the
+			// lock wrote it — the rewrite would come out different
 			d.NewTransform = append(d.NewTransform, name)
 		}
 	}
@@ -80,6 +87,15 @@ func planArgs(p *plan.Plan, e plan.Entry) []string {
 	}
 	ch, downmix := e.FoldSpec(p.Device.Audio.Downmix)
 	return transcode.BuildArgs(e.InChannels, ch, downmix, e.InRate, e.OutRate, e.OutDepth)
+}
+
+func refsMoved(refs map[string]string, outPaths map[string]bool) bool {
+	for _, out := range refs {
+		if !outPaths[out] {
+			return true
+		}
+	}
+	return false
 }
 
 func equalArgs(a, b []string) bool {
