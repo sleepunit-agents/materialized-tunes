@@ -214,6 +214,28 @@ function render() {
   document.querySelector('.pd-row.playing')?.scrollIntoView({ block: 'nearest' });
 }
 
+// groupRule builds the single [[include]] that covers every pack in a
+// head-bar group (a location, or a vendor under vendor-dirs): the
+// "all of splice" button. Same layout as adding each pack by hand —
+// provider packs land under LOCATION/<pack>/ — but one rule, not forty.
+// Returns null when the group's packs don't share a root (mixed
+// locations), in which case the caller adds them one by one.
+function groupRule(group) {
+  const packs = S.packs.filter(p => packGroup(p) === group);
+  if (!packs.length) return null;
+  const loc = packs[0].location;
+  if (packs.some(p => p.location !== loc)) return null;
+  const as = packs.some(p => p.provider) ? loc.toUpperCase() : '';
+  const tops = new Set(packs.map(p => p.dir.split('/')[0]));
+  const nested = packs.every(p => p.dir.includes('/'));
+  if (group === loc) return { location: loc, glob: '**', as, label: `all of ${loc} (${packs.length} packs)` };
+  if (nested && tops.size === 1) {
+    const top = [...tops][0];
+    return { location: loc, glob: `${top}/**`, as: as ? `${as}/${top}` : '', label: `all of ${group} (${packs.length} packs)` };
+  }
+  return null;
+}
+
 function addToPicker() {
   const a = S.addTo;
   if (!a) return '';
@@ -563,6 +585,7 @@ function renderLibrary() {
       <h1>Library</h1>${segToggle()}<span class="sum">${sum}</span>
       <div style="flex:1"></div>
       ${locs.map(l => `<span class="chip ${S.locFilter === l ? 'active' : ''}" data-act="loc" data-l="${esc(l)}" title="${S.locFilter === l ? 'click to clear' : 'only ' + esc(l)}">${esc(l)}${S.locFilter === l ? ' ✕' : ''}</span>`).join('')}
+      ${S.locFilter && !S.lens ? `<span class="chip" data-act="add-group" data-g="${esc(S.locFilter)}" title="add every ${esc(S.locFilter)} pack to a recipe as one rule" style="border-style:dashed">+ all ${n(rows.length)}</span>` : ''}
       <div class="search">⌕ <input id="search" placeholder="Search packs…" value="${esc(S.search)}"><span class="kbd">⌘K</span></div>
       <div style="position:relative">
         <div class="lens-btn ${S.lens ? 'on' : ''}" data-act="toggle-menu">
@@ -586,7 +609,7 @@ function renderLibrary() {
           : `<div class="stats">${n(p.files)} files · ${fmtB(p.bytes)}</div>`;
         const link = `<span style="display:flex;flex-direction:column;align-items:center;gap:6px;align-self:center">
           ${p.url ? `<a class="link" href="${esc(p.url)}" target="_blank" title="product page">↗</a>` : ''}
-          <span data-act="add-to" data-loc="${esc(p.location)}" data-glob="${esc(p.dir)}/**" data-as="${esc(p.provider ? p.location.toUpperCase() : '')}" data-label="${esc(p.name)}" title="add this pack to a recipe" style="font:600 13px var(--mono);color:var(--fg-ghost);cursor:pointer">+</span>
+          <span data-act="add-to" data-loc="${esc(p.location)}" data-glob="${esc(p.dir)}/**" data-as="${esc(p.provider ? p.location.toUpperCase() + '/' + p.dir : '')}" data-label="${esc(p.name)}" title="add this pack to a recipe" style="font:600 13px var(--mono);color:var(--fg-ghost);cursor:pointer">+</span>
         </span>`;
         return `<div class="pack" data-blurb="${esc(p.description ? '' : (p.blurb || p.url || ''))}" title="${esc(p.description || '')}" data-act="open-pack" data-loc="${esc(p.location)}" data-dir="${esc(p.dir)}">${art}
           <div class="body">
@@ -679,7 +702,7 @@ function renderPackDetail() {
       <span class="crumb-btn" data-act="close-pack">← Library</span>
       <span style="font:400 11px var(--mono);color:var(--fg-faint)">library / ${esc(po.provider || po.vendor || po.location)} / ${esc(po.name)}</span>
       <div style="flex:1"></div>${lensLine}
-      <span class="restore-btn" data-act="add-to" data-loc="${esc(po.location)}" data-glob="${esc(po.dir)}${S.pdFolder ? '/' + esc(S.pdFolder) : ''}/**" data-label="${esc(po.name)}${S.pdFolder ? ' / ' + esc(S.pdFolder) : ''}" title="add what you're looking at to a recipe">+ add to recipe</span>
+      <span class="restore-btn" data-act="add-to" data-loc="${esc(po.location)}" data-glob="${esc(po.dir)}${S.pdFolder ? '/' + esc(S.pdFolder) : ''}/**" data-as="${esc(po.provider ? po.location.toUpperCase() + '/' + po.dir + (S.pdFolder ? '/' + S.pdFolder : '') : '')}" data-label="${esc(po.name)}${S.pdFolder ? ' / ' + esc(S.pdFolder) : ''}" title="add what you're looking at to a recipe">+ add to recipe</span>
     </div>
     <div class="pd-head">
       ${art}
@@ -1219,11 +1242,22 @@ function wire() {
         S.addTo = { location: el.dataset.loc, glob: el.dataset.glob, label: el.dataset.label, as: el.dataset.as || '' };
         render();
       }
+      if (act === 'add-group') {
+        const g = el.dataset.g, r = groupRule(g);
+        if (r) S.addTo = r;
+        else {
+          const packs = S.packs.filter(p => packGroup(p) === g);
+          S.addTo = { label: `all of ${g} (${packs.length} packs)`, location: packs.map(p => p.location).join(', '), glob: `${packs.length} rules, one per pack`,
+            rules: packs.map(p => ({ location: p.location, glob: p.dir + '/**', as: p.provider ? p.location.toUpperCase() + '/' + p.dir : '', label: p.name })) };
+        }
+        render();
+      }
       if (act === 'add-to-cancel') { S.addTo = null; render(); }
       if (act === 'add-to-save') {
         const v = document.getElementById('at-view').value;
         const a = S.addTo;
-        viewAction({ action:'add-rule', name: v, location: a.location, glob: a.glob, as: a.as, note: 'added from the library: ' + a.label })
+        const rules = a.rules || [a];
+        (async () => { for (const r of rules) { if (!await viewAction({ action:'add-rule', name: v, location: r.location, glob: r.glob, as: r.as, note: 'added from the library: ' + r.label })) return false; } return true; })()
           .then(ok => { if (ok) { S.toast = `added to ${v}`; S.addTo = null; if (S.view === v) { S.pf = null; loadPreflight(); } else render(); setTimeout(()=>{S.toast='';render();}, 3000); } });
       }
       if (act === 'new-source') { S.addForm = { name: '', type: 'local', root: '', rescan: 'manual' }; S.toast = ''; render(); }
