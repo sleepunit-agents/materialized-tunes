@@ -29,11 +29,12 @@ func Compute(l *Lock, p *plan.Plan, catalogSHAs map[string]map[string]string) *D
 	type current struct {
 		sha  string
 		args []string
+		copy bool
 	}
 	inPlan := map[string]current{}
 	for _, e := range p.Entries {
 		key := e.Location + "\x00" + e.SourcePath
-		inPlan[key] = current{sha: e.SHA256, args: planArgs(p, e)}
+		inPlan[key] = current{sha: e.SHA256, args: planArgs(p, e), copy: e.Copy}
 	}
 	inLock := map[string]Entry{}
 	for _, e := range l.Entries {
@@ -65,7 +66,7 @@ func Compute(l *Lock, p *plan.Plan, catalogSHAs map[string]map[string]string) *D
 		switch {
 		case cur.sha != e.Source.SHA256:
 			d.ContentDrift = append(d.ContentDrift, name)
-		case !equalArgs(cur.args, e.Transform.FFmpegArgs):
+		case cur.copy != e.Transform.Copy, !equalArgs(cur.args, e.Transform.FFmpegArgs):
 			d.NewTransform = append(d.NewTransform, name)
 		}
 	}
@@ -74,6 +75,9 @@ func Compute(l *Lock, p *plan.Plan, catalogSHAs map[string]map[string]string) *D
 
 // planArgs rebuilds the ffmpeg args a plan entry would use today.
 func planArgs(p *plan.Plan, e plan.Entry) []string {
+	if e.Copy {
+		return nil
+	}
 	ch, downmix := e.FoldSpec(p.Device.Audio.Downmix)
 	return transcode.BuildArgs(e.InChannels, ch, downmix, e.InRate, e.OutRate, e.OutDepth)
 }

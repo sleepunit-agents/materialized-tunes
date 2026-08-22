@@ -9,6 +9,7 @@ import (
 
 	"github.com/jbarket/materialized-tunes/internal/audio"
 	"github.com/jbarket/materialized-tunes/internal/catalog"
+	"github.com/jbarket/materialized-tunes/internal/profile"
 	"github.com/jbarket/materialized-tunes/internal/view"
 	"github.com/jbarket/materialized-tunes/internal/workspace"
 )
@@ -50,9 +51,13 @@ func testWorkspace(t *testing.T, entries []catalog.Entry, files map[string]strin
 	return ws2
 }
 
+// wavEntry is a synthetic catalog entry whose Size is the canonical WAV
+// size for its audio (header + data), so passthrough entries carry honest
+// byte counts.
 func wavEntry(path string, channels, rate, depth int, frames int64) catalog.Entry {
+	data := frames * int64(channels) * int64(depth) / 8
 	return catalog.Entry{
-		Path: path, Size: 1000, SHA256: "aa" + path,
+		Path: path, Size: wavHeaderBytes(depth) + data + data%2, SHA256: "aa" + path,
 		Audio: &audio.Meta{
 			Format: "wav", Channels: channels, SampleRate: rate, BitDepth: depth,
 			Frames: frames, DurationS: float64(frames) / float64(rate),
@@ -639,5 +644,40 @@ func TestDedupContent(t *testing.T) {
 	}
 	if !names["kit/Kicks/BD 01.wav"] || names["kit/Kit A/BD 01.wav"] {
 		t.Errorf("first-in-sort-order must win: %v", names)
+	}
+}
+
+func TestPassthrough(t *testing.T) {
+	dev := &profile.Device{}
+	dev.Audio.Format, dev.Audio.BitDepth, dev.Audio.SampleRate, dev.Audio.Channels = "wav", 24, 48000, "stereo"
+
+	match := wavEntry("a.wav", 2, 48000, 24, 100)
+	if !Passthrough(dev, match) {
+		t.Error("matching wav must pass through")
+	}
+	if got := ConvertedBytes(dev, match); got != match.Size {
+		t.Errorf("passthrough bytes = source size: got %d want %d", got, match.Size)
+	}
+	if Passthrough(dev, wavEntry("mono.wav", 1, 48000, 24, 100)) != true {
+		t.Error("mono source on a stereo-preserving device is still untouched → copy")
+	}
+	for name, ce := range map[string]catalog.Entry{
+		"rate":  wavEntry("r.wav", 2, 44100, 24, 100),
+		"depth": wavEntry("d.wav", 2, 48000, 16, 100),
+		"float": wavEntry("f.wav", 2, 48000, 32, 100),
+	} {
+		if Passthrough(dev, ce) {
+			t.Errorf("%s: must transcode", name)
+		}
+	}
+	flac := wavEntry("x.flac", 2, 48000, 24, 100)
+	flac.Audio.Format = "flac"
+	if Passthrough(dev, flac) {
+		t.Error("flac must transcode")
+	}
+	mono := &profile.Device{}
+	mono.Audio.Format, mono.Audio.BitDepth, mono.Audio.SampleRate, mono.Audio.Channels = "wav", 16, 48000, "mono"
+	if Passthrough(mono, wavEntry("s.wav", 2, 48000, 16, 100)) {
+		t.Error("stereo source on a mono device folds → transcode")
 	}
 }

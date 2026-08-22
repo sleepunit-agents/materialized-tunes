@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -32,6 +33,9 @@ const Version = "0.1.0-dev"
 // lock records verbatim. Channel handling comes from the entry (dual-mono
 // sources fold by taking one channel), everything else from the device.
 func entryArgs(p *plan.Plan, e plan.Entry) []string {
+	if e.Copy {
+		return nil
+	}
 	ch, downmix := e.FoldSpec(p.Device.Audio.Downmix)
 	return transcode.BuildArgs(e.InChannels, ch, downmix, e.InRate, e.OutRate, e.OutDepth)
 }
@@ -73,6 +77,7 @@ type job struct {
 	srcBytes int64
 	outRel   string
 	args     []string
+	copy     bool // passthrough: copy the source bytes, no ffmpeg
 	planned  int64
 }
 
@@ -91,6 +96,7 @@ func Materialize(ctx context.Context, ws *workspace.Workspace, p *plan.Plan, tar
 			loc: e.Location, srcPath: e.SourcePath, srcSHA: e.SHA256, srcBytes: e.SourceSize,
 			outRel:  e.OutPath,
 			args:    entryArgs(p, e),
+			copy:    e.Copy,
 			planned: e.OutBytes,
 		}
 	}
@@ -115,7 +121,7 @@ func Materialize(ctx context.Context, ws *workspace.Workspace, p *plan.Plan, tar
 	for _, d := range results {
 		l.Entries = append(l.Entries, lock.Entry{
 			Source:    lock.Source{Location: d.loc, Path: d.srcPath, SHA256: d.srcSHA, Bytes: d.srcBytes},
-			Transform: lock.Transform{FFmpegArgs: d.args},
+			Transform: lock.Transform{FFmpegArgs: d.args, Copy: d.copy},
 			Output:    lock.Output{Path: d.outRel, SHA256: d.outSHA, Bytes: d.outBytes},
 		})
 		l.Totals.Files++
@@ -156,7 +162,7 @@ func Restore(ctx context.Context, ws *workspace.Workspace, l *lock.Lock, lockPat
 		jobs[i] = job{
 			loc: e.Source.Location, srcPath: e.Source.Path, srcSHA: e.Source.SHA256,
 			srcBytes: e.Source.Bytes, outRel: e.Output.Path, args: e.Transform.FFmpegArgs,
-			planned: e.Output.Bytes,
+			copy: e.Transform.Copy, planned: e.Output.Bytes,
 		}
 	}
 	results, skips, err := runJobs(ctx, ws, jobs, target, progress)
@@ -302,7 +308,11 @@ func runOne(ctx context.Context, loc location.Location, j job, cacheDir, target 
 	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
 		return done{}, err
 	}
-	if err := transcode.Run(ctx, src, j.args, outPath); err != nil {
+	if j.copy {
+		if err := copyFile(src, outPath); err != nil {
+			return done{}, err
+		}
+	} else if err := transcode.Run(ctx, src, j.args, outPath); err != nil {
 		return done{}, err
 	}
 	sum, err := cache.HashFile(outPath)
@@ -314,6 +324,31 @@ func runOne(ctx context.Context, loc location.Location, j job, cacheDir, target 
 		return done{}, err
 	}
 	return done{job: j, outSHA: sum, outBytes: info.Size()}, nil
+}
+
+// copyFile writes src's bytes to dst through a temp file so an interrupted
+// copy never leaves a full-size (resume-matching) output behind.
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	tmp := dst + ".mtunes-part"
+	out, err := os.Create(tmp)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := out.Close(); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return os.Rename(tmp, dst)
 }
 
 // writeCardMeta stamps the card root, preserving an existing card UUID so

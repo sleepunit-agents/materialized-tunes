@@ -2,12 +2,15 @@ package materialize
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/jbarket/materialized-tunes/internal/location"
 	"github.com/jbarket/materialized-tunes/internal/workspace"
 )
 
@@ -102,5 +105,34 @@ func TestRunJobsAbortsWhenFailureIsSystemic(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "systemic") {
 		t.Errorf("error should name the diagnosis: %v", err)
+	}
+}
+
+func TestRunOneCopyPassthroughNeedsNoFFmpeg(t *testing.T) {
+	content := "RIFF....WAVEfmt pretend-pcm-bytes"
+	ws := testWorkspace(t, map[string]string{"kits/bd.wav": content})
+	lc, _ := ws.Location("src")
+	loc, err := location.New(lc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := t.TempDir()
+
+	sum := sha256.Sum256([]byte(content))
+	j := job{loc: "src", srcPath: "kits/bd.wav", srcSHA: hex.EncodeToString(sum[:]), outRel: "out/bd.wav", copy: true,
+		planned: int64(len(content))}
+	d, err := runOne(context.Background(), loc, j, t.TempDir(), target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(target, "out", "bd.wav"))
+	if err != nil || string(got) != content {
+		t.Fatalf("copy must reproduce source bytes: %q %v", got, err)
+	}
+	if d.reused || d.outBytes != int64(len(content)) || d.outSHA == "" {
+		t.Errorf("copied output must be sized and hashed for the lock: %+v", d)
+	}
+	if _, err := os.Stat(filepath.Join(target, "out", "bd.wav.mtunes-part")); err == nil {
+		t.Error("temp file must not linger")
 	}
 }

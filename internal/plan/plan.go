@@ -53,6 +53,7 @@ type Entry struct {
 	OutDepth    int    `json:"out_depth"`
 	OutFrames   int64  `json:"out_frames"`
 	OutBytes    int64  `json:"out_bytes"`
+	Copy        bool   `json:"copy,omitempty"` // source already is the device format: copied byte-for-byte, no ffmpeg
 
 	InChannels int     `json:"in_channels"`
 	InRate     int     `json:"in_rate"`
@@ -84,6 +85,7 @@ type Plan struct {
 	StrippedFormatTree int    `json:"stripped_format_tree,omitempty"` // outputs whose vendor format-tree level was dropped
 	Renamed            int    `json:"renamed,omitempty"`              // outputs renamed distinguishing-first for the device display
 	DualMonoFolded     int    `json:"dual_mono_folded,omitempty"`     // stereo sources with identical channels rendered as one channel, no pad
+	Copied             int    `json:"copied,omitempty"`               // sources already in device format, copied without transcoding
 	Deduped            int    `json:"deduped,omitempty"`              // identical-content sources dropped by dedup = "content"
 	DisplayClashes     int    `json:"display_clashes,omitempty"`      // names still identical within naming.display_length
 	LimitedFrom        int    `json:"limited_from,omitempty"`         // eligible count before the view's limit truncated it
@@ -155,10 +157,34 @@ func OutputChannels(dev *profile.Device, ce catalog.Entry) (channels int, dualMo
 	return channels, dualMono
 }
 
+// Passthrough reports whether a source already is what the device wants —
+// a PCM WAV at the device's rate, depth and channel count — so
+// materialize copies its bytes instead of rendering. A transcode of such a
+// file would only strip metadata and rewrite the header; for a DAW-library
+// device that is nearly every file, and an ffmpeg spawn per file is the
+// whole cost. 16/24-bit WAV is assumed integer PCM (float WAV is 32-bit).
+func Passthrough(dev *profile.Device, ce catalog.Entry) bool {
+	a := ce.Audio
+	if a == nil || a.Format != "wav" {
+		return false
+	}
+	if a.BitDepth != dev.Audio.BitDepth || (a.BitDepth != 16 && a.BitDepth != 24) {
+		return false
+	}
+	if a.SampleRate != dev.Audio.SampleRate {
+		return false
+	}
+	outCh, _ := OutputChannels(dev, ce)
+	return outCh == a.Channels
+}
+
 // ConvertedBytes predicts the post-transform output size of an eligible
 // catalog entry on a device — the same math Build uses for fit, exported
 // so pack summaries can be computed from the catalog alone.
 func ConvertedBytes(dev *profile.Device, ce catalog.Entry) int64 {
+	if Passthrough(dev, ce) {
+		return ce.Size
+	}
 	outCh, _ := OutputChannels(dev, ce)
 	outFrames := int64(math.Round(float64(ce.Audio.Frames) *
 		float64(dev.Audio.SampleRate) / float64(ce.Audio.SampleRate)))
@@ -290,6 +316,10 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 		outFrames := int64(math.Round(float64(ce.Audio.Frames) *
 			float64(dev.Audio.SampleRate) / float64(ce.Audio.SampleRate)))
 		outBytes := ConvertedBytes(dev, ce)
+		copyThrough := Passthrough(dev, ce)
+		if copyThrough {
+			p.Copied++
+		}
 
 		srcForOut := ce.Path
 		if st := strippers[loc]; st != nil && !globCoversTree(pk.inc, st.vendorDirs) {
@@ -310,6 +340,7 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 			OutDepth:    dev.Audio.BitDepth,
 			OutFrames:   outFrames,
 			OutBytes:    outBytes,
+			Copy:        copyThrough,
 			InChannels:  ce.Audio.Channels,
 			InRate:      ce.Audio.SampleRate,
 			InDepth:     ce.Audio.BitDepth,

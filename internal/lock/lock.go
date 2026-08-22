@@ -42,6 +42,7 @@ type Source struct {
 
 type Transform struct {
 	FFmpegArgs []string `json:"ffmpeg_args"`
+	Copy       bool     `json:"copy,omitempty"` // byte-for-byte copy of the source; FFmpegArgs empty
 }
 
 type Output struct {
