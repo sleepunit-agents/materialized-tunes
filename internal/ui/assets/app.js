@@ -253,7 +253,7 @@ function dirPicker() {
       </div>
       <div style="overflow:auto;min-height:120px;max-height:38vh;border:1px solid var(--bord-raise);border-radius:4px;background:var(--bg-raise)">${rows}</div>
       <div style="display:flex;gap:8px;align-items:center;justify-content:flex-end">
-        <span style="flex:1;font:400 10px var(--sans);color:var(--fg-faint)">The folder does not need to exist yet — materialize creates it. Existing files there are left alone; only recipe output is written.</span>
+        <span style="flex:1;font:400 10px var(--sans);color:var(--fg-faint)">Output goes directly into this folder — the recipe name is NOT added. Pick (or type) the final folder, e.g. Packs/My Recipe. It does not need to exist yet; materialize creates it and leaves existing files alone.</span>
         <span class="restore-btn" data-act="dp-cancel">cancel</span>
         <span class="mat-btn" style="margin:0;padding:6px 16px;font-size:11px" data-act="dp-pick">use this folder</span>
       </div>
