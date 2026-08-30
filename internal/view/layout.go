@@ -26,7 +26,10 @@ import (
 // deep as the family, the planner renders {instrument} as _General
 // rather than doubling the name ("Drums/Drums"). A file with no
 // instrument at all cannot be placed by a template that asks for one; the
-// planner sends it to Unsorted (see plan) instead of guessing.
+// planner sends it to Unsorted (see plan) instead of guessing. A file
+// known to be FX (category or family "fx") is never split across the
+// instrument taxonomy: the first taxonomy level the template uses renders
+// as FX and the deeper ones drop, so all FX lands under one FX/ tree.
 type Layout struct {
 	Template string
 	Segments []Segment

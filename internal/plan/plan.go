@@ -109,6 +109,7 @@ type Plan struct {
 	Unsorted           int    `json:"unsorted,omitempty"`             // files a templated layout could not place (no instrument label) — under _Unsorted/
 	Uncategorized      int    `json:"uncategorized,omitempty"`        // placed files whose {category} fell back to an _Unsorted folder
 	General            int    `json:"general,omitempty"`              // placed files labeled only at family level — {instrument} rendered as _General
+	FX                 int    `json:"fx,omitempty"`                   // known-FX files consolidated under FX/ regardless of instrument
 	DisplayClashes     int    `json:"display_clashes,omitempty"`      // names still identical within naming.display_length
 	LimitedFrom        int    `json:"limited_from,omitempty"`         // eligible count before the view's limit truncated it
 	SkippedNonAudio    []Skip `json:"skipped_non_audio,omitempty"`
@@ -419,6 +420,9 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 				if generalEx == "" {
 					generalEx = srcForOut
 				}
+			}
+			if pl.fx {
+				p.FX++
 			}
 		} else {
 			out = mirrorPath(pk.inc, srcForOut)

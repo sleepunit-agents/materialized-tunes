@@ -75,6 +75,7 @@ type placement struct {
 	unsorted      bool
 	uncategorized bool // placed, but {category} fell back to _Unsorted
 	general       bool // placed, but {instrument} is the family catch-all — rendered as _General
+	fx            bool // known FX — consolidated under FX/ regardless of instrument
 }
 
 func (ly *layouter) place(loc, srcPath, sha string) placement {
@@ -104,14 +105,34 @@ func (ly *layouter) place(loc, srcPath, sha string) placement {
 	}
 	vals[view.TokPath] = strings.Join(inPack, "/")
 	vals[view.TokFile] = inPack[len(inPack)-1]
-	catchAll := false
+	catchAll, isFX := false, false
 	if m, ok := ly.meta[loc][sha]; ok {
 		vals[view.TokFamily] = displayName(m.Family)
 		vals[view.TokInstrument] = displayName(m.Instrument)
 		vals[view.TokCategory] = displayName(m.Category)
 		catchAll = m.Instrument != "" && m.Instrument == m.Family
+		isFX = m.Category == "fx" || m.Family == "fx"
 	}
 	pl := placement{parents: inPack[:len(inPack)-1]}
+	if isFX && ly.lay.NeedsMeta() {
+		// FX is a function, not an instrument: a file known to be FX goes
+		// in the FX tree whole — a flute riser lives with the other risers,
+		// not in Woodwind/Flute/ where someone hunting a flute finds it.
+		// The first taxonomy level the template uses renders as FX and the
+		// deeper ones drop, so the FX tree splits by pack only.
+		taxonomy := []string{view.TokFamily, view.TokInstrument, view.TokCategory}
+		for _, tok := range taxonomy {
+			vals[tok] = ""
+		}
+		for _, tok := range taxonomy {
+			if ly.lay.Uses(tok) {
+				vals[tok] = "FX"
+				break
+			}
+		}
+		pl.out, pl.fx = ly.lay.Render(vals), true
+		return pl
+	}
 	if ly.lay.NeedsInstrument() && vals[view.TokInstrument] == "" {
 		pl.out, pl.unsorted = ly.fallback.Render(vals), true
 		return pl
