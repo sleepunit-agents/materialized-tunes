@@ -123,6 +123,7 @@ func Materialize(ctx context.Context, ws *workspace.Workspace, p *plan.Plan, tar
 	out := &Outcome{Skipped: skips}
 	l := &lock.Lock{
 		View:    p.View.Name,
+		Layout:  p.View.Layout,
 		Created: time.Now().UTC(),
 		Device:  *p.Device,
 		Storage: *p.Storage,

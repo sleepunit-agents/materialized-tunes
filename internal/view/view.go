@@ -31,7 +31,14 @@ type View struct {
 	// "content" — identical audio (same SHA) renders once, at the first
 	// output path in sort order. For slot- and card-bound devices where a
 	// duplicate is a wasted slot.
-	Dedup   string    `toml:"dedup" json:"dedup,omitempty"`
+	Dedup string `toml:"dedup" json:"dedup,omitempty"`
+
+	// Layout: "" (default — mirror: source-relative paths under each
+	// include's `as` prefix) or a template over the tokens in
+	// ParseLayout's doc, e.g. "{family}/{instrument}/{category}/{pack}/{file}".
+	// When set, the template decides every output path and `as` is ignored.
+	Layout string `toml:"layout" json:"layout,omitempty"`
+
 	Include []Include `toml:"include" json:"include"`
 	Exclude []Exclude `toml:"exclude" json:"exclude,omitempty"`
 }
@@ -77,6 +84,9 @@ func Load(workspaceRoot, name string) (*View, error) {
 	case "", "content":
 	default:
 		return nil, fmt.Errorf("view %s: dedup must be empty or content", name)
+	}
+	if _, err := ParseLayout(v.Layout); err != nil {
+		return nil, fmt.Errorf("view %s: %w", name, err)
 	}
 	for i, inc := range v.Include {
 		if inc.Location == "" || inc.Glob == "" {

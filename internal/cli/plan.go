@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/jbarket/materialized-tunes/internal/lock"
 	"github.com/jbarket/materialized-tunes/internal/plan"
 )
 
@@ -27,6 +28,7 @@ var planCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		lock.WarnMoved(ws.Root, p)
 		if planJSON {
 			if err := emitJSON(p); err != nil {
 				return err

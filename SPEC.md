@@ -529,6 +529,10 @@ target  = "~/Desktop/dnb-2026"    # optional default materialize destination
                                   # device fact — flaky card USB taught us
                                   # local staging + manual copy is a workflow,
                                   # so the recipe gets to name it.
+layout  = "{family}/{instrument}/{category}/{pack}/{file}"
+                                  # optional output layout template (below);
+                                  # absent = mirror the source under each
+                                  # include's `as`.
 
 [[include]]
 location = "workstation"
@@ -556,7 +560,33 @@ glob = "**/*.asd"
   **flatten** (bare filenames for folderless devices). Flatten
   disambiguates colliding names by prepending just enough trailing parent
   dirs ("KitA - Kick 01.wav"), only where needed; still-identical names
-  fall through to the collision error. Templating layouts remain post-v0.
+  fall through to the collision error.
+- `layout = "<template>"` (view-level, optional; shipped 2026-08-30) puts
+  the *recipe* in charge of the tree instead of the source. Folders
+  separated by `/`, each a mix of literal text and tokens: `{vendor}`
+  (annotations display name, else the location name; the top dir under
+  vendor-dirs), `{pack}` (pack dir), `{family}` / `{instrument}` /
+  `{category}` (harvested, §3.2 — `Drums`, `Rim`, `One-Shots`), and a leaf
+  that must be the whole last segment: `{path}` (the file's path within
+  the pack, format tree stripped) or `{file}` (name only — intra-pack
+  folders dropped; names that then meet in one folder get their old
+  folder prepended, the flatten rule). A segment whose tokens all come up
+  empty is omitted, so a kick with no loop/one-shot signal still lands
+  under `Drums/Kick/<pack>/`. A file with **no instrument label** cannot be
+  placed by a template that asks for one and goes to
+  `_Unsorted/{vendor}/{pack}/{path}` — the mirror tree, one folder down —
+  never guessed from audio (98.6 % of a 5 k-file Splice library resolves;
+  the rest is the `_Unsorted` folder, and a preflight warning counts it).
+  When a layout is set, `as` is ignored (preflight says so once) and two
+  rules picking one file are one output. The UI offers presets
+  (Family/Instrument/Loop-or-Shot/Pack, Instrument/Vendor/Pack, Family/
+  Pack) and a custom template; the recipe stores only the string. Needs
+  the location's harvest cache when the template reads metadata (a scan
+  writes it; plan refuses otherwise rather than filing everything under
+  `_Unsorted`). Switching layout on a live target moves every file:
+  materialize does not prune, so preflight warns with the count from the
+  newest lock ("N of M files now land at a different path — empty the
+  target first, or the old tree stays beside the new one").
 - Excludes apply across all includes.
 - `format_tree = "strip"` (default) drops the vendor's parallel-format
   level from output paths using annotations (`[formats] canonical_dir` /
@@ -644,6 +674,7 @@ machines):
   "view": "dnb-2026",
   "created": "2026-07-17T14:00:00Z",
   "recipe_sha256": "…",
+  "layout": "{family}/{instrument}/{category}/{pack}/{file}",
   "device":  { "…snapshot of the full device profile…" : "" },
   "storage": { "…snapshot…" : "" },
   "tooling": { "mtunes": "0.1.0", "ffmpeg": "7.1" },
@@ -679,7 +710,9 @@ mtunes restore locks/big-everything/2026-03-01T…lock.json --to /Volumes/OCTA
 mtunes verify --card /Volumes/OCTA        # card contents vs its lock, by SHA
 mtunes diff <lock>                        # lock vs current catalog + recipe:
                                           #   what a re-run would ADD (new sources),
-                                          #   DROP (sources gone), or CHANGE
+                                          #   DROP (sources gone), CHANGE, or
+                                          #   MOVE (same file, new output path —
+                                          #   layout or `as` changed)
 ```
 
 `diff` is the staleness surface: re-materializing an old view is always an
@@ -1089,7 +1122,8 @@ files are generated wholesale.
   source, scan with progress, per-location rescan cadence + background
   ticker. Suggestions come from annotation `[install]` paths and a
   builtin table — known locations checked for existence, never a crawl.
-- Recipes (`/api/view`): create, add-rule, remove-rule, set-target. The
+- Recipes (`/api/view`): create, add-rule, remove-rule, set-target,
+  set-layout (a preset or a hand-typed template, validated first). The
   add gesture lives in the Library — a pack card's `+`, or "add to
   recipe" in the detail view, which adds *the folder you're looking at*
   (so "just the acid loops" is two clicks, not a hand-written glob).

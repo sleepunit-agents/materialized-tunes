@@ -200,6 +200,7 @@ func (s *Server) views(w http.ResponseWriter, _ *http.Request) {
 		Device  string `json:"device"`
 		Storage string `json:"storage"`
 		Target  string `json:"target,omitempty"`
+		Layout  string `json:"layout,omitempty"`
 		Rules   int    `json:"rules"`
 	}
 	var out []vw
@@ -210,7 +211,7 @@ func (s *Server) views(w http.ResponseWriter, _ *http.Request) {
 		if err != nil {
 			continue
 		}
-		out = append(out, vw{Name: name, Device: v.Device, Storage: v.Storage, Target: v.Target, Rules: len(v.Include)})
+		out = append(out, vw{Name: name, Device: v.Device, Storage: v.Storage, Target: v.Target, Layout: v.Layout, Rules: len(v.Include)})
 	}
 	jsonOut(w, out)
 }
@@ -276,9 +277,10 @@ func (s *Server) preflight(w http.ResponseWriter, r *http.Request) {
 			jsonErr(w, 500, err)
 			return
 		}
+		lock.WarnMoved(s.ws.Root, p)
 	}
 
-	out := map[string]any{"view": req.View, "device": v.Device, "storage": v.Storage, "rules": rules}
+	out := map[string]any{"view": req.View, "device": v.Device, "storage": v.Storage, "layout": v.Layout, "layouts": view.LayoutPresets, "rules": rules}
 	if p != nil {
 		out["files"] = len(p.Entries)
 		p.Entries = nil             // the UI wants the verdict, not 84k rows

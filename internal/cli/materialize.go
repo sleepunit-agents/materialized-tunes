@@ -31,6 +31,7 @@ var materializeCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		lock.WarnMoved(ws.Root, p)
 		p.Render(os.Stdout, false)
 		if len(p.Errors) > 0 && !matForce {
 			return fmt.Errorf("plan has %d error(s) — fix them or pass --force", len(p.Errors))

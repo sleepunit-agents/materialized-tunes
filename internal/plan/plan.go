@@ -61,6 +61,8 @@ type Entry struct {
 	InDepth    int     `json:"in_depth"`
 	InFormat   string  `json:"in_format"`
 	DurationS  float64 `json:"duration_s"`
+
+	parents []string // intra-pack dirs a {file} layout may prepend to keep names apart
 }
 
 type Skip struct {
@@ -104,6 +106,7 @@ type Plan struct {
 	Copied             int    `json:"copied,omitempty"`               // sources already in device format, copied without transcoding
 	Companions         int    `json:"companions,omitempty"`           // Ableton documents riding along, sample refs rewritten at materialize
 	Deduped            int    `json:"deduped,omitempty"`              // identical-content sources dropped by dedup = "content"
+	Unsorted           int    `json:"unsorted,omitempty"`             // files a templated layout could not place (no instrument label) — under _Unsorted/
 	DisplayClashes     int    `json:"display_clashes,omitempty"`      // names still identical within naming.display_length
 	LimitedFrom        int    `json:"limited_from,omitempty"`         // eligible count before the view's limit truncated it
 	SkippedNonAudio    []Skip `json:"skipped_non_audio,omitempty"`
@@ -241,15 +244,22 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 
 	p := &Plan{View: v, Device: dev, Storage: sto}
 
-	// Format-tree stripping is vendor knowledge: load annotations once and
-	// build a stripper per location (nil when the view keeps trees or the
-	// location's vendors are unknown).
-	var strippers map[string]*treeStripper
-	if v.FormatTree != "keep" {
-		vendors, err := annotations.Load(filepath.Join(ws.Root, "annotations"))
-		if err != nil {
+	lay, err := view.ParseLayout(v.Layout)
+	if err != nil {
+		return nil, fmt.Errorf("view %s: %w", v.Name, err)
+	}
+
+	// Format-tree stripping and layout templates are vendor knowledge:
+	// load annotations once. Strippers are per location (nil when the
+	// view keeps trees or the location's vendors are unknown).
+	var vendors []annotations.Vendor
+	if v.FormatTree != "keep" || lay != nil {
+		if vendors, err = annotations.Load(filepath.Join(ws.Root, "annotations")); err != nil {
 			return nil, err
 		}
+	}
+	var strippers map[string]*treeStripper
+	if v.FormatTree != "keep" {
 		strippers = map[string]*treeStripper{}
 		for _, inc := range v.Include {
 			if _, done := strippers[inc.Location]; done {
@@ -276,6 +286,23 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 			return nil, fmt.Errorf("location %q has no catalog — run `mtunes scan %s` first", inc.Location, inc.Location)
 		}
 		catalogs[inc.Location] = entries
+	}
+
+	var ly *layouter
+	if lay != nil {
+		if ly, err = newLayouter(ws, v, lay, vendors); err != nil {
+			return nil, err
+		}
+		asRules := 0
+		for _, inc := range v.Include {
+			if inc.As != "" {
+				asRules++
+			}
+		}
+		if asRules > 0 {
+			p.Warnings = append(p.Warnings, fmt.Sprintf("layout %q decides every output path — `as` on %d %s is ignored",
+				lay.Template, asRules, plural(asRules, "rule", "rules")))
+		}
 	}
 
 	type picked struct {
@@ -311,7 +338,11 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 				p.ExcludedByGlob++
 				continue
 			}
-			key := inc.Location + "\x00" + sp + "\x00" + inc.As
+			asKey := inc.As
+			if lay != nil { // the template decides the path; two rules picking one file is one output
+				asKey = ""
+			}
+			key := inc.Location + "\x00" + sp + "\x00" + asKey
 			if seen[key] {
 				continue
 			}
@@ -357,11 +388,24 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 		}
 
 		srcForOut := ce.Path
-		if st := strippers[loc]; st != nil && !globCoversTree(pk.inc, st.vendorDirs) {
+		if st := strippers[loc]; st != nil && (lay != nil || !globCoversTree(pk.inc, st.vendorDirs)) {
 			if stripped, ok := st.strip(ce.Path); ok {
 				srcForOut = stripped
 				p.StrippedFormatTree++
 			}
+		}
+		// Where it lands: the template when the recipe has one, else the
+		// include's `as` over the mirrored path.
+		var out string
+		var parents []string
+		if ly != nil {
+			pl := ly.place(loc, srcForOut, ce.SHA256)
+			out, parents = pl.out, pl.parents
+			if pl.unsorted {
+				p.Unsorted++
+			}
+		} else {
+			out = mirrorPath(pk.inc, srcForOut)
 		}
 		if ce.Audio == nil { // companion document
 			p.Companions++
@@ -370,10 +414,11 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 				SourcePath: ce.Path,
 				SHA256:     ce.SHA256,
 				SourceSize: ce.Size,
-				OutPath:    outputPath(pk.inc, srcForOut, true),
+				OutPath:    out,
 				OutBytes:   ce.Size,
 				Companion:  true,
 				InFormat:   strings.ToLower(strings.TrimPrefix(path.Ext(ce.Path), ".")),
+				parents:    parents,
 			})
 			continue
 		}
@@ -395,7 +440,7 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 			SourcePath:  ce.Path,
 			SHA256:      ce.SHA256,
 			SourceSize:  ce.Size,
-			OutPath:     outputPath(pk.inc, srcForOut, false),
+			OutPath:     wavExt(out),
 			OutChannels: outCh,
 			DualMono:    dualMono,
 			OutRate:     dev.Audio.SampleRate,
@@ -408,9 +453,21 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 			InDepth:     ce.Audio.BitDepth,
 			InFormat:    ce.Audio.Format,
 			DurationS:   ce.Audio.DurationS,
+			parents:     parents,
 		})
 	}
 	sort.Slice(p.Entries, func(i, j int) bool { return p.Entries[i].OutPath < p.Entries[j].OutPath })
+	if p.Unsorted > 0 {
+		ex := ""
+		for _, e := range p.Entries {
+			if strings.HasPrefix(e.OutPath, UnsortedDir+"/") {
+				ex = e.SourcePath
+				break
+			}
+		}
+		p.Warnings = append(p.Warnings, fmt.Sprintf("%d %s carry no instrument label the layout can use and land under %s/ (mirror tree) — e.g. %s",
+			p.Unsorted, plural(p.Unsorted, "file", "files"), UnsortedDir, ex))
+	}
 
 	if v.Dedup == "content" {
 		// Identical bytes render once — the first output path in sort order
@@ -430,6 +487,10 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 			kept = append(kept, e)
 		}
 		p.Entries = kept
+	}
+
+	if lay.Uses(view.TokFile) {
+		disambiguate(p.Entries, dev.Naming.CaseSensitive)
 	}
 
 	if v.Limit > 0 && len(p.Entries) > v.Limit {
@@ -553,21 +614,21 @@ func prefixLabel(as string) string {
 	return strings.TrimSuffix(as, "/") + "/"
 }
 
-// outputPath maps a source path to its output path: mirror by default, or
-// the include's As prefix replacing the glob's static root. For audio the
-// extension always becomes .wav (that is what a transcode means);
-// companion documents keep theirs.
-func outputPath(inc view.Include, srcPath string, companion bool) string {
-	out := srcPath
-	if inc.As != "" {
-		root := view.GlobRoot(inc.Glob)
-		out = strings.TrimSuffix(inc.As, "/") + "/" + strings.TrimPrefix(srcPath, root)
+// mirrorPath maps a source path to its output path under the mirror
+// layout: the path as-is, or the include's As prefix replacing the glob's
+// static root.
+func mirrorPath(inc view.Include, srcPath string) string {
+	if inc.As == "" {
+		return srcPath
 	}
-	if companion {
-		return out
-	}
-	ext := path.Ext(out)
-	return strings.TrimSuffix(out, ext) + ".wav"
+	root := view.GlobRoot(inc.Glob)
+	return strings.TrimSuffix(inc.As, "/") + "/" + strings.TrimPrefix(srcPath, root)
+}
+
+// wavExt gives an audio output its .wav extension — that is what a
+// transcode means. Companion documents keep theirs.
+func wavExt(out string) string {
+	return strings.TrimSuffix(out, path.Ext(out)) + ".wav"
 }
 
 // flatten rewrites every OutPath to a bare filename for devices with no
@@ -578,46 +639,16 @@ func outputPath(inc view.Include, srcPath string, companion bool) string {
 // Anything still colliding afterwards falls through to checkCollisions
 // and errors there.
 func flatten(entries []Entry, caseSensitive bool) {
-	segs := make([][]string, len(entries))
-	depth := make([]int, len(entries))
+	dirs := make([]string, len(entries))
 	names := make([]string, len(entries))
+	parents := make([][]string, len(entries))
 	for i, e := range entries {
 		dir, file := path.Split(e.OutPath)
-		segs[i] = strings.FieldsFunc(dir, func(r rune) bool { return r == '/' })
+		parents[i] = strings.FieldsFunc(dir, func(r rune) bool { return r == '/' })
 		names[i] = file
 	}
-	fold := func(s string) string {
-		if caseSensitive {
-			return s
-		}
-		return strings.ToLower(s)
-	}
-	for range 64 { // bounded by deepest realistic tree
-		groups := map[string][]int{}
-		for i := range entries {
-			groups[fold(names[i])] = append(groups[fold(names[i])], i)
-		}
-		progressed := false
-		for _, idxs := range groups {
-			if len(idxs) < 2 {
-				continue
-			}
-			for _, i := range idxs {
-				if depth[i] < len(segs[i]) {
-					depth[i]++
-					parents := segs[i][len(segs[i])-depth[i]:]
-					_, base := path.Split(entries[i].OutPath)
-					names[i] = strings.Join(parents, " - ") + " - " + base
-					progressed = true
-				}
-			}
-		}
-		if !progressed {
-			break
-		}
-	}
-	for i := range entries {
-		entries[i].OutPath = names[i]
+	for i, n := range uniquify(dirs, names, parents, caseSensitive) {
+		entries[i].OutPath = n
 	}
 }
 

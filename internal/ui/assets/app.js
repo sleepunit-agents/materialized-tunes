@@ -937,6 +937,37 @@ function renderStorages() {
 
 /* ---------- recipe ---------- */
 
+// Layout picker: presets come from the server (view.LayoutPresets) so the
+// list lives in one place; the recipe stores only the template string, so
+// a hand-written template shows as "custom" and stays editable.
+function layoutPick(pf, vmeta) {
+  const presets = (pf && pf.layouts) || [];
+  if (!presets.length) return '';
+  const cur = vmeta.layout || '';
+  if (S.layoutEdit) {
+    return `${inp('lay-tpl', '{family}/{instrument}/{category}/{pack}/{file}', cur, '360px')}
+      <span class="restore-btn" data-act="lay-cancel">cancel</span>
+      <span class="mat-btn" style="margin:0;padding:4px 12px;font-size:11px" data-act="lay-save">set layout</span>`;
+  }
+  const known = presets.some(p => p.template === cur);
+  const opts = presets.map(p => `<option value="${esc(p.template)}" ${p.template === cur ? 'selected' : ''}>${esc(p.label)}</option>`).join('')
+    + `<option value="__custom" ${!known ? 'selected' : ''}>${!known ? 'custom: ' + esc(cur) : 'custom template…'}</option>`;
+  return `<select id="layout-pick" title="how output folders are laid out — every file's path comes from this" style="font:500 11.5px var(--mono);color:var(--fg-dim);background:var(--bg-raise);border:1px solid var(--bord-raise);border-radius:4px;padding:3px 8px;max-width:300px">${opts}</select>`;
+}
+
+function layoutHint(pf, vmeta) {
+  const presets = (pf && pf.layouts) || [];
+  const cur = vmeta.layout || '';
+  const p = presets.find(x => x.template === cur);
+  const ex = p ? p.example : (cur ? cur : '');
+  return ex ? ` <span style="color:var(--fg-ghost)">Layout → <span style="font-family:var(--mono)">${esc(ex)}</span></span>` : '';
+}
+
+async function setLayout(tpl) {
+  const ok = await viewAction({ action: 'set-layout', name: S.view, layout: tpl });
+  if (ok) { S.pf = null; loadPreflight(); } else render();
+}
+
 function renderRecipe() {
   if (!S.pf && !S.pfBusy) loadPreflight();
   const pf = S.pf;
@@ -965,12 +996,13 @@ function renderRecipe() {
       <select id="view-pick" style="font:500 11.5px var(--mono);color:var(--fg-dim);background:var(--bg-raise);border:1px solid var(--bord-raise);border-radius:4px;padding:3px 8px">${viewOpts}</select>
       ${pf ? `<span class="rtag dev">${esc(pf.device)}</span><span class="rtag" style="cursor:default">${esc(pf.storage)}</span>` : ''}
       <span class="rtag" data-act="set-target" title="choose the folder this recipe materializes into">${vmeta.target ? esc(vmeta.target) : '+ set target'}</span>
+      ${layoutPick(pf, vmeta)}
       ${S.renaming ? `${inp('rn-name', 'new name', S.view, '160px')}<span class="restore-btn" data-act="rename-cancel">cancel</span><span class="mat-btn" style="margin:0;padding:4px 12px;font-size:11px" data-act="rename-save">rename</span>`
         : `<span class="restore-btn" data-act="rename-start" title="rename this recipe">rename</span>`}
       <div style="flex:1"></div>
       <span class="restore-btn" data-act="recipe-new">+ new recipe</span>
     </div>
-    <div style="font:400 11px var(--sans);color:var(--fg-faint);margin-bottom:2px">Toggling a rule previews it; ✕ removes it from the recipe file. Add rules from the Library.</div>
+    <div style="font:400 11px var(--sans);color:var(--fg-faint);margin-bottom:2px">Toggling a rule previews it; ✕ removes it from the recipe file. Add rules from the Library.${layoutHint(pf, vmeta)}</div>
     ${nrForm}`;
 
   if (!pf || pf.error || !pf.rules) return `<div class="recipe-grid"><div class="recipe-left">${head}
@@ -1244,6 +1276,12 @@ function wire() {
         openDirPicker('Target folder for the new recipe', box.value, val => { S.newRecipe.target = val; render(); document.getElementById('nr-target').value = val; });
       }
       if (act === 'rename-start') { S.renaming = true; render(); document.getElementById('rn-name')?.select(); }
+      if (act === 'lay-cancel') { S.layoutEdit = false; render(); }
+      if (act === 'lay-save') {
+        const tpl = (document.getElementById('lay-tpl').value || '').trim();
+        S.layoutEdit = false;
+        setLayout(tpl); // "" = back to mirror; a bad template comes back as a toast from the server
+      }
       if (act === 'rename-cancel') { S.renaming = false; render(); }
       if (act === 'rename-save') {
         const nn = document.getElementById('rn-name').value.trim();
@@ -1378,6 +1416,11 @@ function wire() {
   bind('f-bpm', 'fBpm', 'input');
   const vp = document.getElementById('view-pick');
   if (vp) vp.addEventListener('change', () => { S.view = vp.value; S.disabled = new Set(); S.pf = null; loadPreflight(); });
+  const lp = document.getElementById('layout-pick');
+  if (lp) lp.addEventListener('change', () => {
+    if (lp.value !== '__custom') { setLayout(lp.value); return; }
+    S.layoutEdit = true; render(); document.getElementById('lay-tpl')?.select();
+  });
 }
 
 let searchTimer = null;

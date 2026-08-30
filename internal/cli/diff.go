@@ -78,6 +78,7 @@ var diffCmd = &cobra.Command{
 		section("would DROP (deselected by recipe)", d.Deselected)
 		section("would DROP (gone from source!)", d.GoneFromSrc)
 		section("content changed at source", d.ContentDrift)
+		section("would MOVE (output path changed — layout or `as`)", d.Moved)
 		section("transform changed (profile edits)", d.NewTransform)
 		return nil
 	},

@@ -1,6 +1,7 @@
 package lock
 
 import (
+	"fmt"
 	"github.com/jbarket/materialized-tunes/internal/plan"
 	"github.com/jbarket/materialized-tunes/internal/transcode"
 )
@@ -13,11 +14,62 @@ type Diff struct {
 	GoneFromSrc  []string `json:"gone_from_source,omitempty"` // in lock, source no longer in the catalog at all
 	ContentDrift []string `json:"content_drift,omitempty"`    // same source path, different sha (source was touched)
 	NewTransform []string `json:"new_transform,omitempty"`    // same source, same bytes, different ffmpeg args (profile changed)
+	Moved        []string `json:"moved,omitempty"`            // same source, same output, different output path (layout or `as` changed)
 }
 
 func (d *Diff) Clean() bool {
 	return len(d.Added)+len(d.Deselected)+len(d.GoneFromSrc)+
-		len(d.ContentDrift)+len(d.NewTransform) == 0
+		len(d.ContentDrift)+len(d.NewTransform)+len(d.Moved) == 0
+}
+
+// WarnMoved appends a plan warning when the view's newest lock placed
+// files at paths the plan no longer uses — a layout (or `as`) change.
+// Materialize does not prune, so without this the old tree would sit
+// beside the new one and nobody would say so. No lock, no warning.
+func WarnMoved(workspaceRoot string, p *plan.Plan) {
+	if p == nil || p.View == nil {
+		return
+	}
+	lockPath, err := Resolve(workspaceRoot, p.View.Name)
+	if err != nil {
+		return
+	}
+	l, err := Read(lockPath)
+	if err != nil {
+		return
+	}
+	outOf := map[string]string{}
+	for _, e := range p.Entries {
+		outOf[e.Location+"\x00"+e.SourcePath] = e.OutPath
+	}
+	moved, shared := 0, 0
+	for _, e := range l.Entries {
+		out, ok := outOf[e.Source.Location+"\x00"+e.Source.Path]
+		if !ok {
+			continue
+		}
+		shared++
+		if out != e.Output.Path {
+			moved++
+		}
+	}
+	if moved == 0 {
+		return
+	}
+	why := "the recipe's `as` prefixes changed"
+	if l.Layout != p.View.Layout {
+		why = fmt.Sprintf("layout changed from %s to %s", layoutLabel(l.Layout), layoutLabel(p.View.Layout))
+	}
+	p.Warnings = append(p.Warnings, fmt.Sprintf(
+		"%d of the %d files from the last materialize (%s) now land at a different path — %s. Materialize does not prune: empty the target first, or the old tree stays beside the new one",
+		moved, shared, l.Created.Local().Format("2006-01-02 15:04"), why))
+}
+
+func layoutLabel(tpl string) string {
+	if tpl == "" {
+		return "mirror"
+	}
+	return fmt.Sprintf("%q", tpl)
 }
 
 // Compute compares a lock against a current plan for the same view.
@@ -31,12 +83,13 @@ func Compute(l *Lock, p *plan.Plan, catalogSHAs map[string]map[string]string) *D
 		args      []string
 		copy      bool
 		companion bool
+		out       string
 	}
 	inPlan := map[string]current{}
 	outPaths := map[string]bool{}
 	for _, e := range p.Entries {
 		key := e.Location + "\x00" + e.SourcePath
-		inPlan[key] = current{sha: e.SHA256, args: planArgs(p, e), copy: e.Copy, companion: e.Companion}
+		inPlan[key] = current{sha: e.SHA256, args: planArgs(p, e), copy: e.Copy, companion: e.Companion, out: e.OutPath}
 		outPaths[e.OutPath] = true
 	}
 	inLock := map[string]Entry{}
@@ -75,6 +128,8 @@ func Compute(l *Lock, p *plan.Plan, catalogSHAs map[string]map[string]string) *D
 			// a sample this document points at no longer lands where the
 			// lock wrote it — the rewrite would come out different
 			d.NewTransform = append(d.NewTransform, name)
+		case cur.out != e.Output.Path:
+			d.Moved = append(d.Moved, name+" → "+cur.out)
 		}
 	}
 	return d

@@ -24,12 +24,13 @@ import (
 
 func (s *Server) viewWrite(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Action  string `json:"action"` // create | add-rule | remove-rule | set-target | rename
+		Action  string `json:"action"` // create | add-rule | remove-rule | set-target | set-layout | rename
 		Name    string `json:"name"`
 		NewName string `json:"new_name"` // rename
 		Device  string `json:"device"`
 		Storage string `json:"storage"`
 		Target  string `json:"target"`
+		Layout  string `json:"layout"` // set-layout: a template (view.ParseLayout) or "" for mirror
 		// add-rule
 		Location string `json:"location"`
 		Glob     string `json:"glob"`
@@ -145,6 +146,21 @@ func (s *Server) viewWrite(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := os.WriteFile(path, []byte(setScalar(string(data), "target", req.Target)), 0o644); err != nil {
+			jsonErr(w, 500, err)
+			return
+		}
+
+	case "set-layout":
+		if _, err := view.ParseLayout(req.Layout); err != nil {
+			jsonErr(w, 400, err)
+			return
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			jsonErr(w, 404, err)
+			return
+		}
+		if err := os.WriteFile(path, []byte(setScalar(string(data), "layout", strings.TrimSpace(req.Layout))), 0o644); err != nil {
 			jsonErr(w, 500, err)
 			return
 		}

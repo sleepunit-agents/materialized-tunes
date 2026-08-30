@@ -7,6 +7,26 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9 — 2026-08-30 (layout templates — the rim-shot problem)
+
+Vendor/Pack mirroring is how the source is organized, not how anyone
+looks for a sound: "I want a rim shot" against 220 Splice packs meant
+opening them one by one. The recipe now takes `layout = "<template>"`
+(§6) and the planner builds every output path from it — `{family}/
+{instrument}/{category}/{pack}/{file}` puts every rim under
+`Drums/Rim/One-Shots/<pack>/`. The facts were already there: harvest
+resolves an instrument for 98.6 % of a 5 005-file Splice library
+(category 98.3 %) from the vendor's own folder and file names, cached by
+SHA, and plan simply reads that cache. Decisions: two levels at the top
+(family → instrument — 10 folders on the Push, not 37), category above
+pack (loops away from one-shots), `{file}` drops intra-pack folders with
+the flatten disambiguation rule keeping names apart, unlabeled files go
+to `_Unsorted/` in the mirror tree rather than being guessed, `as` is
+ignored under a template. Locks record the layout; `diff` gained MOVE;
+plan/preflight warn from the newest lock when a layout switch would leave
+the old tree beside the new one (materialize still does not prune). UI:
+a layout picker on the Recipe screen with presets and a custom template.
+
 ## v0.8 — 2026-08-22 (Ableton companions)
 
 Splice packs come with Drum Racks. Materializing for Push dropped them

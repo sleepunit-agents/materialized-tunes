@@ -746,3 +746,161 @@ glob="**"
 		t.Errorf("same-prefix: overlaps=%+v entries=%d", p.Overlaps, len(p.Entries))
 	}
 }
+
+// TestLayoutTemplate: the recipe's layout template places files from the
+// harvest cache (family/instrument/category), drops an empty {category}
+// level, sends unlabeled files to _Unsorted/, ignores `as`, and keeps
+// {file} names apart within a folder using the intra-pack dirs.
+func TestLayoutTemplate(t *testing.T) {
+	ws := testWorkspace(t, []catalog.Entry{
+		wavEntry("Grit/one_shots/kicks/GTH_Kick_03.wav", 1, 48000, 16, 4800),
+		wavEntry("Grit/loops/drums/GTH_Drum_Loop_124.wav", 1, 48000, 16, 4800),
+		wavEntry("Grit/one_shots/rim/Rim 01.wav", 1, 48000, 16, 4800),
+		wavEntry("Grit/one_shots/rim_alt/Rim 01.wav", 1, 48000, 16, 4800),     // same name, other folder → disambiguated
+		wavEntry("Tech Funk/hits/TFH_Rim_A.wav", 1, 48000, 16, 4800),          // no category signal → level dropped
+		wavEntry("Tech Funk/loops/TFH_Loop_124_Gmin.wav", 1, 48000, 16, 4800), // no instrument → _Unsorted
+	}, map[string]string{
+		"annotations/vendors/splice/vendor.toml": "[vendor]\nname=\"Splice\"\nslug=\"splice\"\n",
+		"annotations-cache/meta/src.jsonl": strings.Join([]string{
+			`{"sha":"aaGrit/one_shots/kicks/GTH_Kick_03.wav","category":"one-shots","instrument":"kick","family":"drums"}`,
+			`{"sha":"aaGrit/loops/drums/GTH_Drum_Loop_124.wav","category":"loops","instrument":"drums","family":"drums","bpm":124}`,
+			`{"sha":"aaGrit/one_shots/rim/Rim 01.wav","category":"one-shots","instrument":"rim","family":"drums"}`,
+			`{"sha":"aaGrit/one_shots/rim_alt/Rim 01.wav","category":"one-shots","instrument":"rim","family":"drums"}`,
+			`{"sha":"aaTech Funk/hits/TFH_Rim_A.wav","instrument":"rim","family":"drums"}`,
+			`{"sha":"aaTech Funk/loops/TFH_Loop_124_Gmin.wav","category":"loops","bpm":124}`,
+		}, "\n") + "\n",
+	})
+	ws.Config.Locations[0].Vendor = "splice"
+	if err := ws.SaveConfig(); err != nil {
+		t.Fatal(err)
+	}
+	writeProfile(t, ws, "devices/syntakt.toml", syntaktDevice)
+	writeProfile(t, ws, "storage/sq.toml", "name = \"sq\"\nkind = \"quota\"\ncapacity_bytes = 33554432\n")
+	writeView(t, ws, "v", `name="v"
+device="syntakt"
+storage="sq"
+layout="{family}/{instrument}/{category}/{pack}/{file}"
+[[include]]
+location="src"
+glob="**"
+as="SPLICE"
+`)
+	p, err := Build(ws, "v")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, e := range p.Entries {
+		got[e.SourcePath] = e.OutPath
+	}
+	want := map[string]string{
+		"Grit/one_shots/kicks/GTH_Kick_03.wav":   "Drums/Kick/One-Shots/Grit/GTH_Kick_03.wav",
+		"Grit/loops/drums/GTH_Drum_Loop_124.wav": "Drums/Drums/Loops/Grit/GTH_Drum_Loop_124.wav",
+		"Grit/one_shots/rim/Rim 01.wav":          "Drums/Rim/One-Shots/Grit/rim - Rim 01.wav",
+		"Grit/one_shots/rim_alt/Rim 01.wav":      "Drums/Rim/One-Shots/Grit/rim_alt - Rim 01.wav",
+		"Tech Funk/hits/TFH_Rim_A.wav":           "Drums/Rim/Tech Funk/TFH_Rim_A.wav",
+		"Tech Funk/loops/TFH_Loop_124_Gmin.wav":  "_Unsorted/Splice/Tech Funk/loops/TFH_Loop_124_Gmin.wav",
+	}
+	for src, out := range want {
+		if got[src] != out {
+			t.Errorf("%s → %q, want %q", src, got[src], out)
+		}
+	}
+	if p.Unsorted != 1 {
+		t.Errorf("unsorted = %d, want 1", p.Unsorted)
+	}
+	if len(p.Errors) != 0 {
+		t.Errorf("errors: %v", p.Errors)
+	}
+	joined := strings.Join(p.Warnings, "\n")
+	if !strings.Contains(joined, "`as` on 1 rule is ignored") || !strings.Contains(joined, "_Unsorted/") {
+		t.Errorf("warnings: %v", p.Warnings)
+	}
+
+	// Two rules picking the same file under a layout is one output, not a
+	// collision and not an overlap.
+	writeView(t, ws, "two", `name="two"
+device="syntakt"
+storage="sq"
+layout="{instrument}/{vendor}/{pack}/{path}"
+[[include]]
+location="src"
+glob="Grit/**"
+[[include]]
+location="src"
+glob="Grit/one_shots/**"
+as="Shots"
+`)
+	p, err = Build(ws, "two")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Entries) != 4 || len(p.Overlaps) != 0 || len(p.Errors) != 0 {
+		t.Errorf("two rules: entries=%d overlaps=%d errors=%v", len(p.Entries), len(p.Overlaps), p.Errors)
+	}
+	got = map[string]string{}
+	for _, e := range p.Entries {
+		got[e.SourcePath] = e.OutPath
+	}
+	if got["Grit/one_shots/kicks/GTH_Kick_03.wav"] != "Kick/Splice/Grit/one_shots/kicks/GTH_Kick_03.wav" {
+		t.Errorf("instrument/vendor/pack/path: %q", got["Grit/one_shots/kicks/GTH_Kick_03.wav"])
+	}
+
+	// A template that needs metadata refuses to run against a location
+	// with no harvest cache — silence would mean everything in _Unsorted.
+	os.Remove(filepath.Join(ws.Root, "annotations-cache", "meta", "src.jsonl"))
+	if _, err := Build(ws, "v"); err == nil || !strings.Contains(err.Error(), "catalog harvest src") {
+		t.Errorf("missing meta: err = %v", err)
+	}
+	// ...but a template that reads none is fine without it.
+	writeView(t, ws, "vp", "name=\"vp\"\ndevice=\"syntakt\"\nstorage=\"sq\"\nlayout=\"{vendor}/{pack}/{path}\"\n[[include]]\nlocation=\"src\"\nglob=\"**\"\n")
+	if p, err = Build(ws, "vp"); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range p.Entries {
+		if !strings.HasPrefix(e.OutPath, "Splice/") {
+			t.Errorf("vendor/pack/path: %q", e.OutPath)
+		}
+	}
+
+	// A bad template is caught at load.
+	writeView(t, ws, "bad", "name=\"bad\"\ndevice=\"syntakt\"\nstorage=\"sq\"\nlayout=\"{family}/{instrument}\"\n[[include]]\nlocation=\"src\"\nglob=\"**\"\n")
+	if _, err := Build(ws, "bad"); err == nil || !strings.Contains(err.Error(), "must end with") {
+		t.Errorf("bad layout: err = %v", err)
+	}
+}
+
+// TestLayoutVendorDirs: under a vendor-dirs location, {vendor} and {pack}
+// come from the top two path levels and the format-tree level is always
+// stripped before {path}.
+func TestLayoutVendorDirs(t *testing.T) {
+	ws := testWorkspace(t, []catalog.Entry{
+		wavEntry("Samples From Mars/808 From Mars/WAV/Kicks/BD 01.wav", 1, 48000, 16, 4800),
+		wavEntry("Samples From Mars/808 From Mars/WAV/Snares/SD 01.wav", 1, 48000, 16, 4800),
+	}, map[string]string{
+		"annotations/vendors/sfm/vendor.toml": "[vendor]\nname=\"Samples From Mars\"\nslug=\"samples-from-mars\"\n[formats]\ncanonical_dir=\"WAV\"\n",
+		"annotations-cache/meta/src.jsonl": `{"sha":"aaSamples From Mars/808 From Mars/WAV/Kicks/BD 01.wav","instrument":"kick","family":"drums"}` + "\n" +
+			`{"sha":"aaSamples From Mars/808 From Mars/WAV/Snares/SD 01.wav","instrument":"snare","family":"drums"}` + "\n",
+	})
+	ws.Config.Locations[0].Layout = "vendor-dirs"
+	if err := ws.SaveConfig(); err != nil {
+		t.Fatal(err)
+	}
+	writeProfile(t, ws, "devices/syntakt.toml", syntaktDevice)
+	writeProfile(t, ws, "storage/sq.toml", "name = \"sq\"\nkind = \"quota\"\ncapacity_bytes = 33554432\n")
+	writeView(t, ws, "v", "name=\"v\"\ndevice=\"syntakt\"\nstorage=\"sq\"\nlayout=\"{family}/{instrument}/{vendor}/{pack}/{path}\"\n[[include]]\nlocation=\"src\"\nglob=\"Samples From Mars/808 From Mars/WAV/**\"\n")
+	p, err := Build(ws, "v")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, e := range p.Entries {
+		got[e.SourcePath] = e.OutPath
+	}
+	if got["Samples From Mars/808 From Mars/WAV/Kicks/BD 01.wav"] != "Drums/Kick/Samples From Mars/808 From Mars/Kicks/BD 01.wav" {
+		t.Errorf("vendor-dirs: %q", got["Samples From Mars/808 From Mars/WAV/Kicks/BD 01.wav"])
+	}
+	if p.StrippedFormatTree != 2 {
+		t.Errorf("stripped = %d, want 2 (a layout always strips, even when the glob reaches into the tree)", p.StrippedFormatTree)
+	}
+}

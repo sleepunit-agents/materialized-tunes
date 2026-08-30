@@ -20,8 +20,9 @@ type Lock struct {
 	View         string            `json:"view"`
 	Created      time.Time         `json:"created"`
 	RecipeSHA256 string            `json:"recipe_sha256"`
-	Device       profile.Device    `json:"device"`  // snapshot — restores don't depend on current profiles
-	Storage      profile.Storage   `json:"storage"` // snapshot
+	Layout       string            `json:"layout,omitempty"` // the recipe's layout template at the time ("" = mirror)
+	Device       profile.Device    `json:"device"`           // snapshot — restores don't depend on current profiles
+	Storage      profile.Storage   `json:"storage"`          // snapshot
 	Tooling      map[string]string `json:"tooling"`
 	Entries      []Entry           `json:"entries"`
 	Totals       Totals            `json:"totals"`
