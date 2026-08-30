@@ -190,9 +190,11 @@ grammar-derived, cheap to regenerate, never in a lockfile):
 
 - `harvest` derives bpm / key / category / tags from filename and folder
   grammar (`_C#4`, `124 Bpm`, Camelot ` - 10A`, `Bass Lines 166.5/`) plus
-  the annotation layer's `[[category]]` and pack `[[dir]]` maps. Runs after
-  every scan and via `catalog harvest`; category globs match
-  case-insensitively.
+  the annotation layer's `[[category]]` and pack `[[dir]]` maps, with the
+  shared `categories.toml` lexicon (whole-word aliases, dirs deepest-first
+  then the stem) as the cross-vendor fallback — so unannotated vendors
+  still resolve loops/one-shots. Runs after every scan and via `catalog
+  harvest`; category globs match case-insensitively.
 - The **instrument facet** (§11.4) is computed the same way — from what the
   vendor labelled, never from audio analysis.
 
@@ -571,8 +573,11 @@ glob = "**/*.asd"
   the pack, format tree stripped) or `{file}` (name only — intra-pack
   folders dropped; names that then meet in one folder get their old
   folder prepended, the flatten rule). A segment whose tokens all come up
-  empty is omitted, so a kick with no loop/one-shot signal still lands
-  under `Drums/Kick/<pack>/`. A file with **no instrument label** cannot be
+  empty is omitted — except `{category}`: a placed file with no
+  loop/one-shot signal lands in an `_Unsorted/` folder at that level
+  (`Drums/Kick/_Unsorted/<pack>/`), so pack folders never sit beside the
+  category folders; a preflight warning counts these too. A file with
+  **no instrument label** cannot be
   placed by a template that asks for one and goes to
   `_Unsorted/{vendor}/{pack}/{path}` — the mirror tree, one folder down —
   never guessed from audio (98.6 % of a 5 k-file Splice library resolves;

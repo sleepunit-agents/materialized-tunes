@@ -63,9 +63,10 @@ func newLayouter(ws *workspace.Workspace, v *view.View, lay *view.Layout, vendor
 // placement is where one file goes under the template, plus what the
 // {file} collision pass may prepend to keep names apart.
 type placement struct {
-	out      string
-	parents  []string // intra-pack dirs, outermost first
-	unsorted bool
+	out           string
+	parents       []string // intra-pack dirs, outermost first
+	unsorted      bool
+	uncategorized bool // placed, but {category} fell back to _Unsorted
 }
 
 func (ly *layouter) place(loc, srcPath, sha string) placement {
@@ -104,6 +105,13 @@ func (ly *layouter) place(loc, srcPath, sha string) placement {
 	if ly.lay.NeedsInstrument() && vals[view.TokInstrument] == "" {
 		pl.out, pl.unsorted = ly.fallback.Render(vals), true
 		return pl
+	}
+	if ly.lay.Uses(view.TokCategory) && vals[view.TokCategory] == "" {
+		// Don't silently drop the level: that puts pack folders beside the
+		// category folders ("Vintage Breaks Vol 4/" next to "Loops/"). An
+		// explicit bucket keeps the level uniform and the gap visible.
+		vals[view.TokCategory] = UnsortedDir
+		pl.uncategorized = true
 	}
 	pl.out = ly.lay.Render(vals)
 	return pl

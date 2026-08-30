@@ -70,6 +70,7 @@ func Run(ws *workspace.Workspace, lc workspace.LocationConfig) (*Result, error) 
 		return nil, err
 	}
 	lex := annotations.LoadInstruments(filepath.Join(ws.Root, "annotations"))
+	cats := annotations.LoadCategories(filepath.Join(ws.Root, "annotations"))
 	res := &Result{}
 	var out []Meta
 	byTop := map[string]*annotations.Vendor{}
@@ -115,6 +116,11 @@ func Run(ws *workspace.Workspace, lc workspace.LocationConfig) (*Result, error) 
 		m.BPM = harvestBPM(base, dirs, vendor)
 		m.Key = harvestKey(base, vendor)
 		m.Category, m.Tags = harvestCategory(dirs, vendor, pack, segs[packIdx])
+		if m.Category == "" {
+			// vendor annotation said nothing (or there is none) — the shared
+			// lexicon reads the same folder/filename grammar cross-vendor
+			m.Category = cats.Resolve(base, dirs)
+		}
 		var vendorInst []annotations.Instrument
 		if vendor != nil {
 			vendorInst = vendor.Instruments

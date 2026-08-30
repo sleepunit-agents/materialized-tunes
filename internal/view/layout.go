@@ -19,9 +19,9 @@ import (
 //	{file}        the file name alone (intra-pack folders dropped)
 //
 // The last segment must be {path} or {file} and neither may appear
-// anywhere else. A segment whose tokens all come up empty is dropped, so
-// "{family}/{instrument}/{category}/{pack}/{file}" still places a kick
-// with no loop/one-shot signal under Drums/Kick/<pack>/. A file with no
+// anywhere else. A segment whose tokens all come up empty is dropped —
+// except {category}, which the planner fills with an _Unsorted bucket so
+// pack folders never land beside the category folders. A file with no
 // instrument at all cannot be placed by a template that asks for one; the
 // planner sends it to Unsorted (see plan) instead of guessing.
 type Layout struct {

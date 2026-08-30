@@ -7,6 +7,25 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.1 — 2026-08-30 (the category level stops collapsing)
+
+First real migrate on Jonathan's library surfaced it within the hour:
+`Drums/Break` held `Loops/` and `One-Shots/` — and nine pack folders
+sitting right beside them. Two causes, one screenshot. Harvest's category
+tier was vendor-annotation-gated (a location with no vendor annotation
+got no category at all) while instruments resolve through the shared
+lexicon for everyone — so his own drums dump placed by instrument but
+never by category. And the layout's drop-empty-segment rule then
+collapsed `{category}` silently, promoting each pack directory into the
+category level. Fixes mirror the instrument design: a shared
+`categories.toml` lexicon in sample-vendor-annotations (whole-word
+aliases over normalized segments, dirs deepest-first, stem last) runs as
+the fallback tier behind vendor rules; and a placed file whose
+`{category}` still comes up empty now lands in an `_Unsorted/` folder at
+that level instead of collapsing it — the level stays uniform, the gap
+stays visible, and preflight counts it. Needs a pull of the workspace
+`annotations/` checkout and a rescan to take effect.
+
 ## v0.9 — 2026-08-30 (layout templates — the rim-shot problem)
 
 Vendor/Pack mirroring is how the source is organized, not how anyone

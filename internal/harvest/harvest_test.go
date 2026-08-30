@@ -29,6 +29,7 @@ func TestHarvest(t *testing.T) {
 	write("annotations/vendors/bmt/packs/jj.toml", "[pack]\nname=\"JJ\"\nslug=\"jj\"\ndir=\"JJ\"\n[[dir]]\npath=\"Bass\"\ncategory=\"one-shots\"\ntags=[\"bass\",\"sub\"]\n")
 	write("annotations/vendors/zg/vendor.toml", "[vendor]\nname=\"Zero-G\"\nslug=\"zero-g\"\n[naming]\nbpm_dir_suffix=true\n[[category]]\nid=\"loops\"\nmatch=[\"Bass Lines*\"]\n")
 	write("annotations/vendors/sfm/vendor.toml", "[vendor]\nname=\"Samples From Mars\"\nslug=\"samples-from-mars\"\n[naming]\nnote_suffix=\"_<note><octave>\"\n[[category]]\nid=\"one-shots\"\nmatch=[\"*Individual Hits*\"]\n[[category]]\nid=\"multisamples\"\nmatch=[\"*Synths*\"]\n")
+	write("annotations/categories.toml", "[[category]]\nid=\"loops\"\naliases=[\"loop\",\"loops\",\"full breaks\",\"break\",\"breaks\"]\n[[category]]\nid=\"one-shots\"\naliases=[\"one shots\",\"hit\",\"hits\"]\n")
 
 	mk := func(path, sha string) catalog.Entry {
 		return catalog.Entry{Path: path, SHA256: sha, Size: 1, ScannedAt: time.Now(),
@@ -43,6 +44,9 @@ func TestHarvest(t *testing.T) {
 		mk("Samples From Mars/808 From Mars/WAV/01. Individual Hits/BD 01.wav", "s5"),
 		mk("Elektron/OT/Loops/Hat Loop 03 124 Bpm.wav", "s6"), // unknown vendor: generic bpm still works
 		mk("Nobody/Pack/x.wav", "s7"),                         // nothing to say
+		mk("Nobody/Vinyl Breaks Vol 4/Full Breaks/VB 01.wav", "s8"), // shared lexicon, no vendor annotation
+		mk("Nobody/Pack/Snare Hit 03.wav", "s9"),                    // shared lexicon from the stem
+		mk("Nobody/Pack/Loops/Snare Hit 03.wav", "s10"),             // dir label beats the stem
 	} {
 		cat[e.Path] = e
 	}
@@ -54,8 +58,8 @@ func TestHarvest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Files != 6 {
-		t.Errorf("files with metadata = %d, want 6", res.Files)
+	if res.Files != 9 {
+		t.Errorf("files with metadata = %d, want 9", res.Files)
 	}
 	got := map[string]Meta{}
 	f, _ := os.Open(filepath.Join(dir, "annotations-cache", "meta", "src.jsonl"))
@@ -82,7 +86,10 @@ func TestHarvest(t *testing.T) {
 	check("s3", "", 167, "loops")                    // bpm from dir suffix (166.5 → 167)
 	check("s4", "C#1", 0, "multisamples")            // SFM note suffix
 	check("s5", "", 0, "one-shots")                  // "01. Individual Hits" via glob
-	check("s6", "", 124, "")                         // literal "124 Bpm", no vendor
+	check("s6", "", 124, "loops")                    // no vendor — the shared lexicon reads the "Loops" dir
+	check("s8", "", 0, "loops")                      // shared lexicon: "Full Breaks" dir, unannotated vendor
+	check("s9", "", 0, "one-shots")                  // shared lexicon: "Hit" in the stem
+	check("s10", "", 0, "loops")                     // dirs deepest-first beat the stem
 	if _, ok := got["s7"]; ok {
 		t.Error("s7 has nothing to harvest and must be absent")
 	}

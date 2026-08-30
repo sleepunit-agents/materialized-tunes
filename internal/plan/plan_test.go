@@ -748,16 +748,17 @@ glob="**"
 }
 
 // TestLayoutTemplate: the recipe's layout template places files from the
-// harvest cache (family/instrument/category), drops an empty {category}
-// level, sends unlabeled files to _Unsorted/, ignores `as`, and keeps
-// {file} names apart within a folder using the intra-pack dirs.
+// harvest cache (family/instrument/category), buckets an empty {category}
+// into an _Unsorted folder at that level, sends unlabeled files to
+// _Unsorted/, ignores `as`, and keeps {file} names apart within a folder
+// using the intra-pack dirs.
 func TestLayoutTemplate(t *testing.T) {
 	ws := testWorkspace(t, []catalog.Entry{
 		wavEntry("Grit/one_shots/kicks/GTH_Kick_03.wav", 1, 48000, 16, 4800),
 		wavEntry("Grit/loops/drums/GTH_Drum_Loop_124.wav", 1, 48000, 16, 4800),
 		wavEntry("Grit/one_shots/rim/Rim 01.wav", 1, 48000, 16, 4800),
 		wavEntry("Grit/one_shots/rim_alt/Rim 01.wav", 1, 48000, 16, 4800),     // same name, other folder → disambiguated
-		wavEntry("Tech Funk/hits/TFH_Rim_A.wav", 1, 48000, 16, 4800),          // no category signal → level dropped
+		wavEntry("Tech Funk/hits/TFH_Rim_A.wav", 1, 48000, 16, 4800),          // no category signal → _Unsorted category folder
 		wavEntry("Tech Funk/loops/TFH_Loop_124_Gmin.wav", 1, 48000, 16, 4800), // no instrument → _Unsorted
 	}, map[string]string{
 		"annotations/vendors/splice/vendor.toml": "[vendor]\nname=\"Splice\"\nslug=\"splice\"\n",
@@ -798,7 +799,7 @@ as="SPLICE"
 		"Grit/loops/drums/GTH_Drum_Loop_124.wav": "Drums/Drums/Loops/Grit/GTH_Drum_Loop_124.wav",
 		"Grit/one_shots/rim/Rim 01.wav":          "Drums/Rim/One-Shots/Grit/rim - Rim 01.wav",
 		"Grit/one_shots/rim_alt/Rim 01.wav":      "Drums/Rim/One-Shots/Grit/rim_alt - Rim 01.wav",
-		"Tech Funk/hits/TFH_Rim_A.wav":           "Drums/Rim/Tech Funk/TFH_Rim_A.wav",
+		"Tech Funk/hits/TFH_Rim_A.wav":           "Drums/Rim/_Unsorted/Tech Funk/TFH_Rim_A.wav",
 		"Tech Funk/loops/TFH_Loop_124_Gmin.wav":  "_Unsorted/Splice/Tech Funk/loops/TFH_Loop_124_Gmin.wav",
 	}
 	for src, out := range want {
@@ -809,11 +810,15 @@ as="SPLICE"
 	if p.Unsorted != 1 {
 		t.Errorf("unsorted = %d, want 1", p.Unsorted)
 	}
+	if p.Uncategorized != 1 {
+		t.Errorf("uncategorized = %d, want 1", p.Uncategorized)
+	}
 	if len(p.Errors) != 0 {
 		t.Errorf("errors: %v", p.Errors)
 	}
 	joined := strings.Join(p.Warnings, "\n")
-	if !strings.Contains(joined, "`as` on 1 rule is ignored") || !strings.Contains(joined, "_Unsorted/") {
+	if !strings.Contains(joined, "`as` on 1 rule is ignored") || !strings.Contains(joined, "_Unsorted/") ||
+		!strings.Contains(joined, "no loop/one-shot signal") {
 		t.Errorf("warnings: %v", p.Warnings)
 	}
 

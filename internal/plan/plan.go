@@ -107,6 +107,7 @@ type Plan struct {
 	Companions         int    `json:"companions,omitempty"`           // Ableton documents riding along, sample refs rewritten at materialize
 	Deduped            int    `json:"deduped,omitempty"`              // identical-content sources dropped by dedup = "content"
 	Unsorted           int    `json:"unsorted,omitempty"`             // files a templated layout could not place (no instrument label) — under _Unsorted/
+	Uncategorized      int    `json:"uncategorized,omitempty"`        // placed files whose {category} fell back to an _Unsorted folder
 	DisplayClashes     int    `json:"display_clashes,omitempty"`      // names still identical within naming.display_length
 	LimitedFrom        int    `json:"limited_from,omitempty"`         // eligible count before the view's limit truncated it
 	SkippedNonAudio    []Skip `json:"skipped_non_audio,omitempty"`
@@ -371,6 +372,7 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 			o.Files, o.Location, o.RuleA+1, o.GlobA, prefixLabel(o.AsA), o.RuleB+1, o.GlobB, prefixLabel(o.AsB)))
 	}
 
+	var uncatEx string // first source path whose {category} fell back
 	for _, pk := range selection {
 		ce := pk.ce
 		loc := pk.inc.Location
@@ -403,6 +405,12 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 			out, parents = pl.out, pl.parents
 			if pl.unsorted {
 				p.Unsorted++
+			}
+			if pl.uncategorized {
+				p.Uncategorized++
+				if uncatEx == "" {
+					uncatEx = srcForOut
+				}
 			}
 		} else {
 			out = mirrorPath(pk.inc, srcForOut)
@@ -467,6 +475,10 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 		}
 		p.Warnings = append(p.Warnings, fmt.Sprintf("%d %s carry no instrument label the layout can use and land under %s/ (mirror tree) — e.g. %s",
 			p.Unsorted, plural(p.Unsorted, "file", "files"), UnsortedDir, ex))
+	}
+	if p.Uncategorized > 0 {
+		p.Warnings = append(p.Warnings, fmt.Sprintf("%d %s carry no loop/one-shot signal in their naming and land in an %s/ category folder — e.g. %s (vendor annotation or the shared categories.toml can teach it)",
+			p.Uncategorized, plural(p.Uncategorized, "file", "files"), UnsortedDir, uncatEx))
 	}
 
 	if v.Dedup == "content" {
