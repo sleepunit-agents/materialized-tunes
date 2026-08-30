@@ -805,15 +805,20 @@ so shared data evolving never changes a restore.
 
 ### 11.1 The annotations repo (facts, not taste)
 
-`sample-vendor-annotations` (checked out at `<workspace>/annotations/`,
+`sample-vendor-annotations` (snapshotted at `<workspace>/annotations/`,
 gitignored) is a schema-versioned, code-free set of TOML files per vendor.
-The tool manages the checkout itself (decided 2026-08-30): `mtunes init`
-clones it, and every scan — CLI or UI, manual or cadenced — fast-forwards
-it first, so the data moves without a binary release and without asking
-the user to run git. Freshening is never fatal: offline, no git, a
-diverged checkout, or a directory that isn't the checkout's own repo all
-mean "use what's there" plus a one-line note. A checkout with local
-commits is never force-updated — contributors keep their working copy.
+The tool manages the snapshot itself (decided 2026-08-30): `mtunes init`
+downloads it, app launch and every scan — CLI or UI, manual or cadenced —
+freshen it first, so the data moves without a binary release. Sync is
+plain HTTPS against the public repo's tarball API — **no git on the user's
+machine, ever** (decided 2026-08-31: git shelling flashed console windows
+on Windows and assumed an install we never checked for). A
+`.mtunes-head.json` in the snapshot records the commit and marks the
+directory as managed; a legacy git clone from an older mtunes is adopted
+(replaced wholesale — unless it has local changes, which contributors
+keep), and any other non-empty directory is used as-is. Freshening is
+never fatal: offline or unmanaged just means "use what's there" plus a
+one-line note.
 Content per vendor:
 names, slugs, aliases, product URLs, image URLs, content hashes, counts,
 format-tree grammar (`[formats]`), category maps, `[install]` paths,

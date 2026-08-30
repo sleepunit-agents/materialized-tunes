@@ -65,6 +65,9 @@ type runState struct {
 
 func Handler(ws *workspace.Workspace) http.Handler {
 	s := &Server{ws: ws, scans: map[string]*scanState{}}
+	// Freshen annotations as soon as the app opens — the rules card should
+	// show today's grammar without waiting for a scan to trigger the pull.
+	go annotations.Sync(context.Background(), ws.Root)
 	go s.autoScan()
 	mux := http.NewServeMux()
 	static, _ := fs.Sub(assets, "assets")

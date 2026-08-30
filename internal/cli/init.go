@@ -25,8 +25,8 @@ var initCmd = &cobra.Command{
 		}
 		fmt.Printf("workspace ready at %s\n", ws.Root)
 
-		// A workspace without the annotations checkout classifies nothing —
-		// clone it now so the first scan works out of the box.
+		// A workspace without the annotations snapshot classifies nothing —
+		// download it now so the first scan works out of the box.
 		if r := annotations.Sync(cmd.Context(), ws.Root); r.Note != "" {
 			fmt.Println(r.Note)
 		}

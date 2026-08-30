@@ -892,8 +892,8 @@ function renderAnnotations() {
     <div style="display:flex;align-items:center;gap:12px;background:var(--bg-card);border:1px solid var(--bord-card);border-radius:6px;padding:9px 12px">
       <div style="min-width:0;flex:1;display:flex;flex-direction:column;gap:2px">
         ${h ? `<span style="font:400 10.5px var(--mono);color:var(--fg-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">annotations ${esc(h.sha)} · ${esc(h.date)} · ${esc(h.subject)}</span>`
-            : `<span style="font:400 10.5px var(--mono);color:var(--fg-faint)">annotations not fetched yet — scanning a source clones them</span>`}
-        <span style="font:400 10px var(--mono);color:var(--fg-faint)">pulled fresh before every scan · app ${esc(ann.version || '?')}</span>
+            : `<span style="font:400 10.5px var(--mono);color:var(--fg-faint)">annotations not fetched yet — update now, or scanning a source fetches them</span>`}
+        <span style="font:400 10px var(--mono);color:var(--fg-faint)">refreshed at launch and before every scan · app ${esc(ann.version || '?')}</span>
         ${S.annMsg ? `<span style="font:500 10.5px var(--mono);color:var(--amber)">${esc(S.annMsg)}</span>` : ''}
       </div>
       ${S.annBusy
