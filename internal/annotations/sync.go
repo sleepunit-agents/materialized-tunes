@@ -50,6 +50,13 @@ type SyncResult struct {
 	Note   string // one line for humans; always set for skipped/updated
 }
 
+// Changed reports whether the sync actually landed a different snapshot —
+// the signal that anything derived from the annotations (harvest metadata)
+// is now stale and should be recomputed.
+func (r SyncResult) Changed() bool {
+	return r.Action == SyncCloned || r.Action == SyncUpdated
+}
+
 // Concurrent scans (the UI auto-scans several locations) must not race two
 // snapshot swaps in one directory, and hourly cadences shouldn't hammer the
 // API — serialize and throttle per directory.

@@ -66,8 +66,15 @@ type runState struct {
 func Handler(ws *workspace.Workspace) http.Handler {
 	s := &Server{ws: ws, scans: map[string]*scanState{}}
 	// Freshen annotations as soon as the app opens — the rules card should
-	// show today's grammar without waiting for a scan to trigger the pull.
-	go annotations.Sync(context.Background(), ws.Root)
+	// show today's grammar without waiting for a scan to trigger the pull —
+	// and when the pull lands new grammar, re-derive the trees from it
+	// immediately: classification fixes apply on launch, not after the next
+	// scan someone remembers to run.
+	go func() {
+		if annotations.Sync(context.Background(), ws.Root).Changed() {
+			s.reharvestAll()
+		}
+	}()
 	go s.autoScan()
 	mux := http.NewServeMux()
 	static, _ := fs.Sub(assets, "assets")

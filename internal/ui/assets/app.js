@@ -754,8 +754,8 @@ async function updateAnnotations() {
   S.annBusy = false;
   if (r && !r.error) {
     S.ann = r;
-    S.annMsg = r.action === 'updated' ? (r.note || 'updated') + ' — rescan sources to apply'
-      : r.action === 'cloned' ? 'annotations fetched — rescan sources to apply'
+    S.annMsg = r.action === 'updated' ? (r.note || 'updated') + (r.reharvested ? ' — classifications refreshed' : '')
+      : r.action === 'cloned' ? 'annotations fetched' + (r.reharvested ? ' — classifications refreshed' : '')
       : r.action === 'current' ? 'already up to date'
       : (r.note || 'could not update');
   } else {

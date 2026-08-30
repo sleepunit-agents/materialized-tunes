@@ -174,27 +174,37 @@ func Run(ws *workspace.Workspace, lc workspace.LocationConfig) (*Result, error) 
 		return nil, err
 	}
 	path := filepath.Join(dir, lc.Name+".jsonl")
-	tmp := path + ".tmp"
-	f, err := os.Create(tmp)
+	// unique temp name: a scan's harvest and an annotations-update re-harvest
+	// may run concurrently for the same location, and the rename is what must
+	// stay atomic, not the scratch file
+	f, err := os.CreateTemp(dir, lc.Name+".jsonl.tmp*")
 	if err != nil {
 		return nil, err
 	}
+	tmp := f.Name()
 	w := bufio.NewWriter(f)
 	enc := json.NewEncoder(w)
 	for _, m := range out {
 		if err := enc.Encode(m); err != nil {
 			f.Close()
+			os.Remove(tmp)
 			return nil, err
 		}
 	}
 	if err := w.Flush(); err != nil {
 		f.Close()
+		os.Remove(tmp)
 		return nil, err
 	}
 	if err := f.Close(); err != nil {
+		os.Remove(tmp)
 		return nil, err
 	}
-	return res, os.Rename(tmp, path)
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return nil, err
+	}
+	return res, nil
 }
 
 // multisampleDirs finds the one structural signature vendors never

@@ -27,23 +27,43 @@ import (
 // "Are we actually updating annotations?" deserves an answer you can see:
 // GET says what commit the checkout is at (plus this binary's version, the
 // other half of "why am I still getting the old layout"); POST updates it
-// right now, bypassing the scan-time throttle. An update only lands in the
-// trees after the next scan re-harvests, so the UI says so.
+// right now, bypassing the scan-time throttle. When an update lands, the
+// existing catalogs are re-harvested on the spot — classification changes
+// must never sit stale behind a "rescan to apply" the user hasn't done.
 
 func (s *Server) annotationsEndpoint(w http.ResponseWriter, r *http.Request) {
 	type resp struct {
-		Version string            `json:"version"`
-		Head    *annotations.Head `json:"head"`
-		Action  string            `json:"action,omitempty"`
-		Note    string            `json:"note,omitempty"`
+		Version     string            `json:"version"`
+		Head        *annotations.Head `json:"head"`
+		Action      string            `json:"action,omitempty"`
+		Note        string            `json:"note,omitempty"`
+		Reharvested bool              `json:"reharvested,omitempty"`
 	}
 	out := resp{Version: version.Version}
 	if r.Method == http.MethodPost {
 		res := annotations.SyncNow(r.Context(), s.ws.Root)
 		out.Action, out.Note = string(res.Action), res.Note
+		if res.Changed() {
+			s.reharvestAll()
+			out.Reharvested = true
+		}
 	}
 	out.Head = annotations.CheckoutHead(r.Context(), s.ws.Root)
 	jsonOut(w, out)
+}
+
+// reharvestAll rederives every location's per-file metadata from its
+// existing catalog — the step a scan normally does, minus the disk walk.
+// Cheap (string ops), so it runs whenever the annotations snapshot moves:
+// new grammar applies to the trees immediately, no rescan needed. New
+// files on disk still need a scan; this only refreshes what's cataloged.
+func (s *Server) reharvestAll() {
+	for _, lc := range s.ws.Config.Locations {
+		harvest.Run(s.ws, lc) // best-effort; a failed location keeps its old meta
+	}
+	s.mu.Lock()
+	s.meta = nil // per-file metadata caches were just rewritten
+	s.mu.Unlock()
 }
 
 // ---- source suggestions -------------------------------------------------
@@ -339,6 +359,11 @@ func (s *Server) startScan(name string) error {
 			if err == nil {
 				// derive per-file metadata (bpm/key/category) from the fresh catalog
 				harvest.Run(s.ws, lc)
+				if annSync.Changed() {
+					// the pre-scan pull landed new grammar — the other
+					// locations' harvests are stale under it too
+					s.reharvestAll()
+				}
 				if vendors, err := annotations.Load(filepath.Join(s.ws.Root, "annotations")); err == nil {
 					resolve.Location(context.Background(), s.ws, lc, vendors, nil) // best-effort, cached
 				}

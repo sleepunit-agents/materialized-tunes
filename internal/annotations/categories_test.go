@@ -38,6 +38,7 @@ func TestCategoryResolve(t *testing.T) {
 	}{
 		{"VB 01", []string{"Full Breaks"}, "loops"},
 		{"Amen Break 01", nil, "loops"},                       // stem speaks when no dir does
+		{"DJD_bass_loop_coming_home_75_A", []string{"DOMINIC_DAVIS_sample_pack", "DJD_coming_home_75"}, "loops"}, // Splice pack, no category dirs — the stem's "loop" is the only label (Jonathan, 2026-08-30)
 		{"Snare Hit 03", []string{"Elements"}, "one-shots"},   // stem, unlabeled dir
 		{"Snare Hit 03", []string{"Loops"}, "loops"},          // dir label beats the stem
 		{"BD 01", []string{"01. Individual Hits"}, "one-shots"},
