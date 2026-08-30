@@ -10,7 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/jbarket/materialized-tunes/internal/ui"
+	"github.com/sleepunit-agents/materialized-tunes/internal/ui"
 )
 
 var uiAddr string

@@ -7,10 +7,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/jbarket/materialized-tunes/internal/browse"
-	"github.com/jbarket/materialized-tunes/internal/plan"
-	"github.com/jbarket/materialized-tunes/internal/profile"
-	"github.com/jbarket/materialized-tunes/internal/workspace"
+	"github.com/sleepunit-agents/materialized-tunes/internal/browse"
+	"github.com/sleepunit-agents/materialized-tunes/internal/plan"
+	"github.com/sleepunit-agents/materialized-tunes/internal/profile"
+	"github.com/sleepunit-agents/materialized-tunes/internal/workspace"
 )
 
 var (

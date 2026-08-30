@@ -7,10 +7,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/jbarket/materialized-tunes/internal/annotations"
-	"github.com/jbarket/materialized-tunes/internal/harvest"
-	"github.com/jbarket/materialized-tunes/internal/view"
-	"github.com/jbarket/materialized-tunes/internal/workspace"
+	"github.com/sleepunit-agents/materialized-tunes/internal/annotations"
+	"github.com/sleepunit-agents/materialized-tunes/internal/harvest"
+	"github.com/sleepunit-agents/materialized-tunes/internal/view"
+	"github.com/sleepunit-agents/materialized-tunes/internal/workspace"
 )
 
 // UnsortedDir is where a templated layout puts files it cannot place —

@@ -12,10 +12,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jbarket/materialized-tunes/internal/cache"
-	"github.com/jbarket/materialized-tunes/internal/lock"
-	"github.com/jbarket/materialized-tunes/internal/plan"
-	"github.com/jbarket/materialized-tunes/internal/workspace"
+	"github.com/sleepunit-agents/materialized-tunes/internal/cache"
+	"github.com/sleepunit-agents/materialized-tunes/internal/lock"
+	"github.com/sleepunit-agents/materialized-tunes/internal/plan"
+	"github.com/sleepunit-agents/materialized-tunes/internal/workspace"
 )
 
 type MigrateOutcome struct {

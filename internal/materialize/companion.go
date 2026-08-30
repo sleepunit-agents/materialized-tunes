@@ -7,9 +7,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/jbarket/materialized-tunes/internal/ableton"
-	"github.com/jbarket/materialized-tunes/internal/plan"
-	"github.com/jbarket/materialized-tunes/internal/profile"
+	"github.com/sleepunit-agents/materialized-tunes/internal/ableton"
+	"github.com/sleepunit-agents/materialized-tunes/internal/plan"
+	"github.com/sleepunit-agents/materialized-tunes/internal/profile"
 )
 
 // companionCtx is what a companion job needs to rewrite its sample refs:

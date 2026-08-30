@@ -5,9 +5,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/jbarket/materialized-tunes/internal/lock"
-	"github.com/jbarket/materialized-tunes/internal/materialize"
-	"github.com/jbarket/materialized-tunes/internal/plan"
+	"github.com/sleepunit-agents/materialized-tunes/internal/lock"
+	"github.com/sleepunit-agents/materialized-tunes/internal/materialize"
+	"github.com/sleepunit-agents/materialized-tunes/internal/plan"
 )
 
 var (

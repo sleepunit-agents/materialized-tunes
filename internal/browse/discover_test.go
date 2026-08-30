@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jbarket/materialized-tunes/internal/workspace"
+	"github.com/sleepunit-agents/materialized-tunes/internal/workspace"
 )
 
 // A workspace where the catalog holds one pack ("Full Pack") of an annotated

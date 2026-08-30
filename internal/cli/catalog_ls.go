@@ -7,9 +7,9 @@ import (
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/spf13/cobra"
 
-	"github.com/jbarket/materialized-tunes/internal/catalog"
-	"github.com/jbarket/materialized-tunes/internal/plan"
-	"github.com/jbarket/materialized-tunes/internal/profile"
+	"github.com/sleepunit-agents/materialized-tunes/internal/catalog"
+	"github.com/sleepunit-agents/materialized-tunes/internal/plan"
+	"github.com/sleepunit-agents/materialized-tunes/internal/profile"
 )
 
 var (

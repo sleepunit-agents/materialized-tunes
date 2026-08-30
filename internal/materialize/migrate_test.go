@@ -8,12 +8,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jbarket/materialized-tunes/internal/ableton"
-	"github.com/jbarket/materialized-tunes/internal/audio"
-	"github.com/jbarket/materialized-tunes/internal/catalog"
-	"github.com/jbarket/materialized-tunes/internal/lock"
-	"github.com/jbarket/materialized-tunes/internal/plan"
-	"github.com/jbarket/materialized-tunes/internal/view"
+	"github.com/sleepunit-agents/materialized-tunes/internal/ableton"
+	"github.com/sleepunit-agents/materialized-tunes/internal/audio"
+	"github.com/sleepunit-agents/materialized-tunes/internal/catalog"
+	"github.com/sleepunit-agents/materialized-tunes/internal/lock"
+	"github.com/sleepunit-agents/materialized-tunes/internal/plan"
+	"github.com/sleepunit-agents/materialized-tunes/internal/view"
 )
 
 // Swapped destinations (a→b while b→a) must both survive: the two-phase

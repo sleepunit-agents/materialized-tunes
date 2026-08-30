@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jbarket/materialized-tunes/internal/audio"
-	"github.com/jbarket/materialized-tunes/internal/catalog"
-	"github.com/jbarket/materialized-tunes/internal/workspace"
+	"github.com/sleepunit-agents/materialized-tunes/internal/audio"
+	"github.com/sleepunit-agents/materialized-tunes/internal/catalog"
+	"github.com/sleepunit-agents/materialized-tunes/internal/workspace"
 )
 
 func TestHarvest(t *testing.T) {

@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jbarket/materialized-tunes/internal/location"
-	"github.com/jbarket/materialized-tunes/internal/workspace"
+	"github.com/sleepunit-agents/materialized-tunes/internal/location"
+	"github.com/sleepunit-agents/materialized-tunes/internal/workspace"
 )
 
 // testWorkspace builds a workspace with one local location "src" rooted in

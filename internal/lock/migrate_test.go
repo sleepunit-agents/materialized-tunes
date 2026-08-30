@@ -3,8 +3,8 @@ package lock
 import (
 	"testing"
 
-	"github.com/jbarket/materialized-tunes/internal/plan"
-	"github.com/jbarket/materialized-tunes/internal/profile"
+	"github.com/sleepunit-agents/materialized-tunes/internal/plan"
+	"github.com/sleepunit-agents/materialized-tunes/internal/profile"
 )
 
 // PlanMigration must classify exactly the way Compute does: renames are

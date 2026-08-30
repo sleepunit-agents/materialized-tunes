@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/jbarket/materialized-tunes/internal/cli"
+	"github.com/sleepunit-agents/materialized-tunes/internal/cli"
 )
 
 func main() {

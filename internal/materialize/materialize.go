@@ -20,12 +20,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jbarket/materialized-tunes/internal/cache"
-	"github.com/jbarket/materialized-tunes/internal/location"
-	"github.com/jbarket/materialized-tunes/internal/lock"
-	"github.com/jbarket/materialized-tunes/internal/plan"
-	"github.com/jbarket/materialized-tunes/internal/transcode"
-	"github.com/jbarket/materialized-tunes/internal/workspace"
+	"github.com/sleepunit-agents/materialized-tunes/internal/cache"
+	"github.com/sleepunit-agents/materialized-tunes/internal/location"
+	"github.com/sleepunit-agents/materialized-tunes/internal/lock"
+	"github.com/sleepunit-agents/materialized-tunes/internal/plan"
+	"github.com/sleepunit-agents/materialized-tunes/internal/transcode"
+	"github.com/sleepunit-agents/materialized-tunes/internal/workspace"
 )
 
 const Version = "0.1.0-dev"

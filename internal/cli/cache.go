@@ -7,8 +7,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/jbarket/materialized-tunes/internal/cache"
-	"github.com/jbarket/materialized-tunes/internal/plan"
+	"github.com/sleepunit-agents/materialized-tunes/internal/cache"
+	"github.com/sleepunit-agents/materialized-tunes/internal/plan"
 )
 
 var cacheCmd = &cobra.Command{

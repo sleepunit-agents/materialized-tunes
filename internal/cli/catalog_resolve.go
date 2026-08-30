@@ -7,8 +7,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/jbarket/materialized-tunes/internal/annotations"
-	"github.com/jbarket/materialized-tunes/internal/resolve"
+	"github.com/sleepunit-agents/materialized-tunes/internal/annotations"
+	"github.com/sleepunit-agents/materialized-tunes/internal/resolve"
 )
 
 var catalogResolveCmd = &cobra.Command{

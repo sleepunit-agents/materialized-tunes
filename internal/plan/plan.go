@@ -16,11 +16,11 @@ import (
 
 	"github.com/bmatcuk/doublestar/v4"
 
-	"github.com/jbarket/materialized-tunes/internal/annotations"
-	"github.com/jbarket/materialized-tunes/internal/catalog"
-	"github.com/jbarket/materialized-tunes/internal/profile"
-	"github.com/jbarket/materialized-tunes/internal/view"
-	"github.com/jbarket/materialized-tunes/internal/workspace"
+	"github.com/sleepunit-agents/materialized-tunes/internal/annotations"
+	"github.com/sleepunit-agents/materialized-tunes/internal/catalog"
+	"github.com/sleepunit-agents/materialized-tunes/internal/profile"
+	"github.com/sleepunit-agents/materialized-tunes/internal/view"
+	"github.com/sleepunit-agents/materialized-tunes/internal/workspace"
 )
 
 // WAV header sizes ffmpeg's muxer produces under -bitexact: a canonical

@@ -13,7 +13,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/jbarket/materialized-tunes/internal/profile"
+	"github.com/sleepunit-agents/materialized-tunes/internal/profile"
 )
 
 type Lock struct {

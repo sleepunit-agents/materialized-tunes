@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/jbarket/materialized-tunes/internal/catalog"
+	"github.com/sleepunit-agents/materialized-tunes/internal/catalog"
 )
 
 var catalogCmd = &cobra.Command{

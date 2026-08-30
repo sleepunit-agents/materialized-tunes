@@ -2,8 +2,8 @@ package lock
 
 import (
 	"fmt"
-	"github.com/jbarket/materialized-tunes/internal/plan"
-	"github.com/jbarket/materialized-tunes/internal/transcode"
+	"github.com/sleepunit-agents/materialized-tunes/internal/plan"
+	"github.com/sleepunit-agents/materialized-tunes/internal/transcode"
 )
 
 // Diff is the staleness surface: what a re-run of the recipe today would

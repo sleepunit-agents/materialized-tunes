@@ -7,11 +7,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/jbarket/materialized-tunes/internal/annotations"
-	"github.com/jbarket/materialized-tunes/internal/harvest"
-	"github.com/jbarket/materialized-tunes/internal/location"
-	"github.com/jbarket/materialized-tunes/internal/resolve"
-	"github.com/jbarket/materialized-tunes/internal/scan"
+	"github.com/sleepunit-agents/materialized-tunes/internal/annotations"
+	"github.com/sleepunit-agents/materialized-tunes/internal/harvest"
+	"github.com/sleepunit-agents/materialized-tunes/internal/location"
+	"github.com/sleepunit-agents/materialized-tunes/internal/resolve"
+	"github.com/sleepunit-agents/materialized-tunes/internal/scan"
 )
 
 var scanCmd = &cobra.Command{

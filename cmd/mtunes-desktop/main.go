@@ -27,8 +27,8 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
 	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
-	"github.com/jbarket/materialized-tunes/internal/ui"
-	"github.com/jbarket/materialized-tunes/internal/workspace"
+	"github.com/sleepunit-agents/materialized-tunes/internal/ui"
+	"github.com/sleepunit-agents/materialized-tunes/internal/workspace"
 )
 
 func main() {

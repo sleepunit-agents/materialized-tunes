@@ -9,7 +9,7 @@ import (
 	"io"
 	"os/exec"
 
-	"github.com/jbarket/materialized-tunes/internal/proc"
+	"github.com/sleepunit-agents/materialized-tunes/internal/proc"
 	"runtime"
 	"strconv"
 	"strings"

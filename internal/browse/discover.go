@@ -10,9 +10,9 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/jbarket/materialized-tunes/internal/annotations"
-	"github.com/jbarket/materialized-tunes/internal/catalog"
-	"github.com/jbarket/materialized-tunes/internal/workspace"
+	"github.com/sleepunit-agents/materialized-tunes/internal/annotations"
+	"github.com/sleepunit-agents/materialized-tunes/internal/catalog"
+	"github.com/sleepunit-agents/materialized-tunes/internal/workspace"
 )
 
 // DiscoverRow is one registry identity not held in any location — the thin

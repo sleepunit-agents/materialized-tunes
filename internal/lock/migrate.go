@@ -1,7 +1,7 @@
 package lock
 
 import (
-	"github.com/jbarket/materialized-tunes/internal/plan"
+	"github.com/sleepunit-agents/materialized-tunes/internal/plan"
 )
 
 // Migration is a diff's "would MOVE" set turned into an executable plan:

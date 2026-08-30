@@ -1,4 +1,4 @@
-module github.com/jbarket/materialized-tunes
+module github.com/sleepunit-agents/materialized-tunes
 
 go 1.26.5
 

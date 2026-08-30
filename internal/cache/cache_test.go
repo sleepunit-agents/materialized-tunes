@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jbarket/materialized-tunes/internal/location"
+	"github.com/sleepunit-agents/materialized-tunes/internal/location"
 )
 
 // flakyLoc serves content from a script of payloads: attempt N returns

@@ -11,8 +11,8 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
-	"github.com/jbarket/materialized-tunes/internal/profile"
-	"github.com/jbarket/materialized-tunes/internal/view"
+	"github.com/sleepunit-agents/materialized-tunes/internal/profile"
+	"github.com/sleepunit-agents/materialized-tunes/internal/view"
 )
 
 // Recipes, device profiles and storage profiles are hand-editable TOML and

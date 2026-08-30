@@ -13,9 +13,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jbarket/materialized-tunes/internal/audio"
-	"github.com/jbarket/materialized-tunes/internal/catalog"
-	"github.com/jbarket/materialized-tunes/internal/location"
+	"github.com/sleepunit-agents/materialized-tunes/internal/audio"
+	"github.com/sleepunit-agents/materialized-tunes/internal/catalog"
+	"github.com/sleepunit-agents/materialized-tunes/internal/location"
 )
 
 // headerPrefixBytes is how much of a file we fetch for audio header

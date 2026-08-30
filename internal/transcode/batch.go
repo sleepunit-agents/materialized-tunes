@@ -7,7 +7,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/jbarket/materialized-tunes/internal/proc"
+	"github.com/sleepunit-agents/materialized-tunes/internal/proc"
 )
 
 // Item is one input→output pair for a batched run.

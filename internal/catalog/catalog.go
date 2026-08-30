@@ -12,7 +12,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/jbarket/materialized-tunes/internal/audio"
+	"github.com/sleepunit-agents/materialized-tunes/internal/audio"
 )
 
 type Entry struct {

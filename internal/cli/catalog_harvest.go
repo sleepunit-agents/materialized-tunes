@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/jbarket/materialized-tunes/internal/harvest"
+	"github.com/sleepunit-agents/materialized-tunes/internal/harvest"
 )
 
 var catalogHarvestCmd = &cobra.Command{
