@@ -28,6 +28,8 @@ func TestHarvest(t *testing.T) {
 	write("annotations/vendors/bmt/vendor.toml", "[vendor]\nname=\"Blu Mar Ten\"\nslug=\"blu-mar-ten\"\n[naming]\nkey_suffix=\" - <camelot>\"\n[[category]]\nid=\"loops\"\nmatch=[\"Breaks\"]\n")
 	write("annotations/vendors/bmt/packs/jj.toml", "[pack]\nname=\"JJ\"\nslug=\"jj\"\ndir=\"JJ\"\n[[dir]]\npath=\"Bass\"\ncategory=\"one-shots\"\ntags=[\"bass\",\"sub\"]\n")
 	write("annotations/vendors/zg/vendor.toml", "[vendor]\nname=\"Zero-G\"\nslug=\"zero-g\"\n[naming]\nbpm_dir_suffix=true\n[[category]]\nid=\"loops\"\nmatch=[\"Bass Lines*\"]\n")
+	write("annotations/vendors/zg/packs/jw1.toml", "[pack]\nname=\"Jungle Warfare Vol 1\"\nslug=\"jungle-warfare-vol-1\"\ndir=\"Jungle Warfare Vol 1\"\n[[dir]]\npath=\"Programmed Loops\"\ncategory=\"loops\"\ninstrument=\"break\"\n")
+	write("annotations/instruments.toml", "[[instrument]]\nid=\"break\"\nfamily=\"drums\"\naliases=[\"break\",\"breaks\",\"amen\"]\n[[instrument]]\nid=\"sub\"\nfamily=\"bass\"\naliases=[\"sub\",\"subs\",\"sub bass\"]\n")
 	write("annotations/vendors/sfm/vendor.toml", "[vendor]\nname=\"Samples From Mars\"\nslug=\"samples-from-mars\"\n[naming]\nnote_suffix=\"_<note><octave>\"\n[[category]]\nid=\"one-shots\"\nmatch=[\"*Individual Hits*\"]\n[[category]]\nid=\"multisamples\"\nmatch=[\"*Synths*\"]\n")
 	write("annotations/categories.toml", "[[category]]\nid=\"loops\"\naliases=[\"loop\",\"loops\",\"full breaks\",\"break\",\"breaks\"]\n[[category]]\nid=\"one-shots\"\naliases=[\"one shots\",\"hit\",\"hits\"]\n")
 
@@ -47,6 +49,7 @@ func TestHarvest(t *testing.T) {
 		mk("Nobody/Vinyl Breaks Vol 4/Full Breaks/VB 01.wav", "s8"), // shared lexicon, no vendor annotation
 		mk("Nobody/Pack/Snare Hit 03.wav", "s9"),                    // shared lexicon from the stem
 		mk("Nobody/Pack/Loops/Snare Hit 03.wav", "s10"),             // dir label beats the stem
+		mk("Zero-G/Jungle Warfare Vol 1/Programmed Loops/Sub-Urban 155 1.wav", "s11"), // [[dir]] instrument pin beats the lexicon's "sub"
 	} {
 		cat[e.Path] = e
 	}
@@ -58,8 +61,8 @@ func TestHarvest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Files != 9 {
-		t.Errorf("files with metadata = %d, want 9", res.Files)
+	if res.Files != 10 {
+		t.Errorf("files with metadata = %d, want 10", res.Files)
 	}
 	got := map[string]Meta{}
 	f, _ := os.Open(filepath.Join(dir, "annotations-cache", "meta", "src.jsonl"))
@@ -90,6 +93,10 @@ func TestHarvest(t *testing.T) {
 	check("s8", "", 0, "loops")                      // shared lexicon: "Full Breaks" dir, unannotated vendor
 	check("s9", "", 0, "one-shots")                  // shared lexicon: "Hit" in the stem
 	check("s10", "", 0, "loops")                     // dirs deepest-first beat the stem
+	if m := got["s11"]; m.Instrument != "break" || m.Family != "drums" || m.Category != "loops" {
+		// a jungle groove named after its source must not read as sub bass
+		t.Errorf("s11: got instrument=%q family=%q cat=%q, want break/drums/loops", m.Instrument, m.Family, m.Category)
+	}
 	if _, ok := got["s7"]; ok {
 		t.Error("s7 has nothing to harvest and must be absent")
 	}

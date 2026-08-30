@@ -115,7 +115,8 @@ func Run(ws *workspace.Workspace, lc workspace.LocationConfig) (*Result, error) 
 
 		m.BPM = harvestBPM(base, dirs, vendor)
 		m.Key = harvestKey(base, vendor)
-		m.Category, m.Tags = harvestCategory(dirs, vendor, pack, segs[packIdx])
+		var pinned string
+		m.Category, m.Tags, pinned = harvestCategory(dirs, vendor, pack, segs[packIdx])
 		if m.Category == "" {
 			// vendor annotation said nothing (or there is none) — the shared
 			// lexicon reads the same folder/filename grammar cross-vendor
@@ -125,7 +126,13 @@ func Run(ws *workspace.Workspace, lc workspace.LocationConfig) (*Result, error) 
 		if vendor != nil {
 			vendorInst = vendor.Instruments
 		}
-		m.Instrument, m.Family = lex.Resolve(base, dirs, vendorInst)
+		if pinned != "" {
+			// the pack's [[dir]] map pinned the instrument — curated truth
+			// beats whatever the filenames appear to say
+			m.Instrument, m.Family = pinned, lex.FamilyOf(pinned, vendorInst)
+		} else {
+			m.Instrument, m.Family = lex.Resolve(base, dirs, vendorInst)
+		}
 
 		if m.BPM == 0 && m.Key == "" && m.Category == "" && m.Instrument == "" && len(m.Tags) == 0 {
 			continue
@@ -231,13 +238,12 @@ func harvestKey(base string, v *annotations.Vendor) string {
 // harvestCategory resolves category + tags: the pack's [[dir]] map first
 // (deepest match governs category; tags union along the prefix chain),
 // then the vendor's [[category]] rules over directory names at any depth,
-// then dedicated_packs.
-func harvestCategory(dirs []string, v *annotations.Vendor, p *annotations.Pack, packDir string) (string, []string) {
+// then dedicated_packs. instrument is the pack [[dir]] map's instrument
+// pin when the deepest matching entry carries one — "" otherwise.
+func harvestCategory(dirs []string, v *annotations.Vendor, p *annotations.Pack, packDir string) (category string, tags []string, instrument string) {
 	if v == nil {
-		return "", nil
+		return "", nil, ""
 	}
-	category := ""
-	var tags []string
 	seen := map[string]bool{}
 	addTags := func(ts []string) {
 		for _, t := range ts {
@@ -249,7 +255,7 @@ func harvestCategory(dirs []string, v *annotations.Vendor, p *annotations.Pack, 
 	}
 	rel := strings.Join(dirs, "/")
 	if p != nil {
-		best := -1
+		best, bestInst := -1, -1
 		for _, d := range p.Dirs {
 			dp := strings.Trim(d.Path, "/")
 			match := false
@@ -268,6 +274,10 @@ func harvestCategory(dirs []string, v *annotations.Vendor, p *annotations.Pack, 
 			if d.Category != "" && len(dp) > best {
 				best = len(dp)
 				category = d.Category
+			}
+			if d.Instrument != "" && len(dp) > bestInst {
+				bestInst = len(dp)
+				instrument = d.Instrument
 			}
 		}
 	}
@@ -301,7 +311,7 @@ func harvestCategory(dirs []string, v *annotations.Vendor, p *annotations.Pack, 
 			}
 		}
 	}
-	return category, tags
+	return category, tags, instrument
 }
 
 // LoadMeta reads a location's harvested metadata cache, keyed by content

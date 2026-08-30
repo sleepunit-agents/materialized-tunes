@@ -130,6 +130,12 @@ type Dir struct {
 	Category string   `toml:"category" json:"category,omitempty"`
 	Tags     []string `toml:"tags" json:"tags,omitempty"`
 	Desc     string   `toml:"desc" json:"desc,omitempty"`
+
+	// Instrument pins every file under this dir to one lexicon id,
+	// overriding whatever the filenames appear to say. For content whose
+	// names carry no honest signal — jungle breaks named after their
+	// sources ("Sub-Urban", "Clint Eastwood") read as anything but drums.
+	Instrument string `toml:"instrument" json:"instrument,omitempty"`
 }
 
 // Load reads every vendor under root. Root may be a checkout of the

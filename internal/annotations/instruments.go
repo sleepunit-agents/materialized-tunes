@@ -147,6 +147,18 @@ func hit(padded string, pat, avoid *regexp.Regexp) bool {
 	return true
 }
 
+// FamilyOf reports the family of a known instrument id — for callers that
+// get an id from an annotation pin rather than a text match. Vendor
+// overrides are consulted first, so a pinned vendor-local id resolves too.
+func (lx *Lexicon) FamilyOf(id string, vendorFirst []Instrument) string {
+	for _, ins := range vendorFirst {
+		if ins.ID == id {
+			return lx.familyOf(id, ins.Family)
+		}
+	}
+	return lx.familyOf(id, "")
+}
+
 // familyOf lets a vendor override name an id without repeating its family.
 func (lx *Lexicon) familyOf(id, given string) string {
 	if given != "" {
