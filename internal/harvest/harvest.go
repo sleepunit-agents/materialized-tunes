@@ -11,6 +11,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -49,6 +50,12 @@ var (
 	camelotRe  = regexp.MustCompile(`\s-\s(1[0-2]|[1-9])([ABab])$`)        // BMT: "Champion Sub - 10A"
 	keyWordRe  = regexp.MustCompile(`(?i)[_ \-]([A-G][#b]?)(maj|min|m)?$`) // "Pad Amin", "Stab F#m"
 	dirOrderRe = regexp.MustCompile(`^\d+\.\s*`)
+	// a note token anywhere in a stem, boundaries explicit on both sides
+	// (RE2 has no lookarounds): "…_C#4", "…_C-2-NBQM", "…_D1_C2IQ" — the
+	// C2 inside the random suffix doesn't hit, "kit_a_1" is lowercase and
+	// doesn't either. Uppercase only: lowercase letter+digit is how packs
+	// name takes ("kit_a_1.wav"), not pitches.
+	msNoteRe = regexp.MustCompile(`(?:^|[ _\-(.])([A-G][#b]?)(-?\d)(?:[ _\-).]|$)`)
 )
 
 // camelot → musical key. A = minor, B = major.
@@ -84,6 +91,7 @@ func Run(ws *workspace.Workspace, lc workspace.LocationConfig) (*Result, error) 
 		}
 	}
 	sort.Strings(paths)
+	msDirs := multisampleDirs(paths)
 	for _, p := range paths {
 		e := entries[p]
 		segs := strings.Split(p, "/")
@@ -121,6 +129,11 @@ func Run(ws *workspace.Workspace, lc workspace.LocationConfig) (*Result, error) 
 			// vendor annotation said nothing (or there is none) — the shared
 			// lexicon reads the same folder/filename grammar cross-vendor
 			m.Category = cats.Resolve(base, dirs)
+		}
+		if m.Category == "" && msDirs[path.Dir(p)] {
+			// no label anywhere claimed the file, but its directory has the
+			// multisample shape — chromatic note-suffixed siblings
+			m.Category = "multisamples"
 		}
 		var vendorInst []annotations.Instrument
 		if vendor != nil {
@@ -182,6 +195,49 @@ func Run(ws *workspace.Workspace, lc workspace.LocationConfig) (*Result, error) 
 		return nil, err
 	}
 	return res, os.Rename(tmp, path)
+}
+
+// multisampleDirs finds the one structural signature vendors never
+// label: a directory holding an instrument sampled across the keyboard,
+// sibling stems differing by a note token ("…_C-2", "…_C#-2", …,
+// "…_B-2"). SFM's synth packs spread these over instrument-named dirs
+// ("Leads", "Bass", "05. Synth") with no category word anywhere, so the
+// shape of the directory is the only signal there is. Deliberately
+// conservative — at least 6 files carrying notes, 6 distinct notes, and
+// noted files in the majority — so a stray "Sub C1.wav" beside twenty
+// kicks claims nothing. Used as the last category tier, after every
+// explicit label has had its say.
+func multisampleDirs(paths []string) map[string]bool {
+	type stat struct {
+		total, noted int
+		notes        map[string]bool
+	}
+	stats := map[string]*stat{}
+	for _, p := range paths {
+		dir := path.Dir(p)
+		st := stats[dir]
+		if st == nil {
+			st = &stat{notes: map[string]bool{}}
+			stats[dir] = st
+		}
+		st.total++
+		base := path.Base(p)
+		stem := strings.TrimSuffix(base, filepath.Ext(base))
+		ms := msNoteRe.FindAllStringSubmatch(stem, -1)
+		if len(ms) == 0 {
+			continue
+		}
+		last := ms[len(ms)-1] // the pitch is the trailing token by convention
+		st.noted++
+		st.notes[last[1]+last[2]] = true
+	}
+	out := map[string]bool{}
+	for dir, st := range stats {
+		if st.noted >= 6 && len(st.notes) >= 6 && st.noted*2 >= st.total {
+			out[dir] = true
+		}
+	}
+	return out
 }
 
 func harvestBPM(base string, dirs []string, v *annotations.Vendor) int {

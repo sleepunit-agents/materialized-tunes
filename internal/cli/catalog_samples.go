@@ -223,7 +223,7 @@ func init() {
 	f := catalogSamplesCmd.Flags()
 	f.StringVar(&smpInstrument, "instrument", "", "canonical instrument id (kick, vocal, pad, …)")
 	f.StringVar(&smpFamily, "family", "", "instrument family (drums, bass, keys, synth, vocal, fx, …)")
-	f.StringVar(&smpCategory, "category", "", "one-shots | loops | kits | multisamples | fx")
+	f.StringVar(&smpCategory, "category", "", "one-shots | loops | multisamples | fx")
 	f.StringVar(&smpKey, "key", "", "musical key as harvested (Am, C#1, F)")
 	f.StringVar(&smpBPM, "bpm", "", "tempo or range: 128 or 120-130")
 	f.StringVar(&smpPack, "pack", "", "substring of the pack dir")

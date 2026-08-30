@@ -50,6 +50,18 @@ func TestHarvest(t *testing.T) {
 		mk("Nobody/Pack/Snare Hit 03.wav", "s9"),                    // shared lexicon from the stem
 		mk("Nobody/Pack/Loops/Snare Hit 03.wav", "s10"),             // dir label beats the stem
 		mk("Zero-G/Jungle Warfare Vol 1/Programmed Loops/Sub-Urban 155 1.wav", "s11"), // [[dir]] instrument pin beats the lexicon's "sub"
+		// a multisample dir with no category word anywhere: chromatic
+		// note-suffixed siblings (SFM 101-style naming, random suffixes)
+		mk("Samples From Mars/101 From Mars/WAV/Bass/0_FishFriend_SH101_C-2-NBQM.wav", "ms1"),
+		mk("Samples From Mars/101 From Mars/WAV/Bass/1_FishFriend_SH101_C#-2-U1UX.wav", "ms2"),
+		mk("Samples From Mars/101 From Mars/WAV/Bass/2_FishFriend_SH101_D-2-1RQQ.wav", "ms3"),
+		mk("Samples From Mars/101 From Mars/WAV/Bass/3_FishFriend_SH101_D#-2-U65Z.wav", "ms4"),
+		mk("Samples From Mars/101 From Mars/WAV/Bass/4_FishFriend_SH101_E-2-XEVR.wav", "ms5"),
+		mk("Samples From Mars/101 From Mars/WAV/Bass/12_BigSub1_SH101_D1_C2IQ.wav", "ms6"),
+		// looks notey but isn't: lowercase take names, too few pitches
+		mk("Nobody/Pack2/kits dir/kit_a_1.wav", "k1"),
+		mk("Nobody/Pack2/kits dir/kit_a_2.wav", "k2"),
+		mk("Nobody/Pack2/kits dir/kit_b_1.wav", "k3"),
 	} {
 		cat[e.Path] = e
 	}
@@ -61,8 +73,8 @@ func TestHarvest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Files != 10 {
-		t.Errorf("files with metadata = %d, want 10", res.Files)
+	if res.Files != 16 {
+		t.Errorf("files with metadata = %d, want 16", res.Files)
 	}
 	got := map[string]Meta{}
 	f, _ := os.Open(filepath.Join(dir, "annotations-cache", "meta", "src.jsonl"))
@@ -93,6 +105,11 @@ func TestHarvest(t *testing.T) {
 	check("s8", "", 0, "loops")                      // shared lexicon: "Full Breaks" dir, unannotated vendor
 	check("s9", "", 0, "one-shots")                  // shared lexicon: "Hit" in the stem
 	check("s10", "", 0, "loops")                     // dirs deepest-first beat the stem
+	check("ms1", "", 0, "multisamples")              // chromatic dir shape, no label anywhere
+	check("ms6", "", 0, "multisamples")              // …and the C2 in the random suffix didn't fool it
+	if _, ok := got["k1"]; ok {
+		t.Error("k1: lowercase take names must not read as a multisample dir")
+	}
 	if m := got["s11"]; m.Instrument != "break" || m.Family != "drums" || m.Category != "loops" {
 		// a jungle groove named after its source must not read as sub bass
 		t.Errorf("s11: got instrument=%q family=%q cat=%q, want break/drums/loops", m.Instrument, m.Family, m.Category)

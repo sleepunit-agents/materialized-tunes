@@ -13,11 +13,7 @@ aliases = ["loop", "loops", "full breaks", "break", "breaks", "construction"]
 
 [[category]]
 id = "one-shots"
-aliases = ["one shot", "one shots", "hit", "hits", "stab", "stabs"]
-
-[[category]]
-id = "kits"
-aliases = ["kit", "kits"]
+aliases = ["one shot", "one shots", "hit", "hits", "stab", "stabs", "kit", "kits"]
 
 [[category]]
 id = "fx"
@@ -45,7 +41,7 @@ func TestCategoryResolve(t *testing.T) {
 		{"Snare Hit 03", []string{"Elements"}, "one-shots"},   // stem, unlabeled dir
 		{"Snare Hit 03", []string{"Loops"}, "loops"},          // dir label beats the stem
 		{"BD 01", []string{"01. Individual Hits"}, "one-shots"},
-		{"x", []string{"Kits", "808 Kit 1"}, "kits"},          // deepest dir first
+		{"x", []string{"Kits", "808 Kit 1"}, "one-shots"},     // kit == one-shots slang; deepest dir first
 		{"Riser", []string{"FX"}, "fx"},
 		{"White Noise", nil, ""},                              // "hit" inside a word is not a hit
 		{"Construction Kits", nil, "loops"},                   // entry order: specific sense first

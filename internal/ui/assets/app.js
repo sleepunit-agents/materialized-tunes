@@ -380,7 +380,7 @@ const INSTRUMENTS = [
 function filterBar() {
   const opts = INSTRUMENTS.map(([group, ids]) =>
     `<optgroup label="${group}">${ids.map(i => `<option value="${i}" ${S.fInst === i ? 'selected' : ''}>${i}</option>`).join('')}</optgroup>`).join('');
-  const cats = ['one-shots', 'loops', 'kits', 'multisamples', 'fx'];
+  const cats = ['one-shots', 'loops', 'multisamples', 'fx'];
   const inp = (id, ph, val, w) =>
     `<input id="${id}" class="filt" placeholder="${ph}" value="${esc(val)}" style="width:${w}">`;
   const active = sampleMode();
