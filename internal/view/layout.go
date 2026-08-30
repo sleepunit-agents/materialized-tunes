@@ -27,9 +27,12 @@ import (
 // rather than doubling the name ("Drums/Drums"). A file with no
 // instrument at all cannot be placed by a template that asks for one; the
 // planner sends it to Unsorted (see plan) instead of guessing. A file
-// known to be FX (category or family "fx") is never split across the
-// instrument taxonomy: the first taxonomy level the template uses renders
-// as FX and the deeper ones drop, so all FX lands under one FX/ tree.
+// known to be FX (category or family "fx") never lands in an instrument
+// tree: {family} renders as FX and the deeper levels split inside it —
+// {instrument} by what the sound is (Riser, Foley, Flute; _General when
+// unlabeled), {category} by loop vs one-shot (_Unsorted when the only
+// category signal was "fx"). A template without {family} consolidates
+// flat: its first taxonomy level renders as FX and the deeper ones drop.
 type Layout struct {
 	Template string
 	Segments []Segment

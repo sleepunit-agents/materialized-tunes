@@ -760,8 +760,9 @@ func TestLayoutTemplate(t *testing.T) {
 		wavEntry("Grit/one_shots/rim_alt/Rim 01.wav", 1, 48000, 16, 4800),     // same name, other folder → disambiguated
 		wavEntry("Tech Funk/hits/TFH_Rim_A.wav", 1, 48000, 16, 4800),          // no category signal → _Unsorted category folder
 		wavEntry("Tech Funk/loops/TFH_Loop_124_Gmin.wav", 1, 48000, 16, 4800), // no instrument → _Unsorted
-		wavEntry("Grit/fx/Flute Riser.wav", 1, 48000, 16, 4800),               // category fx → FX/, never Woodwind/Flute/
-		wavEntry("Grit/foley/Rain Loop.wav", 1, 48000, 16, 4800),              // family fx → FX/, category level dropped
+		wavEntry("Grit/fx/Flute Riser.wav", 1, 48000, 16, 4800),               // category fx → FX/Flute/, never Woodwind/; "fx" has no loop-ness → _Unsorted
+		wavEntry("Grit/foley/Rain Loop.wav", 1, 48000, 16, 4800),              // family fx → FX/Foley/Loops/
+		wavEntry("Grit/fx/Weird One.wav", 1, 48000, 16, 4800),                 // fx catch-all all the way down → FX/_General/_Unsorted/
 	}, map[string]string{
 		"annotations/vendors/splice/vendor.toml": "[vendor]\nname=\"Splice\"\nslug=\"splice\"\n",
 		"annotations-cache/meta/src.jsonl": strings.Join([]string{
@@ -773,6 +774,7 @@ func TestLayoutTemplate(t *testing.T) {
 			`{"sha":"aaTech Funk/loops/TFH_Loop_124_Gmin.wav","category":"loops","bpm":124}`,
 			`{"sha":"aaGrit/fx/Flute Riser.wav","category":"fx","instrument":"flute","family":"woodwind"}`,
 			`{"sha":"aaGrit/foley/Rain Loop.wav","category":"loops","instrument":"foley","family":"fx"}`,
+			`{"sha":"aaGrit/fx/Weird One.wav","category":"fx","instrument":"fx","family":"fx"}`,
 		}, "\n") + "\n",
 	})
 	ws.Config.Locations[0].Vendor = "splice"
@@ -805,8 +807,9 @@ as="SPLICE"
 		"Grit/one_shots/rim_alt/Rim 01.wav":      "Drums/Rim/One-Shots/Grit/rim_alt - Rim 01.wav",
 		"Tech Funk/hits/TFH_Rim_A.wav":           "Drums/Rim/_Unsorted/Tech Funk/TFH_Rim_A.wav",
 		"Tech Funk/loops/TFH_Loop_124_Gmin.wav":  "_Unsorted/Splice/Tech Funk/loops/TFH_Loop_124_Gmin.wav",
-		"Grit/fx/Flute Riser.wav":                "FX/Grit/Flute Riser.wav",
-		"Grit/foley/Rain Loop.wav":               "FX/Grit/Rain Loop.wav",
+		"Grit/fx/Flute Riser.wav":                "FX/Flute/_Unsorted/Grit/Flute Riser.wav",
+		"Grit/foley/Rain Loop.wav":               "FX/Foley/Loops/Grit/Rain Loop.wav",
+		"Grit/fx/Weird One.wav":                  "FX/_General/_Unsorted/Grit/Weird One.wav",
 	}
 	for src, out := range want {
 		if got[src] != out {
@@ -816,14 +819,14 @@ as="SPLICE"
 	if p.Unsorted != 1 {
 		t.Errorf("unsorted = %d, want 1", p.Unsorted)
 	}
-	if p.Uncategorized != 1 {
-		t.Errorf("uncategorized = %d, want 1", p.Uncategorized)
+	if p.Uncategorized != 3 { // TFH_Rim_A + the two FX files whose only category signal was "fx"
+		t.Errorf("uncategorized = %d, want 3", p.Uncategorized)
 	}
-	if p.General != 1 {
-		t.Errorf("general = %d, want 1", p.General)
+	if p.General != 2 { // Drum_Loop (family-level label) + Weird One (fx catch-all)
+		t.Errorf("general = %d, want 2", p.General)
 	}
-	if p.FX != 2 {
-		t.Errorf("fx = %d, want 2", p.FX)
+	if p.FX != 3 {
+		t.Errorf("fx = %d, want 3", p.FX)
 	}
 	if len(p.Errors) != 0 {
 		t.Errorf("errors: %v", p.Errors)
@@ -853,7 +856,7 @@ as="Shots"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(p.Entries) != 6 || len(p.Overlaps) != 0 || len(p.Errors) != 0 {
+	if len(p.Entries) != 7 || len(p.Overlaps) != 0 || len(p.Errors) != 0 {
 		t.Errorf("two rules: entries=%d overlaps=%d errors=%v", len(p.Entries), len(p.Overlaps), p.Errors)
 	}
 	got = map[string]string{}

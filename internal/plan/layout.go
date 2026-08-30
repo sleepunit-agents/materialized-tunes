@@ -105,8 +105,10 @@ func (ly *layouter) place(loc, srcPath, sha string) placement {
 	}
 	vals[view.TokPath] = strings.Join(inPack, "/")
 	vals[view.TokFile] = inPack[len(inPack)-1]
+	var meta harvest.Meta
 	catchAll, isFX := false, false
 	if m, ok := ly.meta[loc][sha]; ok {
+		meta = m
 		vals[view.TokFamily] = displayName(m.Family)
 		vals[view.TokInstrument] = displayName(m.Instrument)
 		vals[view.TokCategory] = displayName(m.Category)
@@ -116,18 +118,34 @@ func (ly *layouter) place(loc, srcPath, sha string) placement {
 	pl := placement{parents: inPack[:len(inPack)-1]}
 	if isFX && ly.lay.NeedsMeta() {
 		// FX is a function, not an instrument: a file known to be FX goes
-		// in the FX tree whole — a flute riser lives with the other risers,
-		// not in Woodwind/Flute/ where someone hunting a flute finds it.
-		// The first taxonomy level the template uses renders as FX and the
-		// deeper ones drop, so the FX tree splits by pack only.
-		taxonomy := []string{view.TokFamily, view.TokInstrument, view.TokCategory}
-		for _, tok := range taxonomy {
-			vals[tok] = ""
-		}
-		for _, tok := range taxonomy {
-			if ly.lay.Uses(tok) {
-				vals[tok] = "FX"
-				break
+		// in the FX tree, not in Woodwind/Flute/ where someone hunting a
+		// flute finds it. Inside, the tree splits like everywhere else —
+		// {instrument} is what the sound is when the label says (Riser,
+		// Foley, Flute; _General when it only said "fx"), {category} is
+		// loop vs one-shot (_Unsorted when "fx" was the only category
+		// signal, since "fx" carries no loop-ness).
+		if ly.lay.Uses(view.TokFamily) {
+			vals[view.TokFamily] = "FX"
+			if meta.Instrument == "" || meta.Instrument == "fx" {
+				vals[view.TokInstrument] = GeneralDir
+				pl.general = ly.lay.Uses(view.TokInstrument)
+			}
+			if meta.Category == "" || meta.Category == "fx" {
+				vals[view.TokCategory] = UnsortedDir
+				pl.uncategorized = ly.lay.Uses(view.TokCategory)
+			}
+		} else {
+			// No {family} level to consolidate under: the first taxonomy
+			// token the template does use renders as FX, deeper ones drop.
+			taxonomy := []string{view.TokInstrument, view.TokCategory}
+			for _, tok := range taxonomy {
+				vals[tok] = ""
+			}
+			for _, tok := range taxonomy {
+				if ly.lay.Uses(tok) {
+					vals[tok] = "FX"
+					break
+				}
 			}
 		}
 		pl.out, pl.fx = ly.lay.Render(vals), true
