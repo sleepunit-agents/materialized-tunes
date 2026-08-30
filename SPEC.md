@@ -1130,9 +1130,8 @@ Resolved questions and their dates are in CHANGELOG.md.
 
 `mtunes ui` serves the browser UI from the binary (go:embed, localhost
 only, no toolchain): Library (pack browser, device lens, identity badges,
-artwork from annotation image URLs), Recipe (per-rule match stats, live
-pre-flight with fit meter/reserve/issues — rule toggles are previews, the
-recipe file is never modified from the UI), Materialize (real runs with
+artwork from annotation image URLs), Recipe (§15.1 — vendors and packs,
+not rules; live pre-flight with fit meter/reserve/issues), Materialize (real runs with
 live progress, resumed/skipped surfaced as first-class outcomes), Cards
 (lock history per view, staleness via the diff engine, restore as a
 copied command). Design imported from the claude.ai/design prototype;
@@ -1141,6 +1140,46 @@ assets later. Deliberate deviations from the prototype: no pull/transcode/
 write phase pills (the pipeline is per-file concurrent, not phased — a
 single honest progress bar instead), restore copies the CLI command
 rather than writing to a target picked in a browser.
+
+### 15.1 The Recipe screen is a picker, not a rule editor (2026-08-31)
+
+A recipe's `[[include]]` blocks are the storage format, not the thing a
+person is trying to think about. Adding packs one at a time produced
+recipes with 200+ rules for what is, in the owner's head, "everything from
+Splice and everything from Samples From Mars" — a list nobody can read,
+and 200 passes over the catalog on every pre-flight.
+
+So the screen shows **one row per vendor** — the same grouping the Library
+uses (annotated vendor, falling back to location) — in three states:
+**all** (everything you own from them is selected), **partial** (`3 of 27
+packs`, with the row expandable to the packs), **none**. Checking a vendor
+writes ONE rule and removes the narrower rules it subsumes; unchecking
+removes them. Rules are derived, never typed.
+
+The mapping from rules back to vendors is the glob's static root
+(`view.GlobRoot`): a rule covers a pack when its root sits at or above the
+pack's directory, and reads as *part of it* when it aims inside one. Three
+consequences the screen has to be honest about:
+
+- **A rule that reaches two vendors can't be deleted on one's say-so.** A
+  location-wide `**` over a location holding several vendors belongs to
+  all of them; unchecking one carves its packs out with `[[exclude]]`
+  instead of cutting the rule out from under its neighbours.
+- **Unchecking one pack of a whole-vendor rule writes an exclude**, not an
+  expansion back into per-pack rules — expanding is exactly the pile this
+  screen exists to remove, and the exclude keeps new packs falling in.
+- **A rule matching no pack in the library is still shown**, in its raw
+  `location : glob` form, and is removable. Nothing the file says
+  disappears from the screen.
+
+`tidy` is the one-gesture cure for a recipe that already grew: every
+vendor fully selected by more than one rule collapses to one. It is
+selection-preserving by construction — only groups already wholly in are
+eligible — so pre-flight does not move.
+
+Because checking and unchecking now edit the recipe directly, the old
+preview-only rule toggles are gone; `/api/preflight` keeps its `disabled`
+parameter for callers that want a dry run.
 
 ## 16. Desktop shell (Wails)
 
@@ -1165,11 +1204,20 @@ files are generated wholesale.
   source, scan with progress, per-location rescan cadence + background
   ticker. Suggestions come from annotation `[install]` paths and a
   builtin table — known locations checked for existence, never a crawl.
-- Recipes (`/api/view`): create, add-rule, remove-rule, set-target,
+- Recipes (`/api/view`): create, add-rule (optionally replacing the
+  location's rules, or just those under one prefix — how "all of this
+  vendor" lands as a single block), remove-rule, remove-rules (several
+  in one write, so a caller never reasons about indexes shifting),
+  add-exclude / remove-exclude (by glob, idempotent), set-target,
   set-layout (a preset or a hand-typed template, validated first). The
-  add gesture lives in the Library — a pack card's `+`, or "add to
-  recipe" in the detail view, which adds *the folder you're looking at*
-  (so "just the acid loops" is two clicks, not a hand-written glob).
+  Recipe screen (§15.1) drives all of these; the Library keeps its own
+  add gesture — a pack card's `+`, or "add to recipe" in the detail
+  view, which adds *the folder you're looking at* (so "just the acid
+  loops" is two clicks, not a hand-written glob).
+- A recipe emptied of every rule is a legitimate state to load, list and
+  pre-flight — you just unchecked the last vendor and are about to check
+  another. `view.LoadRaw` allows it; `view.Load`, which everything that
+  materializes goes through, still refuses it.
 - Profiles (`/api/device`, `/api/storage`, `/api/presets`,
   `/api/volumes`): device presets are prefills for known gear and every
   field is editable, because the next box out is one we've never seen;

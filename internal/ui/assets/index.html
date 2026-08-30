@@ -157,6 +157,18 @@
   .rule [data-act="rule-remove"] { position: relative; z-index: 1; }
   .rule [data-act="rule-remove"]:hover { color: var(--err) !important; }
   .rule.off .match { color: var(--fg-faint); }
+  .rule .ck.part { background: linear-gradient(90deg, var(--amber) 50%, transparent 50%); border-color: var(--amber); color: transparent; }
+  .rule .caret { font: 400 9px var(--mono); color: var(--fg-ghost); width: 10px; text-align: center; }
+  .rule.head { padding: 9px 12px; }
+  .rule.extra { background: #141719; border-color: #1c2023; }
+  .packs { display: flex; flex-direction: column; margin: -3px 0 4px 26px; border-left: 1px solid var(--bord-raise); }
+  .pk { display: flex; align-items: center; gap: 9px; padding: 5px 10px; cursor: pointer; border-radius: 4px; }
+  .pk:hover { background: var(--bg-raise); }
+  .pk .pname { flex: 1; min-width: 0; font: 500 11.5px var(--sans); color: var(--fg-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pk.on .pname { color: var(--fg); }
+  .pk.cut .pname { color: var(--fg-faint); text-decoration: line-through; }
+  .pk .pnum { font: 400 10.5px var(--mono); color: var(--fg-faint); white-space: nowrap; }
+  .tidy { display: flex; align-items: center; gap: 9px; background: rgba(224,168,80,.07); border: 1px solid rgba(224,168,80,.32); border-radius: 6px; padding: 9px 12px; margin-top: 12px; font: 400 11.5px var(--sans); color: var(--fg-dim); }
   .add-rule { display: flex; align-items: center; gap: 8px; border: 1px dashed var(--bord-raise); border-radius: 6px; padding: 10px 12px; color: var(--fg-faint); font: 500 11.5px var(--sans); cursor: default; }
 
   .preflight { padding: 14px 16px; background: var(--bg-panel); }

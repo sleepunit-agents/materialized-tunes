@@ -25,6 +25,7 @@ const S = {
   discover: false, obtainable: true, disc: null, discBusy: false,
   view: null,                      // selected recipe name
   pf: null, pfBusy: false, disabled: new Set(),
+  rOpen: new Set(), rFilter: '', rModel: null,  // Recipe screen: expanded vendor rows, filter, the group model clicks act on
   run: { status: 'idle' }, runLog: ['[idle] no run started this session'],
   selCard: 0, locks: [], diff: null, diffBusy: false,
   locations: [], suggestions: [], scans: {}, addForm: null,
@@ -277,6 +278,79 @@ function groupRule(group) {
     return { location: loc, glob: `${top}/**`, as: as ? `${as}/${top}` : '', label: `all of ${group} (${packs.length} packs)` };
   }
   return null;
+}
+
+// A rule's static root: the path before its first metacharacter, with a
+// trailing slash. "" for a whole-location "**".
+function globRoot(glob) {
+  const out = [];
+  for (const seg of String(glob).split('/')) {
+    if (/[*?[{]/.test(seg)) break;
+    out.push(seg);
+  }
+  return out.length ? out.join('/') + '/' : '';
+}
+
+// How a rule relates to a pack: 'all' when its root sits at or above the
+// pack (a whole-vendor or whole-location rule takes the pack entire),
+// 'part' when it aims INSIDE the pack (someone added one folder of it).
+function ruleCovers(rule, pack) {
+  if (rule.location !== pack.location) return null;
+  const root = globRoot(rule.glob), dir = pack.dir + '/';
+  if (root === '' || dir.startsWith(root)) return 'all';
+  if (root.startsWith(dir)) return 'part';
+  return null;
+}
+
+// The Recipe screen's model: the library grouped the way the Library groups
+// it — by vendor, falling back to location — with each group told what the
+// recipe's rules currently do to it.
+//
+// [[include]] blocks are an implementation detail of this picker. Two
+// hundred per-pack rules and one whole-vendor rule are the same row here;
+// `tidy` turns the first into the second without changing the selection.
+function recipeGroups(pf) {
+  const rules = pf.rules || [], cuts = new Set(pf.excludes || []);
+  const claimed = new Set(), byKey = new Map();
+  for (const p of S.packs) {
+    const key = packGroup(p);
+    let g = byKey.get(key);
+    if (!g) { g = { key, location: p.location, packs: [], rules: new Set(), mixedLoc: false }; byKey.set(key, g); }
+    if (p.location !== g.location) g.mixedLoc = true;
+    const dir = p.dir + '/';
+    const e = { p, own: [], wide: [], cut: cuts.has(p.dir + '/**'), whole: false };
+    rules.forEach((r, i) => {
+      const c = ruleCovers(r, p);
+      if (!c) return;
+      claimed.add(i); g.rules.add(i);
+      if (globRoot(r.glob).length >= dir.length) e.own.push(i); else e.wide.push(i);
+      if (c === 'all') e.whole = true;
+    });
+    e.in = (e.own.length || e.wide.length) > 0 && !e.cut;
+    e.some = e.in && !e.whole;   // only a folder inside the pack is in
+    g.packs.push(e);
+  }
+  // A rule that touches two groups (a location-wide "**" over a location
+  // holding several vendors) can't be deleted on one group's say-so.
+  const groups = [...byKey.values()];
+  const touches = new Map();
+  for (const g of groups) for (const i of g.rules) touches.set(i, (touches.get(i) || 0) + 1);
+  for (const g of groups) {
+    g.exclusive = [...g.rules].every(i => touches.get(i) === 1);
+    g.rules = [...g.rules].sort((a, b) => a - b);
+    g.packs.sort((a, b) => a.p.name.localeCompare(b.p.name, undefined, { numeric: true, sensitivity: 'base' }));
+    g.in = g.packs.filter(e => e.in).length;
+    g.state = !g.in ? 'none' : (g.in === g.packs.length && !g.packs.some(e => e.some)) ? 'all' : 'partial';
+    g.files = g.packs.reduce((a, e) => a + (e.in ? e.p.files : 0), 0);
+    g.bytes = g.packs.reduce((a, e) => a + (e.in ? e.p.bytes : 0), 0);
+    g.groupRule = groupRule(g.key);
+    // Fully in, on more than one rule: the row this screen exists to collapse.
+    g.collapsible = g.state === 'all' && g.exclusive && !!g.groupRule && g.rules.length > 1;
+  }
+  const rank = { all: 0, partial: 1, none: 2 };
+  groups.sort((a, b) => rank[a.state] - rank[b.state] || a.key.localeCompare(b.key, undefined, { sensitivity: 'base' }));
+  const extras = rules.map((r, i) => ({ r, i })).filter(x => !claimed.has(x.i));
+  return { groups, extras, cuts };
 }
 
 function addToPicker() {
@@ -810,6 +884,78 @@ async function viewAction(body) {
   return true;
 }
 
+/* ---------- recipe mutations ----------
+   Every one of these is a whole logical edit ("all of Splice", "not this
+   pack") expressed in as few /api/view calls as possible, and each call is
+   either index-free (add-rule with replace_prefix, add/remove-exclude by
+   glob) or a single batched remove-rules. Nothing here fires two
+   index-bearing calls in a row, so the indexes rendered are the indexes
+   acted on. */
+
+// One [[include]] covering every pack in a group, replacing the narrower
+// rules underneath it. Selection-preserving by construction: the group is
+// already fully in.
+function collapseGroup(g) {
+  const gr = g.groupRule;
+  if (!gr) return Promise.resolve(false);
+  const prefix = globRoot(gr.glob);
+  return viewAction({ action: 'add-rule', name: S.view, location: gr.location, glob: gr.glob, as: gr.as,
+    replace_prefix: prefix, replace_location: prefix === '', note: 'all of ' + g.key });
+}
+
+async function checkGroup(g) {
+  for (const e of g.packs) {
+    if (e.cut && !await viewAction({ action: 'remove-exclude', name: S.view, exclude_glob: e.p.dir + '/**' })) return false;
+  }
+  if (g.groupRule) return collapseGroup(g);
+  // The group's packs sit in different locations, so no single glob reaches
+  // them all — the one case that still writes a rule per pack.
+  for (const e of g.packs) {
+    if (e.in) continue;
+    if (!await addPackRule(e)) return false;
+  }
+  return true;
+}
+
+async function uncheckGroup(g) {
+  if (g.exclusive) return viewAction({ action: 'remove-rules', name: S.view, indices: g.rules });
+  // One of these rules also feeds another vendor — take this group's own
+  // rules out and carve the rest out with excludes rather than cutting a
+  // rule someone else is standing on.
+  const own = [...new Set(g.packs.filter(e => e.in).flatMap(e => e.own))];
+  if (own.length && !await viewAction({ action: 'remove-rules', name: S.view, indices: own })) return false;
+  for (const e of g.packs) {
+    if (e.in && e.wide.length && !await cutPack(e)) return false;
+  }
+  return true;
+}
+
+const addPackRule = (e) => viewAction({ action: 'add-rule', name: S.view, location: e.p.location, glob: e.p.dir + '/**',
+  as: e.p.provider ? e.p.location.toUpperCase() + '/' + e.p.dir : '', note: 'added from the library: ' + e.p.name });
+
+const cutPack = (e) => viewAction({ action: 'add-exclude', name: S.view, exclude_glob: e.p.dir + '/**',
+  note: 'carved out of a wider rule: ' + e.p.name });
+
+async function togglePack(e) {
+  if (e.in) {
+    if (e.own.length && !await viewAction({ action: 'remove-rules', name: S.view, indices: e.own })) return false;
+    return e.wide.length ? cutPack(e) : true;
+  }
+  if (e.cut && !await viewAction({ action: 'remove-exclude', name: S.view, exclude_glob: e.p.dir + '/**' })) return false;
+  return e.wide.length ? true : addPackRule(e);
+}
+
+// Applies an edit and re-reads the recipe: the group model is derived from
+// pre-flight, so there is nothing to keep in sync by hand.
+function recipeEdit(promise, toast) {
+  S.pfBusy = true; render();
+  Promise.resolve(promise).then(ok => {
+    if (!ok) { S.pfBusy = false; render(); return; }
+    if (toast) { S.toast = toast; setTimeout(() => { S.toast = ''; render(); }, 3500); }
+    loadPreflight();
+  });
+}
+
 async function pollScans() {
   S.scans = await api('/api/scan') || {};
   const busy = Object.values(S.scans).some(s => s.status === 'running');
@@ -1088,36 +1234,64 @@ function renderRecipe() {
       <div style="flex:1"></div>
       <span class="restore-btn" data-act="recipe-new">+ new recipe</span>
     </div>
-    <div style="font:400 11px var(--sans);color:var(--fg-faint);margin-bottom:2px">Toggling a rule previews it; ✕ removes it from the recipe file. Add rules from the Library.${layoutHint(pf, vmeta)}</div>
+    <div style="font:400 11px var(--sans);color:var(--fg-faint);margin-bottom:2px">One row per vendor: check it to take everything they made, open ▸ to pick packs. Rules are written for you.${layoutHint(pf, vmeta)}</div>
     ${nrForm}`;
 
   if (!pf || pf.error || !pf.rules) return `<div class="recipe-grid"><div class="recipe-left">${head}
     <div style="font:400 11px var(--mono);color:${pf && pf.error ? 'var(--warn)' : 'var(--fg-faint)'};padding:24px 4px">${pf && pf.error ? 'pre-flight failed: ' + esc(pf.error) : 'running pre-flight…'}</div></div>
     <div class="preflight"></div></div>`;
 
-  // Rules whose files also land elsewhere via a wider rule with a different
-  // prefix (the "added a location-wide ** on top of per-pack rules" case).
-  // The narrower rule is the odd one out: flag it and offer to drop it.
-  const twice = {};
-  for (const o of (pf.plan && pf.plan.overlaps) || []) {
-    const wide = o.glob_b.length < o.glob_a.length ? o : { ...o, rule_a: o.rule_b, rule_b: o.rule_a };
-    // wide.rule_a is now the narrower rule, wide.rule_b the one that covers it
-    twice[wide.rule_a] = { other: wide.rule_b, files: o.files };
-  }
-  const rules = pf.rules.map((r, i) => {
-    const on = r.enabled;
-    const name = r.as || (r.glob.split('/')[0].replace(/[*{}]/g, '') || r.location);
-    const dup = twice[i];
-    const dupHtml = dup ? `<span class="rpath" style="color:var(--warn)">⚠ ${n(dup.files)} of these also land via rule ${dup.other + 1} in a different folder — <span data-act="rule-remove" data-i="${i}" style="text-decoration:underline;cursor:pointer;position:relative;z-index:1">remove this rule</span></span>` : '';
-    return `<div class="rule ${on ? '' : 'off'}">
-      <span data-act="rule" data-i="${i}" style="position:absolute;inset:0;cursor:pointer"></span>
-      <span class="ck ${on ? 'on' : ''}">${on ? '✓' : ''}</span>
-      <div class="body"><span class="rname">${esc(name)} <span style="font:400 10px var(--mono);color:var(--fg-faint)">${esc(r.location)}</span></span>
-      <span class="rpath">${esc(r.glob)}</span>${dupHtml}</div>
-      <span class="match">${n(r.files)} files · ${fmtB(r.converted_bytes)}</span>
-      <span data-act="rule-remove" data-i="${i}" title="remove this rule from the recipe" style="font:500 12px var(--mono);color:var(--fg-ghost);cursor:pointer;padding:0 2px">✕</span>
+  // The recipe as vendors, not as [[include]] blocks. S.rModel is what the
+  // click handlers act on — rendered and clicked state are the same object.
+  const M = S.rModel = recipeGroups(pf);
+  const filt = S.rFilter.trim().toLowerCase();
+  const hit = (g) => !filt || g.key.toLowerCase().includes(filt) || g.packs.some(e => e.p.name.toLowerCase().includes(filt));
+  const shown = M.groups.filter(hit);
+  const nRules = pf.rules.length;
+  const canTidy = M.groups.filter(g => g.collapsible);
+  const after = nRules - canTidy.reduce((a, g) => a + g.rules.length - 1, 0);
+  const tidyBar = !canTidy.length ? '' : `<div class="tidy">
+      <span style="flex:1">${n(nRules)} rules where <b style="color:var(--fg)">${n(after)}</b> would do — ${canTidy.map(g => esc(g.key)).join(', ')} ${canTidy.length === 1 ? 'is' : 'are'} fully in. Collapsing changes nothing about what gets picked, and packs you buy later fall in on their own.</span>
+      <span class="restore-btn" data-act="tidy" style="white-space:nowrap">tidy → ${n(after)} ${after === 1 ? 'rule' : 'rules'}</span>
     </div>`;
-  }).join('');
+
+  const packRow = (g, e, j) => `<div class="pk ${e.in ? 'on' : ''} ${e.cut ? 'cut' : ''}" data-act="pk" data-g="${esc(g.key)}" data-j="${j}" title="${esc(e.p.dir)}">
+      <span class="ck ${e.in ? (e.some ? 'part' : 'on') : ''}">${e.in && !e.some ? '✓' : ''}</span>
+      <span class="pname">${esc(e.p.name)}</span>
+      ${e.some ? '<span class="pnum" style="color:var(--warn)">part of it</span>' : ''}
+      ${e.cut ? '<span class="pnum" style="color:var(--warn)">excluded</span>' : ''}
+      <span class="pnum">${n(e.p.files)} files</span>
+    </div>`;
+
+  const groupRow = (g) => {
+    const open = S.rOpen.has(g.key);
+    const ckCls = g.state === 'all' ? 'ck on' : g.state === 'partial' ? 'ck part' : 'ck';
+    const nr = g.rules.length > 1 ? ` · ${n(g.rules.length)} rules` : '';
+    const sub = g.state === 'none' ? `${n(g.packs.length)} packs · not in this recipe`
+      : g.state === 'all' ? `all ${n(g.packs.length)} packs · ${esc(g.location)}${nr}`
+      : `${n(g.in)} of ${n(g.packs.length)} packs · ${esc(g.location)}${nr}`;
+    const packs = !open ? '' : `<div class="packs">${g.packs.map((e, j) => packRow(g, e, j)).join('')}</div>`;
+    return `<div class="rule head ${g.state === 'none' ? 'off' : ''}">
+      <span data-act="grp" data-g="${esc(g.key)}" style="position:absolute;inset:0;cursor:pointer" title="${g.state === 'all' ? 'take this vendor out of the recipe' : 'put everything this vendor made in'}"></span>
+      <span class="${ckCls}">${g.state === 'all' ? '✓' : ''}</span>
+      <div class="body"><span class="rname">${esc(g.key)}</span><span class="rpath">${sub}</span></div>
+      ${g.state === 'none' ? '' : `<span class="match">${n(g.files)} files · ${fmtB(g.bytes)}</span>`}
+      ${g.collapsible ? `<span class="restore-btn" data-act="collapse" data-g="${esc(g.key)}" style="position:relative;z-index:1;margin:0" title="replace these ${n(g.rules.length)} rules with one">collapse to 1</span>` : ''}
+      <span class="caret" data-act="grp-open" data-g="${esc(g.key)}" style="position:relative;z-index:1;cursor:pointer;padding:0 3px" title="${open ? 'hide packs' : 'show packs'}">${open ? '▾' : '▸'}</span>
+    </div>${packs}`;
+  };
+
+  // Anything the library can't explain stays visible and removable rather
+  // than disappearing into a vendor row that doesn't cover it.
+  const extras = !M.extras.length ? '' : `
+    <div style="font:400 10.5px var(--mono);color:var(--fg-faint);margin:14px 0 -4px">rules that don't map to a pack in your library</div>
+    ${M.extras.map(x => `<div class="rule extra">
+      <div class="body"><span class="rname">${esc(x.r.as || x.r.location)}</span><span class="rpath">${esc(x.r.location)} : ${esc(x.r.glob)}</span></div>
+      <span class="match">${n(x.r.files)} files · ${fmtB(x.r.converted_bytes)}</span>
+      <span data-act="rule-remove" data-i="${x.i}" title="remove this rule from the recipe" style="font:500 12px var(--mono);color:var(--fg-ghost);cursor:pointer;padding:0 2px">✕</span>
+    </div>`).join('')}`;
+
+  const rules = shown.map(groupRow).join('') || `<div style="font:400 11px var(--mono);color:var(--fg-faint);padding:18px 4px">${S.packs.length ? 'nothing matches that filter' : 'no packs indexed yet — add a source in Setup'}</div>`;
 
   const p = pf.plan;
   let right = '';
@@ -1159,14 +1333,17 @@ function renderRecipe() {
       <div class="mat-btn ${!fits || errors.length ? 'blocked' : ''}" data-act="go-run">MATERIALIZE — ${n(S.pf.files ?? 0)} FILES</div>
       ${pf.migrate ? `<div class="mat-btn ${errors.length ? 'blocked' : ''}" style="margin-top:8px" data-act="go-migrate">MIGRATE — MOVE ${n(pf.migrate.moves + pf.migrate.companions)} FILES INTO THE NEW LAYOUT</div>
       <div style="font:400 10px var(--mono);color:var(--fg-faint);margin-top:6px;text-align:center">renames the last materialize in place — nothing re-rendered, no duplicates, emptied folders removed</div>` : ''}
-      <div style="font:400 10px var(--mono);color:var(--fg-faint);margin-top:8px;text-align:center">writes to the recipe's target with the full rule set — toggles here are preview only</div>`;
+      <div style="font:400 10px var(--mono);color:var(--fg-faint);margin-top:8px;text-align:center">writes to the recipe's target — exactly what the checked vendors select</div>`;
   } else {
-    right = `<div style="font:400 11px var(--mono);color:var(--fg-faint);padding:24px 4px">no rules enabled</div>`;
+    right = `<div style="font:400 11px var(--mono);color:var(--fg-faint);padding:24px 4px">nothing selected yet — check a vendor on the left</div>`;
   }
 
+  const bar = `<div style="display:flex;align-items:center;gap:10px;margin-top:10px">
+      <div class="search" style="flex:none;width:230px">⌕ <input id="rfilter" placeholder="Filter vendors and packs…" value="${esc(S.rFilter)}"></div>
+      <span style="font:400 10.5px var(--mono);color:var(--fg-faint)">${n(M.groups.filter(g => g.state !== 'none').length)} of ${n(M.groups.length)} vendors in · ${n(nRules)} ${nRules === 1 ? 'rule' : 'rules'} written${M.cuts.size ? ` · ${n(M.cuts.size)} excluded` : ''}</span>
+    </div>`;
   return `<div class="recipe-grid">
-    <div class="recipe-left">${head}<div class="rules">${rules}
-      <div class="add-rule">+ add rules from the Library — open a pack and use "add to recipe"</div></div></div>
+    <div class="recipe-left">${head}${tidyBar}${bar}<div class="rules">${rules}${extras}</div></div>
     <div class="preflight">${right}</div>
   </div>`;
 }
@@ -1432,10 +1609,29 @@ function wire() {
       }
       if (act === 'play') { playFile(el.dataset.p, el.dataset.n, +el.dataset.d); }
       if (act === 'toggle-play') { if (S.player) playFile(S.player.path, S.player.name, S.player.dur); }
-      if (act === 'rule') {
-        const i = +el.dataset.i;
-        S.disabled.has(i) ? S.disabled.delete(i) : S.disabled.add(i);
-        loadPreflight();
+      if (act === 'grp') {
+        const g = (S.rModel?.groups || []).find(x => x.key === el.dataset.g);
+        if (g) recipeEdit(g.state === 'all' ? uncheckGroup(g) : checkGroup(g),
+          g.state === 'all' ? `${g.key} removed from ${S.view}` : `all of ${g.key} → ${S.view}`);
+      }
+      if (act === 'grp-open') {
+        const k = el.dataset.g;
+        S.rOpen.has(k) ? S.rOpen.delete(k) : S.rOpen.add(k);
+        render();
+      }
+      if (act === 'pk') {
+        const g = (S.rModel?.groups || []).find(x => x.key === el.dataset.g);
+        const e = g && g.packs[+el.dataset.j];
+        if (e) recipeEdit(togglePack(e));
+      }
+      if (act === 'collapse') {
+        const g = (S.rModel?.groups || []).find(x => x.key === el.dataset.g);
+        if (g) recipeEdit(collapseGroup(g), `${g.key} is now one rule`);
+      }
+      if (act === 'tidy') {
+        const gs = (S.rModel?.groups || []).filter(x => x.collapsible);
+        recipeEdit((async () => { for (const g of gs) if (!await collapseGroup(g)) return false; return true; })(),
+          `collapsed ${gs.length} ${gs.length === 1 ? 'vendor' : 'vendors'} — same selection, fewer rules`);
       }
       if (act === 'go-run') { if (!el.classList.contains('blocked')) { S.screen = 'run'; render(); } }
       if (act === 'go-migrate') { if (!el.classList.contains('blocked')) { S.screen = 'run'; startMigrate(); } }
@@ -1489,6 +1685,15 @@ function wire() {
       S.search = search.value;
       if (sampleMode()) { clearTimeout(searchTimer); searchTimer = setTimeout(loadSamples, 220); }
       renderPreservingSearch();
+    });
+  }
+  const rfilter = document.getElementById('rfilter');
+  if (rfilter) {
+    rfilter.addEventListener('input', () => {
+      S.rFilter = rfilter.value;
+      render();
+      const el = document.getElementById('rfilter');
+      if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
     });
   }
   // cross-pack filters: selects apply immediately, text fields debounce

@@ -41,8 +41,19 @@ func (s *Server) viewWrite(w http.ResponseWriter, r *http.Request) {
 		// which would otherwise stack on top of per-pack rules and land
 		// the same files twice (see plan.Overlaps).
 		ReplaceLocation bool `json:"replace_location"`
+		// ReplacePrefix narrows ReplaceLocation to one subtree: drop the
+		// Location's includes whose glob root sits under this prefix
+		// ("Samples From Mars/") and leave the rest alone. That is the
+		// "all of this VENDOR" button in a location that holds several.
+		// Empty prefix with ReplaceLocation set means the whole location.
+		ReplacePrefix string `json:"replace_prefix"`
 		// remove-rule
 		Index int `json:"index"`
+		// remove-rules: several blocks in one write, so the caller never
+		// has to reason about indexes shifting under it.
+		Indices []int `json:"indices"`
+		// add-exclude / remove-exclude
+		Glob2 string `json:"exclude_glob"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonErr(w, 400, err)
@@ -97,8 +108,8 @@ func (s *Server) viewWrite(w http.ResponseWriter, r *http.Request) {
 		}
 		src := string(data)
 		replaced := 0
-		if req.ReplaceLocation {
-			if src, replaced, err = removeIncludesForLocation(src, req.Location); err != nil {
+		if req.ReplaceLocation || req.ReplacePrefix != "" {
+			if src, replaced, err = removeIncludesUnder(src, req.Location, req.ReplacePrefix); err != nil {
 				jsonErr(w, 400, err)
 				return
 			}
@@ -130,6 +141,82 @@ func (s *Server) viewWrite(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		out, err := removeIncludeBlock(string(data), req.Index)
+		if err != nil {
+			jsonErr(w, 400, err)
+			return
+		}
+		if err := os.WriteFile(path, []byte(out), 0o644); err != nil {
+			jsonErr(w, 500, err)
+			return
+		}
+
+	case "remove-rules":
+		data, err := os.ReadFile(path)
+		if err != nil {
+			jsonErr(w, 404, err)
+			return
+		}
+		out, removed, err := removeIncludeBlocks(string(data), req.Indices)
+		if err != nil {
+			jsonErr(w, 400, err)
+			return
+		}
+		if err := os.WriteFile(path, []byte(out), 0o644); err != nil {
+			jsonErr(w, 500, err)
+			return
+		}
+		jsonOut(w, map[string]any{"status": "ok", "view": req.Name, "removed": removed})
+		return
+
+	case "add-exclude":
+		// Carving one pack out of a whole-vendor rule. The alternative —
+		// expanding the rule back into one-per-pack — is exactly the 200-rule
+		// pile this screen exists to avoid, so the rule stays whole and the
+		// exception is written as an exception.
+		if req.Glob2 == "" {
+			jsonErr(w, 400, fmt.Errorf("exclude_glob is required"))
+			return
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			jsonErr(w, 404, err)
+			return
+		}
+		src := string(data)
+		if i := findExclude(src, req.Glob2); i >= 0 { // already carved out
+			jsonOut(w, map[string]any{"status": "ok", "view": req.Name})
+			return
+		}
+		var sb strings.Builder
+		sb.WriteString(src)
+		if !strings.HasSuffix(src, "\n") {
+			sb.WriteString("\n")
+		}
+		sb.WriteString("\n")
+		if req.Note != "" {
+			fmt.Fprintf(&sb, "# %s\n", req.Note)
+		}
+		fmt.Fprintf(&sb, "[[exclude]]\nglob = %q\n", req.Glob2)
+		if err := os.WriteFile(path, []byte(sb.String()), 0o644); err != nil {
+			jsonErr(w, 500, err)
+			return
+		}
+
+	case "remove-exclude":
+		data, err := os.ReadFile(path)
+		if err != nil {
+			jsonErr(w, 404, err)
+			return
+		}
+		src := string(data)
+		i := req.Index
+		if req.Glob2 != "" {
+			if i = findExclude(src, req.Glob2); i < 0 {
+				jsonOut(w, map[string]any{"status": "ok", "view": req.Name})
+				return
+			}
+		}
+		out, err := removeBlock(src, "[[exclude]]", i)
 		if err != nil {
 			jsonErr(w, 400, err)
 			return
@@ -171,9 +258,11 @@ func (s *Server) viewWrite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Round-trip through the loader so a bad edit surfaces immediately.
-	// Skipped for "create": a recipe with no rules yet is legitimately
-	// incomplete, and view.Load rightly refuses it.
-	if _, err := view.Load(s.ws.Root, req.Name); err != nil && req.Action != "create" {
+	// LoadRaw, not Load: a recipe with no rules yet — freshly created, or
+	// one whose last vendor was just unchecked — is a legitimate state the
+	// UI shows you so you can check something back on. Only materializing
+	// insists on rules.
+	if _, err := view.LoadRaw(s.ws.Root, req.Name); err != nil && req.Action != "create" {
 		jsonErr(w, 500, fmt.Errorf("wrote %s but it no longer parses: %w", req.Name+".toml", err))
 		return
 	}
@@ -229,11 +318,16 @@ func (s *Server) renameView(oldName, newName string) error {
 	return nil
 }
 
-// removeIncludesForLocation drops every [[include]] whose location is loc
-// (comments attached to each go with it) and reports how many went. The
-// TOML is parsed once to find them and edited textually so hand-written
-// lines elsewhere survive.
-func removeIncludesForLocation(src, loc string) (string, int, error) {
+// removeIncludesUnder drops every [[include]] for loc whose glob root sits
+// under prefix (prefix "" = the whole location), comments attached to each
+// going with it, and reports how many went. The TOML is parsed once to find
+// them and edited textually so hand-written lines elsewhere survive.
+//
+// The prefix test is on the glob's STATIC root, so "all of Samples From
+// Mars" replaces the per-pack rules beneath it without touching a sibling
+// vendor's rules in the same location — and never touches a location-wide
+// "**" rule, which covers more than the vendor being replaced.
+func removeIncludesUnder(src, loc, prefix string) (string, int, error) {
 	var v struct {
 		Include []view.Include `toml:"include"`
 	}
@@ -246,6 +340,9 @@ func removeIncludesForLocation(src, loc string) (string, int, error) {
 		if v.Include[i].Location != loc {
 			continue
 		}
+		if !strings.HasPrefix(view.GlobRoot(v.Include[i].Glob), prefix) {
+			continue
+		}
 		out, err := removeIncludeBlock(src, i)
 		if err != nil {
 			return "", 0, err
@@ -256,18 +353,62 @@ func removeIncludesForLocation(src, loc string) (string, int, error) {
 	return src, removed, nil
 }
 
+// removeIncludeBlocks drops several [[include]] blocks in one pass. Indexes
+// are into the recipe as the caller read it: they are sorted and applied
+// high-to-low here so the caller never has to think about them shifting.
+func removeIncludeBlocks(src string, idx []int) (string, int, error) {
+	sorted := append([]int(nil), idx...)
+	sort.Sort(sort.Reverse(sort.IntSlice(sorted)))
+	removed, prev := 0, -1
+	for _, i := range sorted {
+		if i == prev {
+			continue
+		}
+		prev = i
+		out, err := removeIncludeBlock(src, i)
+		if err != nil {
+			return "", 0, err
+		}
+		src = out
+		removed++
+	}
+	return src, removed, nil
+}
+
+// findExclude returns the index of the [[exclude]] carrying glob, or -1.
+func findExclude(src, glob string) int {
+	var v struct {
+		Exclude []view.Exclude `toml:"exclude"`
+	}
+	if err := toml.Unmarshal([]byte(src), &v); err != nil {
+		return -1
+	}
+	for i, e := range v.Exclude {
+		if e.Glob == glob {
+			return i
+		}
+	}
+	return -1
+}
+
 // removeIncludeBlock drops the n-th [[include]] block (0-based) along with
 // any comment lines directly attached above it.
 func removeIncludeBlock(src string, n int) (string, error) {
+	return removeBlock(src, "[[include]]", n)
+}
+
+// removeBlock drops the n-th block with the given header (0-based) along
+// with any comment lines directly attached above it.
+func removeBlock(src, header string, n int) (string, error) {
 	lines := strings.Split(src, "\n")
 	starts := []int{}
 	for i, l := range lines {
-		if strings.TrimSpace(l) == "[[include]]" {
+		if strings.TrimSpace(l) == header {
 			starts = append(starts, i)
 		}
 	}
 	if n < 0 || n >= len(starts) {
-		return "", fmt.Errorf("rule %d does not exist (%d rules)", n, len(starts))
+		return "", fmt.Errorf("%s %d does not exist (%d present)", strings.Trim(header, "[]"), n, len(starts))
 	}
 	start := starts[n]
 	// absorb attached comments above

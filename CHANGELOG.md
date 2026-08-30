@@ -7,6 +7,39 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.6 — 2026-08-31 (the Recipe screen shows vendors, not rules)
+
+Field report: "I'm looking at this big hunk of rules and thinking... I
+don't think we need these. right now I've got like, literally 200+ rules
+added in here. for *everything* it should basically be one rule per
+vendor." Correct, and the fix is not a shorter list — it is showing the
+thing the person is actually choosing.
+
+The Recipe screen is now a picker over the library: **one row per
+vendor**, checked / partial / unchecked, expandable to its packs.
+`[[include]]` becomes an implementation detail — checking a vendor writes
+one rule and removes the narrower ones underneath it, unchecking removes
+them, and unchecking a single pack of a whole-vendor rule writes an
+`[[exclude]]` rather than blowing the rule back into forty. A **tidy**
+button collapses every already-fully-selected vendor to one rule at once,
+selection-preserving by construction, which is the cure for the 200 that
+already exist. Side effect that matters on a big library: pre-flight
+plans each rule separately, so 217 rules was 217 passes over the catalog
+and six is six.
+
+Three honesty constraints the model carries (SPEC §15.1): a rule that
+reaches two vendors is never deleted on one vendor's say-so (its packs
+get excludes instead); a rule aimed *inside* a pack reads as "part of
+it", not as the whole pack; and a rule matching nothing in the library
+still shows, raw and removable, so nothing in the file can hide from the
+screen. Rule-to-vendor attribution is the glob's static root, not name
+matching.
+
+Preview-only rule toggles are gone with the rule list — the checkbox now
+means "in the recipe", which is what everyone read it as anyway. A recipe
+emptied of all rules is allowed to exist while you pick the next one
+(`view.LoadRaw`); materializing one still refuses.
+
 ## v0.9.5 — 2026-08-30 (the app updates itself)
 
 The push-test-report loop had one manual step left: every fix meant

@@ -223,7 +223,7 @@ func (s *Server) views(w http.ResponseWriter, _ *http.Request) {
 	files, _ := filepath.Glob(filepath.Join(s.ws.Root, "views", "*.toml"))
 	for _, f := range files {
 		name := strings.TrimSuffix(filepath.Base(f), ".toml")
-		v, err := view.Load(s.ws.Root, name)
+		v, err := view.LoadRaw(s.ws.Root, name)
 		if err != nil {
 			continue
 		}
@@ -243,7 +243,9 @@ func (s *Server) preflight(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, 400, err)
 		return
 	}
-	v, err := view.Load(s.ws.Root, req.View)
+	// LoadRaw: an empty recipe pre-flights to "nothing selected", not to a
+	// 404 — the Recipe screen is the picker you use to put something in it.
+	v, err := view.LoadRaw(s.ws.Root, req.View)
 	if err != nil {
 		jsonErr(w, 404, err)
 		return
@@ -296,7 +298,12 @@ func (s *Server) preflight(w http.ResponseWriter, r *http.Request) {
 		lock.WarnMoved(s.ws.Root, p)
 	}
 
-	out := map[string]any{"view": req.View, "device": v.Device, "storage": v.Storage, "layout": v.Layout, "layouts": view.LayoutPresets, "rules": rules}
+	excludes := make([]string, 0, len(v.Exclude))
+	for _, e := range v.Exclude {
+		excludes = append(excludes, e.Glob)
+	}
+	out := map[string]any{"view": req.View, "device": v.Device, "storage": v.Storage, "layout": v.Layout,
+		"layouts": view.LayoutPresets, "rules": rules, "excludes": excludes}
 	if p != nil {
 		// migrate hint: when the newest lock's files would just move, the
 		// UI offers the rename path instead of duplicate-and-delete

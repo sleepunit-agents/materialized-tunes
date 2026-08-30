@@ -53,7 +53,24 @@ type Exclude struct {
 	Glob string `toml:"glob" json:"glob"`
 }
 
+// Load reads a recipe and refuses one with no rules — everything that
+// materializes goes through here.
 func Load(workspaceRoot, name string) (*View, error) {
+	v, err := LoadRaw(workspaceRoot, name)
+	if err != nil {
+		return nil, err
+	}
+	if len(v.Include) == 0 {
+		return nil, fmt.Errorf("view %s: at least one [[include]] is required", name)
+	}
+	return v, nil
+}
+
+// LoadRaw is Load without the "at least one rule" requirement. The UI edits
+// a recipe by checking and unchecking vendors, so a recipe momentarily
+// emptied of rules is a legitimate state to load, list and pre-flight — it
+// just cannot be materialized.
+func LoadRaw(workspaceRoot, name string) (*View, error) {
 	path := filepath.Join(workspaceRoot, "views", name+".toml")
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -71,9 +88,6 @@ func Load(workspaceRoot, name string) (*View, error) {
 	}
 	if v.Device == "" || v.Storage == "" {
 		return nil, fmt.Errorf("view %s: device and storage are required", name)
-	}
-	if len(v.Include) == 0 {
-		return nil, fmt.Errorf("view %s: at least one [[include]] is required", name)
 	}
 	switch v.FormatTree {
 	case "", "strip", "keep":
