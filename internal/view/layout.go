@@ -26,13 +26,18 @@ import (
 // deep as the family, the planner renders {instrument} as _General
 // rather than doubling the name ("Drums/Drums"). A file with no
 // instrument at all cannot be placed by a template that asks for one; the
-// planner sends it to Unsorted (see plan) instead of guessing. A file
-// known to be FX (category or family "fx") never lands in an instrument
-// tree: {family} renders as FX and the deeper levels split inside it —
-// {instrument} by what the sound is (Riser, Foley, Flute; _General when
-// unlabeled), {category} by loop vs one-shot (_Unsorted when the only
-// category signal was "fx"). A template without {family} consolidates
-// flat: its first taxonomy level renders as FX and the deeper ones drop.
+// planner sends it to Unsorted (see plan) instead of guessing. Families
+// the shared lexicon marks flat (instruments.toml [[family]] flat = true —
+// bass, synth, …) don't split by instrument: their {instrument} level
+// drops, or renders the family name when the template has no {family}.
+// A file known to be FX (category or family "fx") never lands in an
+// instrument tree: {family} renders as FX and the levels inside follow
+// the same flat-family rule — when fx is flat the tree is just loop vs
+// one-shot; otherwise {instrument} is what the sound is (Riser, Foley,
+// Flute; _General when unlabeled). {category} is loop vs one-shot either
+// way (_Unsorted when the only category signal was "fx"). A template
+// without {family} consolidates flat: its first taxonomy level renders
+// as FX and the deeper ones drop.
 type Layout struct {
 	Template string
 	Segments []Segment

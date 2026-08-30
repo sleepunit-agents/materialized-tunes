@@ -37,6 +37,14 @@ aliases = ["bass"]
 id = "vocal"
 family = "vocal"
 aliases = ["vocal", "vox", "voices"]
+
+[[family]]
+id = "bass"
+flat = true
+
+[[family]]
+id = "drums"
+flat = false
 `
 
 func testLex(t *testing.T) *Lexicon {
@@ -79,6 +87,20 @@ func TestInstrumentResolve(t *testing.T) {
 				t.Errorf("Resolve(%q, %v) = %q, want %q", c.stem, c.dirs, got, c.want)
 			}
 		})
+	}
+}
+
+func TestFlatFamily(t *testing.T) {
+	lx := testLex(t)
+	if !lx.FlatFamily("bass") {
+		t.Error("bass should be flat")
+	}
+	if lx.FlatFamily("drums") || lx.FlatFamily("vocal") || lx.FlatFamily("") {
+		t.Error("drums (flat=false), vocal (no block) and \"\" must not be flat")
+	}
+	var nilLex *Lexicon
+	if nilLex.FlatFamily("bass") {
+		t.Error("nil lexicon must report nothing flat")
 	}
 }
 

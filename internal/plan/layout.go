@@ -3,6 +3,7 @@ package plan
 import (
 	"fmt"
 	"path"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -37,6 +38,7 @@ type layouter struct {
 	bySlug   map[string]*annotations.Vendor
 	byTop    map[string]*annotations.Vendor // vendor-dirs: top dir → vendor (nil = unknown)
 	meta     map[string]map[string]harvest.Meta
+	lex      *annotations.Lexicon // flat-family knowledge; nil when the template reads no metadata
 }
 
 func newLayouter(ws *workspace.Workspace, v *view.View, lay *view.Layout, vendors []annotations.Vendor) (*layouter, error) {
@@ -47,6 +49,9 @@ func newLayouter(ws *workspace.Workspace, v *view.View, lay *view.Layout, vendor
 		vendors: vendors, bySlug: annotations.BySlug(vendors),
 		byTop: map[string]*annotations.Vendor{},
 		meta:  map[string]map[string]harvest.Meta{},
+	}
+	if lay.NeedsMeta() {
+		ly.lex = annotations.LoadInstruments(filepath.Join(ws.Root, "annotations"))
 	}
 	for _, inc := range v.Include {
 		if _, done := ly.locs[inc.Location]; done {
@@ -119,14 +124,19 @@ func (ly *layouter) place(loc, srcPath, sha string) placement {
 	if isFX && ly.lay.NeedsMeta() {
 		// FX is a function, not an instrument: a file known to be FX goes
 		// in the FX tree, not in Woodwind/Flute/ where someone hunting a
-		// flute finds it. Inside, the tree splits like everywhere else —
-		// {instrument} is what the sound is when the label says (Riser,
-		// Foley, Flute; _General when it only said "fx"), {category} is
-		// loop vs one-shot (_Unsorted when "fx" was the only category
-		// signal, since "fx" carries no loop-ness).
+		// flute finds it. Inside, the same flat-family rule as everywhere
+		// else decides the split: fx marked flat in instruments.toml means
+		// just loop vs one-shot; otherwise {instrument} is what the sound
+		// is when the label says (Riser, Foley, Flute; _General when it
+		// only said "fx"). {category} is loop vs one-shot either way
+		// (_Unsorted when "fx" was the only category signal, since "fx"
+		// carries no loop-ness).
 		if ly.lay.Uses(view.TokFamily) {
 			vals[view.TokFamily] = "FX"
-			if meta.Instrument == "" || meta.Instrument == "fx" {
+			switch {
+			case ly.lex.FlatFamily("fx"):
+				vals[view.TokInstrument] = ""
+			case meta.Instrument == "" || meta.Instrument == "fx":
 				vals[view.TokInstrument] = GeneralDir
 				pl.general = ly.lay.Uses(view.TokInstrument)
 			}
@@ -155,7 +165,17 @@ func (ly *layouter) place(loc, srcPath, sha string) placement {
 		pl.out, pl.unsorted = ly.fallback.Render(vals), true
 		return pl
 	}
-	if catchAll && ly.lay.Uses(view.TokFamily) && ly.lay.Uses(view.TokInstrument) {
+	if ly.lex.FlatFamily(meta.Family) {
+		// A flat family doesn't split by instrument: bass is bass, and the
+		// sub/reese/wub taxonomy in vendor naming isn't reliable enough to
+		// fight samples over. The {instrument} level drops; a template
+		// with only {instrument} renders the family name there instead.
+		if ly.lay.Uses(view.TokFamily) {
+			vals[view.TokInstrument] = ""
+		} else {
+			vals[view.TokInstrument] = displayName(meta.Family)
+		}
+	} else if catchAll && ly.lay.Uses(view.TokFamily) && ly.lay.Uses(view.TokInstrument) {
 		// The label only goes as deep as the family; rendering it at both
 		// levels doubles the folder name ("Drums/Drums").
 		vals[view.TokInstrument] = GeneralDir

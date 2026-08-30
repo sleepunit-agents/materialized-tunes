@@ -760,11 +760,13 @@ func TestLayoutTemplate(t *testing.T) {
 		wavEntry("Grit/one_shots/rim_alt/Rim 01.wav", 1, 48000, 16, 4800),     // same name, other folder → disambiguated
 		wavEntry("Tech Funk/hits/TFH_Rim_A.wav", 1, 48000, 16, 4800),          // no category signal → _Unsorted category folder
 		wavEntry("Tech Funk/loops/TFH_Loop_124_Gmin.wav", 1, 48000, 16, 4800), // no instrument → _Unsorted
-		wavEntry("Grit/fx/Flute Riser.wav", 1, 48000, 16, 4800),               // category fx → FX/Flute/, never Woodwind/; "fx" has no loop-ness → _Unsorted
-		wavEntry("Grit/foley/Rain Loop.wav", 1, 48000, 16, 4800),              // family fx → FX/Foley/Loops/
-		wavEntry("Grit/fx/Weird One.wav", 1, 48000, 16, 4800),                 // fx catch-all all the way down → FX/_General/_Unsorted/
+		wavEntry("Grit/fx/Flute Riser.wav", 1, 48000, 16, 4800),               // category fx → FX/, never Woodwind/; fx is flat + "fx" has no loop-ness → FX/_Unsorted/
+		wavEntry("Grit/foley/Rain Loop.wav", 1, 48000, 16, 4800),              // family fx, flat → FX/Loops/
+		wavEntry("Grit/fx/Weird One.wav", 1, 48000, 16, 4800),                 // fx catch-all all the way down → FX/_Unsorted/
+		wavEntry("Grit/bass/Champion Sub.wav", 1, 48000, 16, 4800),            // bass is flat: no Bass/Sub/ level → Bass/One-Shots/
 	}, map[string]string{
 		"annotations/vendors/splice/vendor.toml": "[vendor]\nname=\"Splice\"\nslug=\"splice\"\n",
+		"annotations/instruments.toml":           "[[family]]\nid=\"bass\"\nflat=true\n[[family]]\nid=\"fx\"\nflat=true\n",
 		"annotations-cache/meta/src.jsonl": strings.Join([]string{
 			`{"sha":"aaGrit/one_shots/kicks/GTH_Kick_03.wav","category":"one-shots","instrument":"kick","family":"drums"}`,
 			`{"sha":"aaGrit/loops/drums/GTH_Drum_Loop_124.wav","category":"loops","instrument":"drums","family":"drums","bpm":124}`,
@@ -775,6 +777,7 @@ func TestLayoutTemplate(t *testing.T) {
 			`{"sha":"aaGrit/fx/Flute Riser.wav","category":"fx","instrument":"flute","family":"woodwind"}`,
 			`{"sha":"aaGrit/foley/Rain Loop.wav","category":"loops","instrument":"foley","family":"fx"}`,
 			`{"sha":"aaGrit/fx/Weird One.wav","category":"fx","instrument":"fx","family":"fx"}`,
+			`{"sha":"aaGrit/bass/Champion Sub.wav","category":"one-shots","instrument":"sub","family":"bass"}`,
 		}, "\n") + "\n",
 	})
 	ws.Config.Locations[0].Vendor = "splice"
@@ -807,9 +810,10 @@ as="SPLICE"
 		"Grit/one_shots/rim_alt/Rim 01.wav":      "Drums/Rim/One-Shots/Grit/rim_alt - Rim 01.wav",
 		"Tech Funk/hits/TFH_Rim_A.wav":           "Drums/Rim/_Unsorted/Tech Funk/TFH_Rim_A.wav",
 		"Tech Funk/loops/TFH_Loop_124_Gmin.wav":  "_Unsorted/Splice/Tech Funk/loops/TFH_Loop_124_Gmin.wav",
-		"Grit/fx/Flute Riser.wav":                "FX/Flute/_Unsorted/Grit/Flute Riser.wav",
-		"Grit/foley/Rain Loop.wav":               "FX/Foley/Loops/Grit/Rain Loop.wav",
-		"Grit/fx/Weird One.wav":                  "FX/_General/_Unsorted/Grit/Weird One.wav",
+		"Grit/fx/Flute Riser.wav":                "FX/_Unsorted/Grit/Flute Riser.wav",
+		"Grit/foley/Rain Loop.wav":               "FX/Loops/Grit/Rain Loop.wav",
+		"Grit/fx/Weird One.wav":                  "FX/_Unsorted/Grit/Weird One.wav",
+		"Grit/bass/Champion Sub.wav":             "Bass/One-Shots/Grit/Champion Sub.wav",
 	}
 	for src, out := range want {
 		if got[src] != out {
@@ -822,8 +826,8 @@ as="SPLICE"
 	if p.Uncategorized != 3 { // TFH_Rim_A + the two FX files whose only category signal was "fx"
 		t.Errorf("uncategorized = %d, want 3", p.Uncategorized)
 	}
-	if p.General != 2 { // Drum_Loop (family-level label) + Weird One (fx catch-all)
-		t.Errorf("general = %d, want 2", p.General)
+	if p.General != 1 { // Drum_Loop (family-level label); flat trees have no _General level
+		t.Errorf("general = %d, want 1", p.General)
 	}
 	if p.FX != 3 {
 		t.Errorf("fx = %d, want 3", p.FX)
@@ -856,7 +860,7 @@ as="Shots"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(p.Entries) != 7 || len(p.Overlaps) != 0 || len(p.Errors) != 0 {
+	if len(p.Entries) != 8 || len(p.Overlaps) != 0 || len(p.Errors) != 0 {
 		t.Errorf("two rules: entries=%d overlaps=%d errors=%v", len(p.Entries), len(p.Overlaps), p.Errors)
 	}
 	got = map[string]string{}
@@ -865,6 +869,11 @@ as="Shots"
 	}
 	if got["Grit/one_shots/kicks/GTH_Kick_03.wav"] != "Kick/Splice/Grit/one_shots/kicks/GTH_Kick_03.wav" {
 		t.Errorf("instrument/vendor/pack/path: %q", got["Grit/one_shots/kicks/GTH_Kick_03.wav"])
+	}
+	// A flat family under a template with no {family}: the family name
+	// stands in at {instrument} — Bass, not Sub.
+	if got["Grit/bass/Champion Sub.wav"] != "Bass/Splice/Grit/bass/Champion Sub.wav" {
+		t.Errorf("flat family at {instrument}: %q", got["Grit/bass/Champion Sub.wav"])
 	}
 
 	// A template that needs metadata refuses to run against a location

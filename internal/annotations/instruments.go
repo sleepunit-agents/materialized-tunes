@@ -20,11 +20,24 @@ type Instrument struct {
 	Avoid   []string `toml:"avoid" json:"avoid,omitempty"` // phrases that contain an alias but mean something else
 }
 
+// Family is one [[family]] block of the shared lexicon: knowledge about a
+// whole family rather than one instrument. flat = true marks a family whose
+// layout tree does not split by instrument — bass is bass; the sub/reese/wub
+// taxonomy in vendor naming isn't reliable enough to fight samples over.
+// The instrument entries still resolve and still land in harvest metadata;
+// flat only stops the folder split.
+type Family struct {
+	ID   string `toml:"id" json:"id"`
+	Flat bool   `toml:"flat" json:"flat,omitempty"`
+}
+
 // Lexicon is the ordered instrument vocabulary plus its compiled matchers.
 type Lexicon struct {
 	Instruments []Instrument
+	Families    []Family
 	patterns    []*regexp.Regexp // per instrument: whole-word alternation of aliases
 	avoids      []*regexp.Regexp // per instrument: nil when none
+	flat        map[string]bool  // family id → flat
 }
 
 // LoadInstruments reads <root>/instruments.toml. A missing file yields an
@@ -37,13 +50,20 @@ func LoadInstruments(root string) *Lexicon {
 	}
 	var f struct {
 		Instrument []Instrument `toml:"instrument"`
+		Family     []Family     `toml:"family"`
 	}
 	if err := toml.Unmarshal(data, &f); err != nil {
 		return lx
 	}
-	lx.Instruments = f.Instrument
+	lx.Instruments, lx.Families = f.Instrument, f.Family
 	lx.compile()
 	return lx
+}
+
+// FlatFamily reports whether the lexicon marks a family flat — rendered
+// without an instrument level by layout templates. Safe on a nil lexicon.
+func (lx *Lexicon) FlatFamily(id string) bool {
+	return lx != nil && id != "" && lx.flat[id]
 }
 
 func (lx *Lexicon) compile() {
@@ -52,6 +72,12 @@ func (lx *Lexicon) compile() {
 	for i, ins := range lx.Instruments {
 		lx.patterns[i] = wordAlternation(ins.Aliases)
 		lx.avoids[i] = wordAlternation(ins.Avoid)
+	}
+	lx.flat = map[string]bool{}
+	for _, f := range lx.Families {
+		if f.Flat {
+			lx.flat[f.ID] = true
+		}
 	}
 }
 
