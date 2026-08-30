@@ -18,8 +18,33 @@ import (
 	"github.com/sleepunit-agents/materialized-tunes/internal/location"
 	"github.com/sleepunit-agents/materialized-tunes/internal/resolve"
 	"github.com/sleepunit-agents/materialized-tunes/internal/scan"
+	"github.com/sleepunit-agents/materialized-tunes/internal/version"
 	"github.com/sleepunit-agents/materialized-tunes/internal/workspace"
 )
+
+// ---- annotations status -------------------------------------------------
+//
+// "Are we actually updating annotations?" deserves an answer you can see:
+// GET says what commit the checkout is at (plus this binary's version, the
+// other half of "why am I still getting the old layout"); POST updates it
+// right now, bypassing the scan-time throttle. An update only lands in the
+// trees after the next scan re-harvests, so the UI says so.
+
+func (s *Server) annotationsEndpoint(w http.ResponseWriter, r *http.Request) {
+	type resp struct {
+		Version string            `json:"version"`
+		Head    *annotations.Head `json:"head"`
+		Action  string            `json:"action,omitempty"`
+		Note    string            `json:"note,omitempty"`
+	}
+	out := resp{Version: version.Version}
+	if r.Method == http.MethodPost {
+		res := annotations.SyncNow(r.Context(), s.ws.Root)
+		out.Action, out.Note = string(res.Action), res.Note
+	}
+	out.Head = annotations.CheckoutHead(r.Context(), s.ws.Root)
+	jsonOut(w, out)
+}
 
 // ---- source suggestions -------------------------------------------------
 //

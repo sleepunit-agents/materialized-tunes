@@ -739,11 +739,28 @@ function renderPackDetail() {
 /* ---------- sources ---------- */
 
 async function loadSources() {
-  const [locs, sugg, stos, pres, vols] = await Promise.all([
+  const [locs, sugg, stos, pres, vols, ann] = await Promise.all([
     api('/api/locations'), api('/api/suggestions'), api('/api/storages'),
-    api('/api/presets'), api('/api/volumes')]);
+    api('/api/presets'), api('/api/volumes'), api('/api/annotations')]);
   S.locations = locs || []; S.suggestions = sugg || [];
   S.storages = stos || []; S.presets = pres || []; S.volumes = vols || [];
+  S.ann = ann || null;
+  render();
+}
+
+async function updateAnnotations() {
+  S.annBusy = true; S.annMsg = ''; render();
+  const r = await api('/api/annotations', { method: 'POST' });
+  S.annBusy = false;
+  if (r && !r.error) {
+    S.ann = r;
+    S.annMsg = r.action === 'updated' ? (r.note || 'updated') + ' — rescan sources to apply'
+      : r.action === 'cloned' ? 'annotations fetched — rescan sources to apply'
+      : r.action === 'current' ? 'already up to date'
+      : (r.note || 'could not update');
+  } else {
+    S.annMsg = (r && r.error) || 'could not reach the app';
+  }
   render();
 }
 
@@ -857,9 +874,31 @@ function renderSources() {
       ${form}
       ${rows}
       ${sugg ? `<div style="font:600 9px var(--sans);color:var(--fg-faint);letter-spacing:.1em;padding:10px 2px 2px">FOUND ON THIS MACHINE</div>${sugg}` : ''}
+      ${renderAnnotations()}
       ${renderDevices()}
       ${renderStorages()}
       ${S.toast ? `<div style="font:500 11px var(--mono);color:var(--warn)">${esc(S.toast)}</div>` : ''}
+    </div>`;
+}
+
+// The classification rules live in a data repo that moves without app
+// releases; this card answers "which rules am I actually on" and lets the
+// user pull the newest right now instead of trusting the scan-time sync.
+function renderAnnotations() {
+  const ann = S.ann || {};
+  const h = ann.head;
+  return `
+    <div style="font:600 9px var(--sans);color:var(--fg-faint);letter-spacing:.1em;padding:10px 2px 2px">CLASSIFICATION RULES</div>
+    <div style="display:flex;align-items:center;gap:12px;background:var(--bg-card);border:1px solid var(--bord-card);border-radius:6px;padding:9px 12px">
+      <div style="min-width:0;flex:1;display:flex;flex-direction:column;gap:2px">
+        ${h ? `<span style="font:400 10.5px var(--mono);color:var(--fg-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">annotations ${esc(h.sha)} · ${esc(h.date)} · ${esc(h.subject)}</span>`
+            : `<span style="font:400 10.5px var(--mono);color:var(--fg-faint)">annotations not fetched yet — scanning a source clones them</span>`}
+        <span style="font:400 10px var(--mono);color:var(--fg-faint)">pulled fresh before every scan · app ${esc(ann.version || '?')}</span>
+        ${S.annMsg ? `<span style="font:500 10.5px var(--mono);color:var(--amber)">${esc(S.annMsg)}</span>` : ''}
+      </div>
+      ${S.annBusy
+        ? `<span style="font:500 11px var(--mono);color:var(--amber);white-space:nowrap">updating…</span>`
+        : `<span class="restore-btn" data-act="ann-update">update now</span>`}
     </div>`;
 }
 
@@ -1242,6 +1281,7 @@ function wire() {
       if (act === 'close-pack') { stopPlayback(); S.packOpen = null; S.pd = null; render(); }
       if (act === 'pd-folder') { S.pdFolder = el.dataset.f; loadPdFolder().then(render); }
       if (act === 'scan') startScan(el.dataset.l);
+      if (act === 'ann-update') updateAnnotations();
       if (act === 'dev-new') { S.devForm = { bit_depth: 16, sample_rate: 44100, channels: 'stereo', mode: 'card', layout: 'mirror', sanitize: true }; S.toast=''; render(); }
       if (act === 'dev-cancel') { S.devForm = null; render(); }
       if (act === 'dev-save') {

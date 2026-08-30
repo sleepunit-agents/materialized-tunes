@@ -51,7 +51,7 @@ func TestSyncClonesMissingCheckout(t *testing.T) {
 	src := sourceRepo(t)
 	ws := t.TempDir()
 
-	r := syncFrom(context.Background(), ws, src)
+	r := syncFrom(context.Background(), ws, src, false)
 	if r.Action != SyncCloned {
 		t.Fatalf("want cloned, got %s (%s)", r.Action, r.Note)
 	}
@@ -66,7 +66,7 @@ func TestSyncFastForwards(t *testing.T) {
 	}
 	src := sourceRepo(t)
 	ws := t.TempDir()
-	if r := syncFrom(context.Background(), ws, src); r.Action != SyncCloned {
+	if r := syncFrom(context.Background(), ws, src, false); r.Action != SyncCloned {
 		t.Fatalf("setup clone: %s (%s)", r.Action, r.Note)
 	}
 
@@ -77,11 +77,11 @@ func TestSyncFastForwards(t *testing.T) {
 	git(t, src, "add", ".")
 	git(t, src, "commit", "--quiet", "-m", "two")
 
-	if r := syncFrom(context.Background(), ws, src); r.Action != SyncCurrent {
+	if r := syncFrom(context.Background(), ws, src, false); r.Action != SyncCurrent {
 		t.Fatalf("throttle: want current, got %s (%s)", r.Action, r.Note)
 	}
 	resetThrottle()
-	r := syncFrom(context.Background(), ws, src)
+	r := syncFrom(context.Background(), ws, src, false)
 	if r.Action != SyncUpdated {
 		t.Fatalf("want updated, got %s (%s)", r.Action, r.Note)
 	}
@@ -90,8 +90,55 @@ func TestSyncFastForwards(t *testing.T) {
 	}
 
 	resetThrottle()
-	if r := syncFrom(context.Background(), ws, src); r.Action != SyncCurrent {
+	if r := syncFrom(context.Background(), ws, src, false); r.Action != SyncCurrent {
 		t.Fatalf("at head: want current, got %s (%s)", r.Action, r.Note)
+	}
+}
+
+// The manual "update now" path must reach the remote even when a scan just
+// synced — force is the whole point of the button.
+func TestSyncNowBypassesThrottle(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("no git")
+	}
+	src := sourceRepo(t)
+	ws := t.TempDir()
+	if r := syncFrom(context.Background(), ws, src, false); r.Action != SyncCloned {
+		t.Fatalf("setup clone: %s (%s)", r.Action, r.Note)
+	}
+	if err := os.WriteFile(filepath.Join(src, "instruments.toml"), []byte("[[instrument]]\nid = \"kick\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, src, "add", ".")
+	git(t, src, "commit", "--quiet", "-m", "two")
+
+	// throttled path misses the new commit, forced path must not
+	if r := syncFrom(context.Background(), ws, src, false); r.Action != SyncCurrent {
+		t.Fatalf("throttle: want current, got %s (%s)", r.Action, r.Note)
+	}
+	if r := syncFrom(context.Background(), ws, src, true); r.Action != SyncUpdated {
+		t.Fatalf("forced: want updated, got %s (%s)", r.Action, r.Note)
+	}
+}
+
+func TestCheckoutHead(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("no git")
+	}
+	src := sourceRepo(t)
+	ws := t.TempDir()
+	if h := CheckoutHead(context.Background(), ws); h != nil {
+		t.Fatalf("no checkout yet, want nil head, got %+v", h)
+	}
+	if r := syncFrom(context.Background(), ws, src, false); r.Action != SyncCloned {
+		t.Fatalf("setup clone: %s (%s)", r.Action, r.Note)
+	}
+	h := CheckoutHead(context.Background(), ws)
+	if h == nil {
+		t.Fatal("want head after clone, got nil")
+	}
+	if h.SHA == "" || h.Date == "" || h.Subject != "one" {
+		t.Fatalf("head fields off: %+v", h)
 	}
 }
 
@@ -107,7 +154,7 @@ func TestSyncLeavesNonGitDirAlone(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "tags.toml"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	r := syncFrom(context.Background(), ws, "unused")
+	r := syncFrom(context.Background(), ws, "unused", false)
 	if r.Action != SyncSkipped {
 		t.Fatalf("want skipped, got %s (%s)", r.Action, r.Note)
 	}
@@ -131,7 +178,7 @@ func TestSyncIgnoresEnclosingWorkspaceRepo(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "tags.toml"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	r := syncFrom(context.Background(), ws, "unused")
+	r := syncFrom(context.Background(), ws, "unused", false)
 	if r.Action != SyncSkipped {
 		t.Fatalf("want skipped, got %s (%s)", r.Action, r.Note)
 	}
@@ -143,7 +190,7 @@ func TestSyncSkipsDivergedCheckout(t *testing.T) {
 	}
 	src := sourceRepo(t)
 	ws := t.TempDir()
-	if r := syncFrom(context.Background(), ws, src); r.Action != SyncCloned {
+	if r := syncFrom(context.Background(), ws, src, false); r.Action != SyncCloned {
 		t.Fatalf("setup clone: %s (%s)", r.Action, r.Note)
 	}
 	dir := filepath.Join(ws, "annotations")
@@ -161,7 +208,7 @@ func TestSyncSkipsDivergedCheckout(t *testing.T) {
 	git(t, src, "commit", "--quiet", "-m", "remote")
 
 	resetThrottle()
-	r := syncFrom(context.Background(), ws, src)
+	r := syncFrom(context.Background(), ws, src, false)
 	if r.Action != SyncSkipped {
 		t.Fatalf("want skipped, got %s (%s)", r.Action, r.Note)
 	}

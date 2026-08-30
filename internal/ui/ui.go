@@ -88,6 +88,7 @@ func Handler(ws *workspace.Workspace) http.Handler {
 	mux.HandleFunc("/api/locations", s.locations)
 	mux.HandleFunc("/api/suggestions", s.suggestions)
 	mux.HandleFunc("/api/scan", s.scanEndpoint)
+	mux.HandleFunc("/api/annotations", s.annotationsEndpoint)
 	mux.HandleFunc("/api/view", s.viewWrite)
 	mux.HandleFunc("/api/presets", s.presets)
 	mux.HandleFunc("/api/device", s.deviceWrite)

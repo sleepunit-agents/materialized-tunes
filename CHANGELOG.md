@@ -7,6 +7,24 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.4 — 2026-08-30 (you can see which rules you're on)
+
+"I don't know if we're actually updating annotations" — and there was no
+way to check: the scan-time sync is throttled (10 min per process) and
+its result was one ephemeral line in the scan status, while the binary
+didn't even know its own version. So a stale layout had three
+indistinguishable causes: old exe, stale checkout, or a rule that never
+changed. Now the Sources screen carries a CLASSIFICATION RULES card —
+the annotations checkout's commit (sha · date · subject), the app
+version, and an *update now* button that reaches the remote immediately,
+bypassing the throttle (`/api/annotations`, GET/POST). An update reminds
+you to rescan, because rules only land in the trees when harvest re-reads
+them. The release workflow injects the real version via `-ldflags -X`
+(source builds say `dev`). Also fixed on the way: `mtunes init <relative
+path>` cloned annotations into `<ws>/ws/annotations` — the clone ran
+with cwd=workspace and a workspace-relative target; the sync path is
+absolute from the start now.
+
 ## v0.9.3 — 2026-08-30 (family catch-alls stop doubling the tree)
 
 The corrective migrate after v0.9.1 surfaced the next one within the
