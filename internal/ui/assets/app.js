@@ -1267,9 +1267,10 @@ function renderRecipe() {
     const open = S.rOpen.has(g.key);
     const ckCls = g.state === 'all' ? 'ck on' : g.state === 'partial' ? 'ck part' : 'ck';
     const nr = g.rules.length > 1 ? ` · ${n(g.rules.length)} rules` : '';
-    const sub = g.state === 'none' ? `${n(g.packs.length)} packs · not in this recipe`
-      : g.state === 'all' ? `all ${n(g.packs.length)} packs · ${esc(g.location)}${nr}`
-      : `${n(g.in)} of ${n(g.packs.length)} packs · ${esc(g.location)}${nr}`;
+    const np = `${n(g.packs.length)} ${g.packs.length === 1 ? 'pack' : 'packs'}`;
+    const sub = g.state === 'none' ? `${np} · not in this recipe`
+      : g.state === 'all' ? `${g.packs.length === 1 ? np : 'all ' + np} · ${esc(g.location)}${nr}`
+      : `${n(g.in)} of ${np} · ${esc(g.location)}${nr}`;
     const packs = !open ? '' : `<div class="packs">${g.packs.map((e, j) => packRow(g, e, j)).join('')}</div>`;
     return `<div class="rule head ${g.state === 'none' ? 'off' : ''}">
       <span data-act="grp" data-g="${esc(g.key)}" style="position:absolute;inset:0;cursor:pointer" title="${g.state === 'all' ? 'take this vendor out of the recipe' : 'put everything this vendor made in'}"></span>
