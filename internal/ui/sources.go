@@ -300,6 +300,9 @@ func (s *Server) startScan(name string) error {
 	s.mu.Unlock()
 
 	go func() {
+		// Freshen the annotations checkout before harvest reads it. Throttled
+		// and serialized inside Sync, so concurrent/auto scans stay cheap.
+		annSync := annotations.Sync(context.Background(), s.ws.Root)
 		loc, err := location.New(lc)
 		if err == nil {
 			var res *scan.Result
@@ -317,6 +320,9 @@ func (s *Server) startScan(name string) error {
 				s.mu.Lock()
 				st.Result = fmt.Sprintf("%d files: %d added, %d changed, %d removed, %d unchanged",
 					res.Total, res.Added, res.Changed, res.Removed, res.Unchanged)
+				if annSync.Note != "" {
+					st.Result = annSync.Note + " · " + st.Result
+				}
 				st.Status = "done"
 				delete(s.meta, name) // per-file metadata was just rewritten
 				s.mu.Unlock()

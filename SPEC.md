@@ -800,7 +800,15 @@ so shared data evolving never changes a restore.
 ### 11.1 The annotations repo (facts, not taste)
 
 `sample-vendor-annotations` (checked out at `<workspace>/annotations/`,
-gitignored) is a schema-versioned, code-free set of TOML files per vendor:
+gitignored) is a schema-versioned, code-free set of TOML files per vendor.
+The tool manages the checkout itself (decided 2026-08-30): `mtunes init`
+clones it, and every scan — CLI or UI, manual or cadenced — fast-forwards
+it first, so the data moves without a binary release and without asking
+the user to run git. Freshening is never fatal: offline, no git, a
+diverged checkout, or a directory that isn't the checkout's own repo all
+mean "use what's there" plus a one-line note. A checkout with local
+commits is never force-updated — contributors keep their working copy.
+Content per vendor:
 names, slugs, aliases, product URLs, image URLs, content hashes, counts,
 format-tree grammar (`[formats]`), category maps, `[install]` paths,
 `[meta] description` for discontinued packs; plus shared `tags.toml`

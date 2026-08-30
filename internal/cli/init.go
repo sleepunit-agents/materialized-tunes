@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/jbarket/materialized-tunes/internal/annotations"
 	"github.com/jbarket/materialized-tunes/internal/workspace"
 )
 
@@ -23,6 +24,12 @@ var initCmd = &cobra.Command{
 			return err
 		}
 		fmt.Printf("workspace ready at %s\n", ws.Root)
+
+		// A workspace without the annotations checkout classifies nothing —
+		// clone it now so the first scan works out of the box.
+		if r := annotations.Sync(cmd.Context(), ws.Root); r.Note != "" {
+			fmt.Println(r.Note)
+		}
 
 		if initGit {
 			if _, err := os.Stat(filepath.Join(ws.Root, ".git")); os.IsNotExist(err) {

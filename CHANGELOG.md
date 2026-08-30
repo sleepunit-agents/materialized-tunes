@@ -7,6 +7,21 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.2 — 2026-08-30 (the annotations checkout manages itself)
+
+The v0.9.1 fix shipped with a lousy instruction: "go `git pull` in a
+second place". The annotations repo is public and moves on observation
+cadence, so the tool now keeps the checkout fresh itself — `mtunes init`
+clones it, and every scan (CLI and UI, manual or auto-cadenced)
+fast-forwards it before harvest reads it. Serialized and throttled
+(10 min) so the UI's auto-scans don't hammer the remote; never fatal —
+offline/diverged/non-git all degrade to "using what you have" with a
+one-line note (surfaced in the scan result). Two safety edges: ff-only
+means a contributor's local commits are never clobbered, and a bare
+copied `annotations/` folder inside a versioned workspace is detected
+(rev-parse walks up) and left alone rather than pulling the workspace's
+own repo.
+
 ## v0.9.1 — 2026-08-30 (the category level stops collapsing)
 
 First real migrate on Jonathan's library surfaced it within the hour:

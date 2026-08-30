@@ -38,6 +38,12 @@ var scanCmd = &cobra.Command{
 			return fmt.Errorf("no locations to scan — add one with `mtunes location add`")
 		}
 
+		// Vendor grammar moves on its own cadence; scan reads whatever the
+		// checkout holds, so freshen it first (never fatal — see Sync).
+		if r := annotations.Sync(cmd.Context(), ws.Root); r.Note != "" {
+			fmt.Println(r.Note)
+		}
+
 		for _, lc := range targets {
 			loc, err := location.New(lc)
 			if err != nil {
