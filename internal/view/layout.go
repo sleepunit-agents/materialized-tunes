@@ -21,7 +21,10 @@ import (
 // The last segment must be {path} or {file} and neither may appear
 // anywhere else. A segment whose tokens all come up empty is dropped —
 // except {category}, which the planner fills with an _Unsorted bucket so
-// pack folders never land beside the category folders. A file with no
+// pack folders never land beside the category folders. When a template
+// uses both {family} and {instrument} and a file's label only goes as
+// deep as the family, the planner renders {instrument} as _General
+// rather than doubling the name ("Drums/Drums"). A file with no
 // instrument at all cannot be placed by a template that asks for one; the
 // planner sends it to Unsorted (see plan) instead of guessing.
 type Layout struct {

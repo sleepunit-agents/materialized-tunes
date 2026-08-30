@@ -796,7 +796,7 @@ as="SPLICE"
 	}
 	want := map[string]string{
 		"Grit/one_shots/kicks/GTH_Kick_03.wav":   "Drums/Kick/One-Shots/Grit/GTH_Kick_03.wav",
-		"Grit/loops/drums/GTH_Drum_Loop_124.wav": "Drums/Drums/Loops/Grit/GTH_Drum_Loop_124.wav",
+		"Grit/loops/drums/GTH_Drum_Loop_124.wav": "Drums/_General/Loops/Grit/GTH_Drum_Loop_124.wav",
 		"Grit/one_shots/rim/Rim 01.wav":          "Drums/Rim/One-Shots/Grit/rim - Rim 01.wav",
 		"Grit/one_shots/rim_alt/Rim 01.wav":      "Drums/Rim/One-Shots/Grit/rim_alt - Rim 01.wav",
 		"Tech Funk/hits/TFH_Rim_A.wav":           "Drums/Rim/_Unsorted/Tech Funk/TFH_Rim_A.wav",
@@ -813,12 +813,16 @@ as="SPLICE"
 	if p.Uncategorized != 1 {
 		t.Errorf("uncategorized = %d, want 1", p.Uncategorized)
 	}
+	if p.General != 1 {
+		t.Errorf("general = %d, want 1", p.General)
+	}
 	if len(p.Errors) != 0 {
 		t.Errorf("errors: %v", p.Errors)
 	}
 	joined := strings.Join(p.Warnings, "\n")
 	if !strings.Contains(joined, "`as` on 1 rule is ignored") || !strings.Contains(joined, "_Unsorted/") ||
-		!strings.Contains(joined, "no loop/one-shot signal") {
+		!strings.Contains(joined, "no loop/one-shot signal") ||
+		!strings.Contains(joined, "labeled only at family level") {
 		t.Errorf("warnings: %v", p.Warnings)
 	}
 

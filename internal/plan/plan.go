@@ -108,6 +108,7 @@ type Plan struct {
 	Deduped            int    `json:"deduped,omitempty"`              // identical-content sources dropped by dedup = "content"
 	Unsorted           int    `json:"unsorted,omitempty"`             // files a templated layout could not place (no instrument label) — under _Unsorted/
 	Uncategorized      int    `json:"uncategorized,omitempty"`        // placed files whose {category} fell back to an _Unsorted folder
+	General            int    `json:"general,omitempty"`              // placed files labeled only at family level — {instrument} rendered as _General
 	DisplayClashes     int    `json:"display_clashes,omitempty"`      // names still identical within naming.display_length
 	LimitedFrom        int    `json:"limited_from,omitempty"`         // eligible count before the view's limit truncated it
 	SkippedNonAudio    []Skip `json:"skipped_non_audio,omitempty"`
@@ -372,7 +373,8 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 			o.Files, o.Location, o.RuleA+1, o.GlobA, prefixLabel(o.AsA), o.RuleB+1, o.GlobB, prefixLabel(o.AsB)))
 	}
 
-	var uncatEx string // first source path whose {category} fell back
+	var uncatEx string   // first source path whose {category} fell back
+	var generalEx string // first source path whose {instrument} is the family catch-all
 	for _, pk := range selection {
 		ce := pk.ce
 		loc := pk.inc.Location
@@ -410,6 +412,12 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 				p.Uncategorized++
 				if uncatEx == "" {
 					uncatEx = srcForOut
+				}
+			}
+			if pl.general {
+				p.General++
+				if generalEx == "" {
+					generalEx = srcForOut
 				}
 			}
 		} else {
@@ -479,6 +487,10 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 	if p.Uncategorized > 0 {
 		p.Warnings = append(p.Warnings, fmt.Sprintf("%d %s carry no loop/one-shot signal in their naming and land in an %s/ category folder — e.g. %s (vendor annotation or the shared categories.toml can teach it)",
 			p.Uncategorized, plural(p.Uncategorized, "file", "files"), UnsortedDir, uncatEx))
+	}
+	if p.General > 0 {
+		p.Warnings = append(p.Warnings, fmt.Sprintf("%d %s are labeled only at family level (\"drums\", \"woodwind\", …) and land in a %s/ instrument folder — e.g. %s (instruments.toml can teach finer labels)",
+			p.General, plural(p.General, "file", "files"), GeneralDir, generalEx))
 	}
 
 	if v.Dedup == "content" {

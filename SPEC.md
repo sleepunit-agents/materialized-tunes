@@ -576,7 +576,13 @@ glob = "**/*.asd"
   empty is omitted — except `{category}`: a placed file with no
   loop/one-shot signal lands in an `_Unsorted/` folder at that level
   (`Drums/Kick/_Unsorted/<pack>/`), so pack folders never sit beside the
-  category folders; a preflight warning counts these too. A file with
+  category folders; a preflight warning counts these too. When the
+  template uses both `{family}` and `{instrument}` and the label only
+  goes as deep as the family (the lexicon's catch-all won: instrument id
+  == family id), `{instrument}` renders as `_General/` instead of
+  doubling the name (`Drums/_General/Loops/`, never `Drums/Drums/`);
+  preflight counts these with an example, and teaching instruments.toml
+  a finer label is the durable fix. A file with
   **no instrument label** cannot be
   placed by a template that asks for one and goes to
   `_Unsorted/{vendor}/{pack}/{path}` — the mirror tree, one folder down —

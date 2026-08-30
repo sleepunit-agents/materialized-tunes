@@ -18,6 +18,13 @@ import (
 // nothing is lost and the folder is easy to find on the device.
 const UnsortedDir = "_Unsorted"
 
+// GeneralDir is the {instrument} folder for files whose label only goes
+// as deep as the family — the lexicon's catch-all won (instrument id ==
+// family id), and rendering both levels would double the name
+// ("Drums/Drums", "Woodwind/Woodwind"). An explicit bucket keeps the
+// instrument level uniform and the gap visible.
+const GeneralDir = "_General"
+
 // layouter resolves a template's tokens for one selected file: vendor and
 // pack from the location layout (flat or vendor-dirs), family / instrument
 // / category from the harvest cache (SHA-keyed), path and file from the
@@ -67,6 +74,7 @@ type placement struct {
 	parents       []string // intra-pack dirs, outermost first
 	unsorted      bool
 	uncategorized bool // placed, but {category} fell back to _Unsorted
+	general       bool // placed, but {instrument} is the family catch-all — rendered as _General
 }
 
 func (ly *layouter) place(loc, srcPath, sha string) placement {
@@ -96,15 +104,23 @@ func (ly *layouter) place(loc, srcPath, sha string) placement {
 	}
 	vals[view.TokPath] = strings.Join(inPack, "/")
 	vals[view.TokFile] = inPack[len(inPack)-1]
+	catchAll := false
 	if m, ok := ly.meta[loc][sha]; ok {
 		vals[view.TokFamily] = displayName(m.Family)
 		vals[view.TokInstrument] = displayName(m.Instrument)
 		vals[view.TokCategory] = displayName(m.Category)
+		catchAll = m.Instrument != "" && m.Instrument == m.Family
 	}
 	pl := placement{parents: inPack[:len(inPack)-1]}
 	if ly.lay.NeedsInstrument() && vals[view.TokInstrument] == "" {
 		pl.out, pl.unsorted = ly.fallback.Render(vals), true
 		return pl
+	}
+	if catchAll && ly.lay.Uses(view.TokFamily) && ly.lay.Uses(view.TokInstrument) {
+		// The label only goes as deep as the family; rendering it at both
+		// levels doubles the folder name ("Drums/Drums").
+		vals[view.TokInstrument] = GeneralDir
+		pl.general = true
 	}
 	if ly.lay.Uses(view.TokCategory) && vals[view.TokCategory] == "" {
 		// Don't silently drop the level: that puts pack folders beside the

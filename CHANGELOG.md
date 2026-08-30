@@ -7,6 +7,22 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.3 — 2026-08-30 (family catch-alls stop doubling the tree)
+
+The corrective migrate after v0.9.1 surfaced the next one within the
+hour: `Woodwind/Woodwind/One-Shots`, `Drums/Drums`. The shared lexicon
+deliberately carries a catch-all entry per family (instrument id ==
+family id: "drums", "woodwind", …) for files labeled no deeper than the
+family — and `{family}/{instrument}` rendered that label twice. Now,
+when a template uses both tokens and the catch-all won, `{instrument}`
+renders as `_General/` (`Drums/_General/One-Shots/`) — same design
+language as `_Unsorted`: the level stays uniform, the gap stays visible,
+preflight counts it with an example. Paired with an instruments.toml
+expansion in the annotations repo (flute/clarinet/oboe/bassoon/recorder,
+trumpet/trombone/sax/tuba, violin/cello/harp were all aliases of their
+family catch-alls) so most of that material now gets a real instrument
+folder and `_General` is only the honest residue.
+
 ## v0.9.2 — 2026-08-30 (the annotations checkout manages itself)
 
 The v0.9.1 fix shipped with a lousy instruction: "go `git pull` in a
