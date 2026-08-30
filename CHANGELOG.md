@@ -7,6 +7,25 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.5 — 2026-08-30 (the app updates itself)
+
+The push-test-report loop had one manual step left: every fix meant
+re-downloading the exe and replacing it by hand. Now the app tracks the
+rolling `latest` release the same way it tracks annotations — plain
+HTTPS against the GitHub API, no git, no console windows. The binary
+knows the commit it was built from (workflow injects
+`version.Commit`); a poll (launch + every 5 min) compares that against
+what the `latest` tag points at, and when they differ an amber chip
+appears in the tab bar: *new build · update & restart*. One click
+downloads the matching release asset next to the exe, verifies it
+against the release's `SHA256SUMS.txt` (which also catches a
+mid-publish race — exe and sums must agree or nothing is installed),
+swaps it in with the Windows rename dance (a running exe can be renamed
+aside but not overwritten; the `.old` is swept at next launch), and
+relaunches into the new build. `/api/update` GET/POST;
+`internal/selfupdate`, dependency-free. Source builds (`dev`) are never
+offered updates — that's what the compiler is for.
+
 ## v0.9.4 — 2026-08-30 (you can see which rules you're on)
 
 "I don't know if we're actually updating annotations" — and there was no

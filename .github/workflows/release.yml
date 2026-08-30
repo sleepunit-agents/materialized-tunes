@@ -40,7 +40,7 @@ jobs:
           set -euo pipefail
           VERSION="$(git describe --tags --always --dirty)"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-          VFLAG="-X github.com/sleepunit-agents/materialized-tunes/internal/version.Version=$VERSION"
+          VFLAG="-X github.com/sleepunit-agents/materialized-tunes/internal/version.Version=$VERSION -X github.com/sleepunit-agents/materialized-tunes/internal/version.Commit=$GITHUB_SHA"
           mkdir -p dist
           go build -trimpath -ldflags "-s -w $VFLAG" \
             -o dist/mtunes.exe ./cmd/mtunes

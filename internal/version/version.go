@@ -4,3 +4,8 @@
 package version
 
 var Version = "dev"
+
+// Commit is the full sha this binary was built from — what self-update
+// compares against the release feed. Empty on a source build, which is
+// exactly the signal that there's nothing sane to auto-update.
+var Commit = ""

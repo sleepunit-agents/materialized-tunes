@@ -33,6 +33,7 @@ import (
 	"github.com/sleepunit-agents/materialized-tunes/internal/plan"
 	"github.com/sleepunit-agents/materialized-tunes/internal/profile"
 	"github.com/sleepunit-agents/materialized-tunes/internal/resolve"
+	"github.com/sleepunit-agents/materialized-tunes/internal/selfupdate"
 	"github.com/sleepunit-agents/materialized-tunes/internal/view"
 	"github.com/sleepunit-agents/materialized-tunes/internal/workspace"
 )
@@ -65,6 +66,7 @@ type runState struct {
 
 func Handler(ws *workspace.Workspace) http.Handler {
 	s := &Server{ws: ws, scans: map[string]*scanState{}}
+	selfupdate.CleanupOld() // sweep the exe a past self-update renamed aside
 	// Freshen annotations as soon as the app opens — the rules card should
 	// show today's grammar without waiting for a scan to trigger the pull —
 	// and when the pull lands new grammar, re-derive the trees from it
@@ -99,6 +101,7 @@ func Handler(ws *workspace.Workspace) http.Handler {
 	mux.HandleFunc("/api/suggestions", s.suggestions)
 	mux.HandleFunc("/api/scan", s.scanEndpoint)
 	mux.HandleFunc("/api/annotations", s.annotationsEndpoint)
+	mux.HandleFunc("/api/update", s.updateEndpoint)
 	mux.HandleFunc("/api/view", s.viewWrite)
 	mux.HandleFunc("/api/presets", s.presets)
 	mux.HandleFunc("/api/device", s.deviceWrite)

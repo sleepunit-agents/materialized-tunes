@@ -37,6 +37,7 @@ const S = {
   samples: null, samplesBusy: false,
   player: null,  // {path, name, dur, playing}
   toast: '',
+  upd: null, updBusy: false, updMsg: '',  // app self-update state
 };
 
 const fmtB = (b) => {
@@ -80,6 +81,36 @@ async function boot() {
   render();
   pollRun();
   pollScans();
+  pollUpdate();
+}
+
+/* ---------- app self-update ----------
+   The exe tracks the rolling "latest" release the way annotations track
+   their repo: poll for a newer build, and one click installs it and
+   relaunches. What used to be "download the exe again, replace it, reopen"
+   is now the update chip in the tab bar. */
+
+async function pollUpdate() {
+  try {
+    const u = await api('/api/update');
+    const was = S.upd && S.upd.available;
+    S.upd = u;
+    if ((u && u.available) !== was) render();
+  } catch (e) { /* server gone; keep quiet */ }
+  setTimeout(pollUpdate, 5 * 60 * 1000);
+}
+
+async function applyUpdate() {
+  S.updBusy = true; S.updMsg = 'downloading new build…'; render();
+  try {
+    const r = await api('/api/update', { method: 'POST' });
+    if (r.error) { S.updBusy = false; S.updMsg = r.error; }
+    else S.updMsg = 'restarting…'; // the process swaps out under us now
+  } catch (e) {
+    // the desktop app relaunches before the response can land — that's success
+    S.updMsg = 'restarting…';
+  }
+  render();
 }
 
 async function loadPacks() {
@@ -321,12 +352,20 @@ function tabbar() {
   const lens = S.lens ? `
     <div class="lens-chip"><span class="dot"></span><span class="name">Lens · ${esc(S.lens)}</span>
     <span class="x" data-act="clear-lens">✕</span></div>` : '';
+  // one click from "fix pushed" to "running the fix" — visible on every screen
+  let upd = '';
+  if (S.updBusy || S.updMsg) {
+    upd = `<span style="font:500 10.5px var(--mono);color:var(--amber);white-space:nowrap;margin-right:8px">${esc(S.updMsg)}</span>`;
+  } else if (S.upd && S.upd.available) {
+    const r = S.upd.remote || {};
+    upd = `<span data-act="upd-apply" title="${esc(r.sha || '')} · ${esc(r.subject || '')}" style="cursor:pointer;font:600 10.5px var(--mono);color:var(--amber);border:1px solid rgba(224,182,79,.4);border-radius:10px;padding:3px 10px;white-space:nowrap;margin-right:8px">⇣ new build · update &amp; restart</span>`;
+  }
   return `<div class="tabbar">
     ${tabs.map(([k, label, num]) => `
       <div class="tab ${S.screen === k ? 'on' : ''}" data-act="tab" data-k="${k}">
         <span class="num">${num}</span><span class="label">${label}</span>
       </div>`).join('')}
-    <div style="flex:1"></div>${lens}
+    <div style="flex:1"></div>${upd}${lens}
   </div>`;
 }
 
@@ -1282,6 +1321,7 @@ function wire() {
       if (act === 'pd-folder') { S.pdFolder = el.dataset.f; loadPdFolder().then(render); }
       if (act === 'scan') startScan(el.dataset.l);
       if (act === 'ann-update') updateAnnotations();
+      if (act === 'upd-apply') applyUpdate();
       if (act === 'dev-new') { S.devForm = { bit_depth: 16, sample_rate: 44100, channels: 'stereo', mode: 'card', layout: 'mirror', sanitize: true }; S.toast=''; render(); }
       if (act === 'dev-cancel') { S.devForm = null; render(); }
       if (act === 'dev-save') {
