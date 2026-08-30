@@ -175,7 +175,7 @@ async function pollRun() {
     S.run = r;
     if (r.status === 'running' && r.count !== lastLogged && r.count > 0) {
       if (lastLogged < 0 || r.count - lastLogged >= 2000 || r.count === r.total) {
-        S.runLog.push(`[materialize] ${n(r.count)} / ${n(r.total)} files`);
+        S.runLog.push(`[${r.verb || 'materialize'}] ${n(r.count)} / ${n(r.total)} files`);
         lastLogged = r.count;
       }
     }
@@ -195,6 +195,14 @@ async function startRun() {
     body: JSON.stringify({ view: S.view }) });
   if (r.error) { S.runLog.push('[refused] ' + r.error); }
   else { S.runLog = ['[start] materializing ' + S.view]; lastLogged = -1; }
+  render();
+}
+
+async function startMigrate() {
+  const r = await api('/api/migrate', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ view: S.view }) });
+  if (r.error) { S.runLog.push('[refused] ' + r.error); }
+  else { S.runLog = ['[start] migrating ' + S.view + ' — renaming into the new layout, nothing re-rendered']; lastLogged = -1; }
   render();
 }
 
@@ -1071,6 +1079,8 @@ function renderRecipe() {
       </div>
       <div>${issues}</div>
       <div class="mat-btn ${!fits || errors.length ? 'blocked' : ''}" data-act="go-run">MATERIALIZE — ${n(S.pf.files ?? 0)} FILES</div>
+      ${pf.migrate ? `<div class="mat-btn ${errors.length ? 'blocked' : ''}" style="margin-top:8px" data-act="go-migrate">MIGRATE — MOVE ${n(pf.migrate.moves + pf.migrate.companions)} FILES INTO THE NEW LAYOUT</div>
+      <div style="font:400 10px var(--mono);color:var(--fg-faint);margin-top:6px;text-align:center">renames the last materialize in place — nothing re-rendered, no duplicates, emptied folders removed</div>` : ''}
       <div style="font:400 10px var(--mono);color:var(--fg-faint);margin-top:8px;text-align:center">writes to the recipe's target with the full rule set — toggles here are preview only</div>`;
   } else {
     right = `<div style="font:400 11px var(--mono);color:var(--fg-faint);padding:24px 4px">no rules enabled</div>`;
@@ -1107,7 +1117,7 @@ function renderRun() {
 
   return `<div class="run-wrap">
     <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:4px">
-      <span style="font:600 14px var(--sans)">Materialize</span>
+      <span style="font:600 14px var(--sans)">${r.verb === 'migrate' ? 'Migrate' : 'Materialize'}</span>
       <span style="font:500 11px var(--mono);color:var(--fg-faint)">${esc(r.view || S.view || '')} · lock is written only on success</span>
     </div>
     <div style="font:400 11px var(--sans);color:var(--fg-faint);margin-bottom:16px">${sub}</div>
@@ -1348,6 +1358,7 @@ function wire() {
         loadPreflight();
       }
       if (act === 'go-run') { if (!el.classList.contains('blocked')) { S.screen = 'run'; render(); } }
+      if (act === 'go-migrate') { if (!el.classList.contains('blocked')) { S.screen = 'run'; startMigrate(); } }
       if (act === 'start-run') startRun();
       if (act === 'pick-card') { S.selCard = +el.dataset.i; loadCards(); }
       if (act === 'restore') {

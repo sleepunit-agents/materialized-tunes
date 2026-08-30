@@ -51,6 +51,7 @@ type Server struct {
 
 type runState struct {
 	View     string             `json:"view"`
+	Verb     string             `json:"verb"`   // materialize | migrate
 	Status   string             `json:"status"` // running | done | error
 	Count    int                `json:"count"`
 	Total    int                `json:"total"`
@@ -75,6 +76,7 @@ func Handler(ws *workspace.Workspace) http.Handler {
 	mux.HandleFunc("/api/views", s.views)
 	mux.HandleFunc("/api/preflight", s.preflight)
 	mux.HandleFunc("/api/materialize", s.materialize)
+	mux.HandleFunc("/api/migrate", s.migrateRun)
 	mux.HandleFunc("/api/run", s.runStatus)
 	mux.HandleFunc("/api/locks", s.locks)
 	mux.HandleFunc("/api/diff", s.diff)
@@ -282,6 +284,15 @@ func (s *Server) preflight(w http.ResponseWriter, r *http.Request) {
 
 	out := map[string]any{"view": req.View, "device": v.Device, "storage": v.Storage, "layout": v.Layout, "layouts": view.LayoutPresets, "rules": rules}
 	if p != nil {
+		// migrate hint: when the newest lock's files would just move, the
+		// UI offers the rename path instead of duplicate-and-delete
+		if lp, err := lock.Resolve(s.ws.Root, req.View); err == nil {
+			if l, err := lock.Read(lp); err == nil {
+				if mg := lock.PlanMigration(l, p); mg.Work() > 0 {
+					out["migrate"] = map[string]int{"moves": len(mg.Moves), "companions": len(mg.Companions)}
+				}
+			}
+		}
 		out["files"] = len(p.Entries)
 		p.Entries = nil             // the UI wants the verdict, not 84k rows
 		for i := range p.Overlaps { // plan indexes enabled rules; the UI shows all of them
@@ -331,7 +342,7 @@ func (s *Server) materialize(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, 400, fmt.Errorf("view %s has no target — set target in the recipe", req.View))
 		return
 	}
-	rs := &runState{View: req.View, Status: "running", Total: len(p.Entries), Started: time.Now()}
+	rs := &runState{View: req.View, Verb: "materialize", Status: "running", Total: len(p.Entries), Started: time.Now()}
 	s.run = rs
 	s.mu.Unlock()
 
@@ -352,6 +363,86 @@ func (s *Server) materialize(w http.ResponseWriter, r *http.Request) {
 		rs.Status = "done"
 		rs.Count = out.Written
 		rs.Written, rs.Resumed, rs.Skipped, rs.LockPath = out.Written, out.Resumed, out.Skipped, out.LockPath
+	}()
+	jsonOut(w, map[string]string{"status": "started"})
+}
+
+func (s *Server) migrateRun(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		View string `json:"view"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonErr(w, 400, err)
+		return
+	}
+
+	s.mu.Lock()
+	if s.run != nil && s.run.Status == "running" {
+		s.mu.Unlock()
+		jsonErr(w, 409, fmt.Errorf("a run is already in progress (%s)", s.run.View))
+		return
+	}
+	p, err := plan.Build(s.ws, req.View)
+	if err != nil {
+		s.mu.Unlock()
+		jsonErr(w, 500, err)
+		return
+	}
+	if len(p.Errors) > 0 {
+		s.mu.Unlock()
+		jsonErr(w, 409, fmt.Errorf("plan has %d error(s) — fix them first", len(p.Errors)))
+		return
+	}
+	lockPath, err := lock.Resolve(s.ws.Root, req.View)
+	if err != nil {
+		s.mu.Unlock()
+		jsonErr(w, 409, fmt.Errorf("%s has never been materialized — nothing to migrate", req.View))
+		return
+	}
+	l, err := lock.Read(lockPath)
+	if err != nil {
+		s.mu.Unlock()
+		jsonErr(w, 500, err)
+		return
+	}
+	mg := lock.PlanMigration(l, p)
+	if mg.Work() == 0 {
+		s.mu.Unlock()
+		jsonErr(w, 409, fmt.Errorf("nothing to migrate — every locked file already sits where the recipe puts it"))
+		return
+	}
+	v, _ := view.Load(s.ws.Root, req.View)
+	target := v.Target
+	if strings.HasPrefix(target, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			target = filepath.Join(home, target[2:])
+		}
+	}
+	if target == "" {
+		s.mu.Unlock()
+		jsonErr(w, 400, fmt.Errorf("view %s has no target — set target in the recipe", req.View))
+		return
+	}
+	rs := &runState{View: req.View, Verb: "migrate", Status: "running", Total: mg.Work(), Started: time.Now()}
+	s.run = rs
+	s.mu.Unlock()
+
+	go func() {
+		// context.Background, NOT the request context — see materialize
+		out, err := materialize.Migrate(context.Background(), s.ws, l, p, mg, target, func(count, total int) {
+			s.mu.Lock()
+			rs.Count, rs.Total = count, total
+			s.mu.Unlock()
+		})
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if err != nil {
+			rs.Status, rs.Error = "error", err.Error()
+			return
+		}
+		rs.Status = "done"
+		rs.Count = out.Renamed + out.Rewritten
+		rs.Written, rs.Skipped, rs.LockPath = out.Renamed+out.Rewritten, out.Skipped, out.LockPath
 	}()
 	jsonOut(w, map[string]string{"status": "started"})
 }

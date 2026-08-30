@@ -585,8 +585,27 @@ glob = "**/*.asd"
   writes it; plan refuses otherwise rather than filing everything under
   `_Unsorted`). Switching layout on a live target moves every file:
   materialize does not prune, so preflight warns with the count from the
-  newest lock ("N of M files now land at a different path — empty the
-  target first, or the old tree stays beside the new one").
+  newest lock ("N of M files now land at a different path") and points at
+  `mtunes migrate` (below); the alternative is emptying the target first,
+  or the old tree stays beside the new one.
+- **`mtunes migrate <view>`** (shipped 2026-08-30) executes a layout (or
+  `as`) change by *renaming* the last materialize into the new tree —
+  near-instant on one volume, nothing re-rendered, no duplicate trees.
+  Scope is exactly the diff's "would MOVE" set: a locked file whose source
+  SHA and transform are unchanged and whose size on the target still
+  matches the lock is renamed (two-phase, via a `.mtunes-mig` temp beside
+  the destination, so swaps/chains and case-only renames are safe and an
+  interrupted run resumes). Ableton companions are re-rendered from source
+  instead — the sample paths written inside them are the layout — and the
+  old copy is deleted only after its bytes are verified against the lock.
+  Directories the moves emptied are removed (`os.Remove` semantics: never
+  a dir still holding anything). Everything else — new selections, content
+  drift, transform changes, size-drifted outputs — is left for a follow-up
+  materialize and reported. A new lock records the target as it now
+  stands; diff against it is clean. `--dry-run` lists the renames;
+  `--to` overrides the target. The UI offers it on preflight whenever the
+  newest lock has movable files ("MIGRATE — move N files into the new
+  layout").
 - Excludes apply across all includes.
 - `format_tree = "strip"` (default) drops the vendor's parallel-format
   level from output paths using annotations (`[formats] canonical_dir` /

@@ -61,8 +61,8 @@ func WarnMoved(workspaceRoot string, p *plan.Plan) {
 		why = fmt.Sprintf("layout changed from %s to %s", layoutLabel(l.Layout), layoutLabel(p.View.Layout))
 	}
 	p.Warnings = append(p.Warnings, fmt.Sprintf(
-		"%d of the %d files from the last materialize (%s) now land at a different path — %s. Materialize does not prune: empty the target first, or the old tree stays beside the new one",
-		moved, shared, l.Created.Local().Format("2006-01-02 15:04"), why))
+		"%d of the %d files from the last materialize (%s) now land at a different path — %s. Materialize does not prune: `mtunes migrate %s` renames them into place; otherwise empty the target first, or the old tree stays beside the new one",
+		moved, shared, l.Created.Local().Format("2006-01-02 15:04"), why, p.View.Name))
 }
 
 func layoutLabel(tpl string) string {
