@@ -7,6 +7,44 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.7 — 2026-08-31 (one sample, one cut — the device decides which)
+
+Field report: "collision: 3 sources render to `_unsorted/polyend/bass
+tools/mids/mids_antidote_c.wav` … it's grabbing everything, including
+multiple copies of the same thing. it should be filtering to one of them.
+in this case I'm doing a daw one, so best quality or whatever."
+
+Every Polyend Palette pack ships its one-shots three times — `Pack 24 bit
+stereo`, `Pack 16 bit stereo`, `Pack 16 bit mono`. The annotation layer
+already knew (`canonical_dir` + `parallel_dirs`), and format-tree
+stripping already dropped the level from output paths; what nothing did
+was *choose*. So all three cuts of `Mids_Antidote_C.wav` landed on one
+output path and pre-flight errored on a collision that isn't one: those
+are not different samples, they are one sample cut for different machines.
+
+`cuts = "best"` is now the default (SPEC §6). A group of entries is
+treated as cuts of one sample only when its members come out of
+*different* format trees of one pack **and** share a duration — the
+observational proof that nothing is being thrown away. Two files of
+different lengths under one name are different recordings whatever tree
+they sit in, and still error; so do two files inside the same tree.
+
+Which cut wins is scored on what comes out the far side, never on what
+went in: delivered channels, then sample rate, then bit depth, each
+capped at the source's own — upsampling invents nothing, and a 16-bit
+file in a 24-bit container still carries 16 bits of record. Cuts that
+deliver the same thing are separated by which needs no transcode, then by
+the vendor's own tree order. One rule, right answer at both ends: a
+24-bit stereo DAW library keeps the master; the 16-bit mono Tracker keeps
+the cut Polyend made for it and copies it byte-for-byte, no ffmpeg spawn.
+`cuts = "all"` opts out.
+
+Flow-on the collision exposed: the plan's counters were tallied during
+placement, before dedup and the limit cut the set down — so a library
+that ships three ways reported its unsorted files three times. They are
+derived from the surviving entries now (`recount`), which is what every
+number on the pre-flight card claims to mean.
+
 ## v0.9.6 — 2026-08-31 (the Recipe screen shows vendors, not rules)
 
 Field report: "I'm looking at this big hunk of rules and thinking... I

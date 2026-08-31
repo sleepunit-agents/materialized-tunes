@@ -624,8 +624,21 @@ glob = "**/*.asd"
   From Mars/WAV/Kicks/x` → `808 From Mars/Kicks/x`, `ASMR/ASMR 24 bit
   stereo/y` → `ASMR/y`. Category dirs at pack root are never trees (Rhythm
   Lab, BMT, Polyend Heights); unknown vendors mirror; an include whose glob
-  root already reaches into the tree is left to its `as`. *Which* tree to
-  select is still the recipe's job (`"keep"` to disable).
+  root already reaches into the tree is left to its `as` (`"keep"` to
+  disable).
+- `cuts = "best"` (default) picks *which* tree, per file, from what the
+  device can take. When a pack ships one sample under several trees —
+  every Polyend Palette pack holds its one-shots as `24 bit stereo`,
+  `16 bit stereo` and `16 bit mono` — the stripped paths land on top of
+  each other, and only the best-serving cut renders. "Best" is scored on
+  what comes out, not what went in: delivered channels, then rate, then
+  depth, each capped at the source's own (upsampling invents nothing);
+  ties go to the cut needing no transcode, then to the vendor's own tree
+  order. So a 24-bit stereo DAW library keeps the master, and a 16-bit
+  mono tracker keeps the cut the vendor made for it, byte-for-byte. A
+  group is only treated as cuts of one sample when its members come from
+  *different* trees of one pack and share a duration — anything else is a
+  real collision and still errors (§7). `cuts = "all"` renders every cut.
 - `dedup = "content"` renders byte-identical sources once (first output
   path in sort order; deterministic, pinned). Opt-in, because a DAW kit
   folder wants its members even when they duplicate the one-shots folder.

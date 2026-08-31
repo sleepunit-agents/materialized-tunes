@@ -385,3 +385,27 @@ func (v *Vendor) MatchIdentity(p *Pack, shas map[string]bool) (kind string, frac
 	}
 	return "partial", fraction
 }
+
+// FormatTreeRank orders a pack's format trees the way the vendor itself
+// does: 0 for the canonical audio dir, 1+ for the parallel exports in the
+// order vendor.toml lists them, and a sentinel past the end for a tree a
+// pack's own [[dir]] map declares that the vendor's globs don't name. ok
+// is false when dir is not a format tree at all — same verdict as
+// IsFormatTree. Consumers use the rank as a last-resort tiebreak when one
+// pack ships the same sample under several trees.
+func (v *Vendor) FormatTreeRank(p *Pack, dir string) (rank int, ok bool) {
+	if !v.IsFormatTree(p, dir) {
+		return 0, false
+	}
+	if v.CanonicalDir != "" && v.CanonicalDir != "." {
+		if m, _ := doublestar.Match(v.CanonicalDir, dir); m {
+			return 0, true
+		}
+	}
+	for i, g := range v.ParallelDirs {
+		if m, _ := doublestar.Match(g, dir); m {
+			return i + 1, true
+		}
+	}
+	return len(v.ParallelDirs) + 1, true
+}

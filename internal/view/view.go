@@ -33,6 +33,13 @@ type View struct {
 	// duplicate is a wasted slot.
 	Dedup string `toml:"dedup" json:"dedup,omitempty"`
 
+	// Cuts: "" / "best" (default) — when a pack ships one sample under
+	// several format trees (Polyend's 24-bit-stereo / 16-bit-stereo /
+	// 16-bit-mono cuts of the same one-shots), only the cut this device
+	// takes best renders; or "all" — every cut renders, which under
+	// format_tree = "strip" means they collide.
+	Cuts string `toml:"cuts" json:"cuts,omitempty"`
+
 	// Layout: "" (default — mirror: source-relative paths under each
 	// include's `as` prefix) or a template over the tokens in
 	// ParseLayout's doc, e.g. "{family}/{instrument}/{category}/{pack}/{file}".
@@ -98,6 +105,11 @@ func LoadRaw(workspaceRoot, name string) (*View, error) {
 	case "", "content":
 	default:
 		return nil, fmt.Errorf("view %s: dedup must be empty or content", name)
+	}
+	switch v.Cuts {
+	case "", "best", "all":
+	default:
+		return nil, fmt.Errorf("view %s: cuts must be best or all", name)
 	}
 	if _, err := ParseLayout(v.Layout); err != nil {
 		return nil, fmt.Errorf("view %s: %w", name, err)

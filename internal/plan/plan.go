@@ -63,7 +63,29 @@ type Entry struct {
 	DurationS  float64 `json:"duration_s"`
 
 	parents []string // intra-pack dirs a {file} layout may prepend to keep names apart
+
+	// Which of the pack's format trees this file came out of, and the
+	// vendor's own rank for it (0 = canonical audio dir). Set only when
+	// the tree level was stripped from OutPath — which is exactly when
+	// two cuts of one sample can land on the same output path. See cuts.go.
+	tree     string
+	treeRank int
+
+	placed placeFlags // what the layout template made of it; see recount
 }
+
+// placeFlags records the compromises a layout template made for one entry,
+// so the plan's counters and warnings can be recomputed from the entries
+// that actually survive — dropped format cuts, deduped bytes and the
+// view's limit all cut the set down after placement.
+type placeFlags uint8
+
+const (
+	placeUnsorted placeFlags = 1 << iota
+	placeUncategorized
+	placeGeneral
+	placeFX
+)
 
 type Skip struct {
 	Location string `json:"location"`
@@ -106,6 +128,7 @@ type Plan struct {
 	Copied             int    `json:"copied,omitempty"`               // sources already in device format, copied without transcoding
 	Companions         int    `json:"companions,omitempty"`           // Ableton documents riding along, sample refs rewritten at materialize
 	Deduped            int    `json:"deduped,omitempty"`              // identical-content sources dropped by dedup = "content"
+	CutsDropped        int    `json:"cuts_dropped,omitempty"`         // redundant format cuts of a sample the pack ships several ways
 	Unsorted           int    `json:"unsorted,omitempty"`             // files a templated layout could not place (no instrument label) — under _Unsorted/
 	Uncategorized      int    `json:"uncategorized,omitempty"`        // placed files whose {category} fell back to an _Unsorted folder
 	General            int    `json:"general,omitempty"`              // placed files labeled only at family level — {instrument} rendered as _General
@@ -374,8 +397,6 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 			o.Files, o.Location, o.RuleA+1, o.GlobA, prefixLabel(o.AsA), o.RuleB+1, o.GlobB, prefixLabel(o.AsB)))
 	}
 
-	var uncatEx string   // first source path whose {category} fell back
-	var generalEx string // first source path whose {instrument} is the family catch-all
 	for _, pk := range selection {
 		ce := pk.ce
 		loc := pk.inc.Location
@@ -392,43 +413,36 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 			continue
 		}
 
-		srcForOut := ce.Path
+		srcForOut, tree, treeRank := ce.Path, "", 0
 		if st := strippers[loc]; st != nil && (lay != nil || !globCoversTree(pk.inc, st.vendorDirs)) {
-			if stripped, ok := st.strip(ce.Path); ok {
-				srcForOut = stripped
-				p.StrippedFormatTree++
+			if stripped, t, rank, ok := st.strip(ce.Path); ok {
+				srcForOut, tree, treeRank = stripped, t, rank
 			}
 		}
 		// Where it lands: the template when the recipe has one, else the
 		// include's `as` over the mirrored path.
 		var out string
 		var parents []string
+		var placed placeFlags
 		if ly != nil {
 			pl := ly.place(loc, srcForOut, ce.SHA256)
 			out, parents = pl.out, pl.parents
 			if pl.unsorted {
-				p.Unsorted++
+				placed |= placeUnsorted
 			}
 			if pl.uncategorized {
-				p.Uncategorized++
-				if uncatEx == "" {
-					uncatEx = srcForOut
-				}
+				placed |= placeUncategorized
 			}
 			if pl.general {
-				p.General++
-				if generalEx == "" {
-					generalEx = srcForOut
-				}
+				placed |= placeGeneral
 			}
 			if pl.fx {
-				p.FX++
+				placed |= placeFX
 			}
 		} else {
 			out = mirrorPath(pk.inc, srcForOut)
 		}
 		if ce.Audio == nil { // companion document
-			p.Companions++
 			p.Entries = append(p.Entries, Entry{
 				Location:   loc,
 				SourcePath: ce.Path,
@@ -439,21 +453,18 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 				Companion:  true,
 				InFormat:   strings.ToLower(strings.TrimPrefix(path.Ext(ce.Path), ".")),
 				parents:    parents,
+				tree:       tree,
+				treeRank:   treeRank,
+				placed:     placed,
 			})
 			continue
 		}
 
 		outCh, dualMono := OutputChannels(dev, ce)
-		if dualMono {
-			p.DualMonoFolded++
-		}
 		outFrames := int64(math.Round(float64(ce.Audio.Frames) *
 			float64(dev.Audio.SampleRate) / float64(ce.Audio.SampleRate)))
 		outBytes := ConvertedBytes(dev, ce)
 		copyThrough := Passthrough(dev, ce)
-		if copyThrough {
-			p.Copied++
-		}
 
 		p.Entries = append(p.Entries, Entry{
 			Location:    loc,
@@ -474,27 +485,18 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 			InFormat:    ce.Audio.Format,
 			DurationS:   ce.Audio.DurationS,
 			parents:     parents,
+			tree:        tree,
+			treeRank:    treeRank,
+			placed:      placed,
 		})
 	}
 	sort.Slice(p.Entries, func(i, j int) bool { return p.Entries[i].OutPath < p.Entries[j].OutPath })
-	if p.Unsorted > 0 {
-		ex := ""
-		for _, e := range p.Entries {
-			if strings.HasPrefix(e.OutPath, UnsortedDir+"/") {
-				ex = e.SourcePath
-				break
-			}
-		}
-		p.Warnings = append(p.Warnings, fmt.Sprintf("%d %s carry no instrument label the layout can use and land under %s/ (mirror tree) — e.g. %s",
-			p.Unsorted, plural(p.Unsorted, "file", "files"), UnsortedDir, ex))
-	}
-	if p.Uncategorized > 0 {
-		p.Warnings = append(p.Warnings, fmt.Sprintf("%d %s carry no loop/one-shot signal in their naming and land in an %s/ category folder — e.g. %s (vendor annotation or the shared categories.toml can teach it)",
-			p.Uncategorized, plural(p.Uncategorized, "file", "files"), UnsortedDir, uncatEx))
-	}
-	if p.General > 0 {
-		p.Warnings = append(p.Warnings, fmt.Sprintf("%d %s are labeled only at family level (\"drums\", \"woodwind\", …) and land in a %s/ instrument folder — e.g. %s (instruments.toml can teach finer labels)",
-			p.General, plural(p.General, "file", "files"), GeneralDir, generalEx))
+
+	// Redundant format cuts go before anything that looks at output paths
+	// in aggregate: dedup, disambiguation and the fit are all answers about
+	// what actually materializes.
+	if v.Cuts != "all" {
+		p.pickCuts(dev.Naming.CaseSensitive)
 	}
 
 	if v.Dedup == "content" {
@@ -525,6 +527,8 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 		p.LimitedFrom = len(p.Entries)
 		p.Entries = p.Entries[:v.Limit]
 	}
+
+	p.recount()
 
 	if dev.Delivery.Layout == "flatten" {
 		flatten(p.Entries, dev.Naming.CaseSensitive)
@@ -602,15 +606,16 @@ func globCoversTree(inc view.Include, vendorDirs bool) bool {
 	return depth > packDepth
 }
 
-// strip returns the path without its format-tree segment, and whether one
-// was removed.
-func (st *treeStripper) strip(p string) (string, bool) {
+// strip returns the path without its format-tree segment, the segment it
+// removed, and the vendor's own rank for that tree (0 = canonical audio
+// dir). ok is false when there was no tree to remove.
+func (st *treeStripper) strip(p string) (out, tree string, rank int, ok bool) {
 	segs := strings.Split(p, "/")
 	packIdx := 0 // index of the pack dir segment
 	vendor := st.fixed
 	if st.vendorDirs {
 		if len(segs) < 4 { // vendor/pack/tree/file at minimum
-			return p, false
+			return p, "", 0, false
 		}
 		packIdx = 1
 		v, seen := st.byTop[segs[0]]
@@ -620,17 +625,19 @@ func (st *treeStripper) strip(p string) (string, bool) {
 		}
 		vendor = v
 	} else if len(segs) < 3 { // pack/tree/file
-		return p, false
+		return p, "", 0, false
 	}
 	if vendor == nil {
-		return p, false
+		return p, "", 0, false
 	}
 	pack := vendor.PackByDir(segs[packIdx])
-	if !vendor.IsFormatTree(pack, segs[packIdx+1]) {
-		return p, false
+	tree = segs[packIdx+1]
+	rank, ok = vendor.FormatTreeRank(pack, tree)
+	if !ok {
+		return p, "", 0, false
 	}
-	out := append(append([]string{}, segs[:packIdx+1]...), segs[packIdx+2:]...)
-	return strings.Join(out, "/"), true
+	kept := append(append([]string{}, segs[:packIdx+1]...), segs[packIdx+2:]...)
+	return strings.Join(kept, "/"), tree, rank, true
 }
 
 // prefixLabel names an include's output prefix for humans: the As value
@@ -944,4 +951,64 @@ func HumanBytes(n int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
+}
+
+// recount derives every "how many, and what happened to them" counter from
+// the entries that actually materialize, and issues the warnings about
+// what the layout could not place. It runs once the entry set is final —
+// after dropped format cuts, content dedup and the view's limit — so the
+// numbers a human reads describe the output, not the selection that fed
+// it. Counting during placement instead would triple the unsorted figure
+// for any pack that ships its library three ways.
+func (p *Plan) recount() {
+	p.StrippedFormatTree, p.Copied, p.DualMonoFolded, p.Companions = 0, 0, 0, 0
+	p.Unsorted, p.Uncategorized, p.General, p.FX = 0, 0, 0, 0
+	var unsortedEx, uncatEx, generalEx string
+	for _, e := range p.Entries {
+		if e.tree != "" {
+			p.StrippedFormatTree++
+		}
+		if e.Companion {
+			p.Companions++
+		}
+		if e.Copy {
+			p.Copied++
+		}
+		if e.DualMono {
+			p.DualMonoFolded++
+		}
+		if e.placed&placeUnsorted != 0 {
+			p.Unsorted++
+			if unsortedEx == "" {
+				unsortedEx = e.SourcePath
+			}
+		}
+		if e.placed&placeUncategorized != 0 {
+			p.Uncategorized++
+			if uncatEx == "" {
+				uncatEx = e.SourcePath
+			}
+		}
+		if e.placed&placeGeneral != 0 {
+			p.General++
+			if generalEx == "" {
+				generalEx = e.SourcePath
+			}
+		}
+		if e.placed&placeFX != 0 {
+			p.FX++
+		}
+	}
+	if p.Unsorted > 0 {
+		p.Warnings = append(p.Warnings, fmt.Sprintf("%d %s carry no instrument label the layout can use and land under %s/ (mirror tree) — e.g. %s",
+			p.Unsorted, plural(p.Unsorted, "file", "files"), UnsortedDir, unsortedEx))
+	}
+	if p.Uncategorized > 0 {
+		p.Warnings = append(p.Warnings, fmt.Sprintf("%d %s carry no loop/one-shot signal in their naming and land in an %s/ category folder — e.g. %s (vendor annotation or the shared categories.toml can teach it)",
+			p.Uncategorized, plural(p.Uncategorized, "file", "files"), UnsortedDir, uncatEx))
+	}
+	if p.General > 0 {
+		p.Warnings = append(p.Warnings, fmt.Sprintf("%d %s are labeled only at family level (\"drums\", \"woodwind\", …) and land in a %s/ instrument folder — e.g. %s (instruments.toml can teach finer labels)",
+			p.General, plural(p.General, "file", "files"), GeneralDir, generalEx))
+	}
 }

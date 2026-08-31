@@ -52,6 +52,9 @@ func (p *Plan) Render(w io.Writer, verbose bool) {
 	if n := p.Deduped; n > 0 {
 		fmt.Fprintf(w, "  ℹ %d duplicate sources (identical bytes) render once — dedup = \"content\"\n", n)
 	}
+	if n := p.CutsDropped; n > 0 {
+		fmt.Fprintf(w, "  ℹ %d redundant format %s dropped — one sample, several vendor cuts; the one this device takes best renders (cuts = \"all\" keeps every cut)\n", n, plural(n, "cut", "cuts"))
+	}
 	if n := p.Copied; n > 0 {
 		fmt.Fprintf(w, "  ℹ %d sources already in device format copy byte-for-byte, no transcode\n", n)
 	}
