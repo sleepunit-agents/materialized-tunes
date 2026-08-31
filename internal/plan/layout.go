@@ -116,6 +116,9 @@ func (ly *layouter) place(loc, srcPath, sha string) placement {
 		meta = m
 		vals[view.TokFamily] = displayName(m.Family)
 		vals[view.TokInstrument] = displayName(m.Instrument)
+		if d := ly.lex.DisplayName(m.Instrument); d != "" {
+			vals[view.TokInstrument] = d
+		}
 		vals[view.TokCategory] = displayName(m.Category)
 		catchAll = m.Instrument != "" && m.Instrument == m.Family
 		isFX = m.Category == "fx" || m.Family == "fx"
@@ -165,11 +168,16 @@ func (ly *layouter) place(loc, srcPath, sha string) placement {
 		pl.out, pl.unsorted = ly.fallback.Render(vals), true
 		return pl
 	}
-	if ly.lex.FlatFamily(meta.Family) {
+	if ly.lex.FlatFamily(meta.Family) && !ly.lex.SplitsFlat(meta.Instrument) {
 		// A flat family doesn't split by instrument: bass is bass, and the
 		// sub/reese/wub taxonomy in vendor naming isn't reliable enough to
 		// fight samples over. The {instrument} level drops; a template
 		// with only {instrument} renders the family name there instead.
+		//
+		// One exception, marked per entry in the lexicon: an instrument the
+		// vendor names outright rather than in jargon keeps its folder even
+		// here (upright bass among the 808s). Everything else in the family
+		// still goes flat around it.
 		if ly.lay.Uses(view.TokFamily) {
 			vals[view.TokInstrument] = ""
 		} else {

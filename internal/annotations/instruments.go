@@ -18,6 +18,16 @@ type Instrument struct {
 	Family  string   `toml:"family" json:"family,omitempty"`
 	Aliases []string `toml:"aliases" json:"aliases,omitempty"`
 	Avoid   []string `toml:"avoid" json:"avoid,omitempty"` // phrases that contain an alias but mean something else
+	// Split exempts one entry from its family's flat rendering: the family
+	// stays flat for everything else, this instrument keeps its own folder.
+	// For a real named instrument sitting in a family that is flat because
+	// the REST of it is jargon — an upright bass among the 808s and reeses.
+	Split bool `toml:"split" json:"split,omitempty"`
+	// Display overrides the folder name derived from the id. Ids are slugs
+	// and the derivation keeps their hyphens (it also renders categories,
+	// where "one-shots" → "One-Shots" is right); a multi-word instrument
+	// name wants the space back: "upright-bass" → "Upright Bass".
+	Display string `toml:"display" json:"display,omitempty"`
 }
 
 // Family is one [[family]] block of the shared lexicon: knowledge about a
@@ -25,7 +35,10 @@ type Instrument struct {
 // layout tree does not split by instrument — bass is bass; the sub/reese/wub
 // taxonomy in vendor naming isn't reliable enough to fight samples over.
 // The instrument entries still resolve and still land in harvest metadata;
-// flat only stops the folder split.
+// flat only stops the folder split, and a single instrument can opt back
+// out of it with `split` (see Instrument.Split). Split is a property of the
+// shared lexicon: a vendor-local entry introducing a brand-new id can't set
+// it, only pin one that already exists.
 type Family struct {
 	ID   string `toml:"id" json:"id"`
 	Flat bool   `toml:"flat" json:"flat,omitempty"`
@@ -35,9 +48,11 @@ type Family struct {
 type Lexicon struct {
 	Instruments []Instrument
 	Families    []Family
-	patterns    []*regexp.Regexp // per instrument: whole-word alternation of aliases
-	avoids      []*regexp.Regexp // per instrument: nil when none
-	flat        map[string]bool  // family id → flat
+	patterns    []*regexp.Regexp  // per instrument: whole-word alternation of aliases
+	avoids      []*regexp.Regexp  // per instrument: nil when none
+	flat        map[string]bool   // family id → flat
+	split       map[string]bool   // instrument id → keeps its folder in a flat family
+	display     map[string]string // instrument id → folder name override
 }
 
 // LoadInstruments reads <root>/instruments.toml. A missing file yields an
@@ -66,6 +81,21 @@ func (lx *Lexicon) FlatFamily(id string) bool {
 	return lx != nil && id != "" && lx.flat[id]
 }
 
+// SplitsFlat reports whether this instrument keeps its own folder level even
+// though its family is flat. Safe on a nil lexicon.
+func (lx *Lexicon) SplitsFlat(id string) bool {
+	return lx != nil && id != "" && lx.split[id]
+}
+
+// DisplayName is the folder name the lexicon wants for an instrument id, or
+// "" to let the caller derive one from the id. Safe on a nil lexicon.
+func (lx *Lexicon) DisplayName(id string) string {
+	if lx == nil || id == "" {
+		return ""
+	}
+	return lx.display[id]
+}
+
 func (lx *Lexicon) compile() {
 	lx.patterns = make([]*regexp.Regexp, len(lx.Instruments))
 	lx.avoids = make([]*regexp.Regexp, len(lx.Instruments))
@@ -77,6 +107,15 @@ func (lx *Lexicon) compile() {
 	for _, f := range lx.Families {
 		if f.Flat {
 			lx.flat[f.ID] = true
+		}
+	}
+	lx.split, lx.display = map[string]bool{}, map[string]string{}
+	for _, ins := range lx.Instruments {
+		if ins.Split {
+			lx.split[ins.ID] = true
+		}
+		if ins.Display != "" {
+			lx.display[ins.ID] = ins.Display
 		}
 	}
 }

@@ -29,6 +29,13 @@ family = "drums"
 aliases = ["drum", "drums", "kit", "kits"]
 
 [[instrument]]
+id = "upright-bass"
+family = "bass"
+split = true
+display = "Upright Bass"
+aliases = ["upright bass", "double bass"]
+
+[[instrument]]
 id = "bass"
 family = "bass"
 aliases = ["bass"]
@@ -101,6 +108,43 @@ func TestFlatFamily(t *testing.T) {
 	var nilLex *Lexicon
 	if nilLex.FlatFamily("bass") {
 		t.Error("nil lexicon must report nothing flat")
+	}
+}
+
+func TestSplitAndDisplay(t *testing.T) {
+	lx := testLex(t)
+	// The one entry that keeps its folder inside a flat family.
+	if !lx.SplitsFlat("upright-bass") {
+		t.Error("upright-bass should split out of the flat bass family")
+	}
+	if lx.SplitsFlat("bass") || lx.SplitsFlat("kick") || lx.SplitsFlat("") {
+		t.Error("only entries marked split may split")
+	}
+	if got := lx.DisplayName("upright-bass"); got != "Upright Bass" {
+		t.Errorf("DisplayName = %q, want %q", got, "Upright Bass")
+	}
+	if lx.DisplayName("bass") != "" || lx.DisplayName("") != "" {
+		t.Error("an entry with no display override must report none")
+	}
+	var nilLex *Lexicon
+	if nilLex.SplitsFlat("upright-bass") || nilLex.DisplayName("upright-bass") != "" {
+		t.Error("nil lexicon must report nothing")
+	}
+	// Order is specificity: the specific entry sits above generic bass, so
+	// it wins wherever on the path the vendor wrote it.
+	for _, c := range []struct {
+		stem string
+		dirs []string
+		want string
+	}{
+		{"Upright Bass C2", []string{"Trio", "Bass"}, "upright-bass"},
+		{"Bass_01", []string{"Trio", "Upright Bass"}, "upright-bass"},
+		{"Double Bass 03", []string{"Acoustic"}, "upright-bass"},
+		{"Reese_01", []string{"Bass"}, "bass"},
+	} {
+		if got, _ := lx.Resolve(c.stem, c.dirs, nil); got != c.want {
+			t.Errorf("Resolve(%q, %v) = %q, want %q", c.stem, c.dirs, got, c.want)
+		}
 	}
 }
 

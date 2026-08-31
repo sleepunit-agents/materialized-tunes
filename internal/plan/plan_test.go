@@ -764,9 +764,11 @@ func TestLayoutTemplate(t *testing.T) {
 		wavEntry("Grit/foley/Rain Loop.wav", 1, 48000, 16, 4800),              // family fx, flat → FX/Loops/
 		wavEntry("Grit/fx/Weird One.wav", 1, 48000, 16, 4800),                 // fx catch-all all the way down → FX/_Unsorted/
 		wavEntry("Grit/bass/Champion Sub.wav", 1, 48000, 16, 4800),            // bass is flat: no Bass/Sub/ level → Bass/One-Shots/
+		wavEntry("Grit/bass/Upright Bass C2.wav", 1, 48000, 16, 4800),         // split=true: the one entry that keeps its level in a flat family
 	}, map[string]string{
 		"annotations/vendors/splice/vendor.toml": "[vendor]\nname=\"Splice\"\nslug=\"splice\"\n",
-		"annotations/instruments.toml":           "[[family]]\nid=\"bass\"\nflat=true\n[[family]]\nid=\"fx\"\nflat=true\n",
+		"annotations/instruments.toml": "[[family]]\nid=\"bass\"\nflat=true\n[[family]]\nid=\"fx\"\nflat=true\n" +
+			"[[instrument]]\nid=\"upright-bass\"\nfamily=\"bass\"\nsplit=true\ndisplay=\"Upright Bass\"\naliases=[\"upright bass\"]\n",
 		"annotations-cache/meta/src.jsonl": strings.Join([]string{
 			`{"sha":"aaGrit/one_shots/kicks/GTH_Kick_03.wav","category":"one-shots","instrument":"kick","family":"drums"}`,
 			`{"sha":"aaGrit/loops/drums/GTH_Drum_Loop_124.wav","category":"loops","instrument":"drums","family":"drums","bpm":124}`,
@@ -778,6 +780,7 @@ func TestLayoutTemplate(t *testing.T) {
 			`{"sha":"aaGrit/foley/Rain Loop.wav","category":"loops","instrument":"foley","family":"fx"}`,
 			`{"sha":"aaGrit/fx/Weird One.wav","category":"fx","instrument":"fx","family":"fx"}`,
 			`{"sha":"aaGrit/bass/Champion Sub.wav","category":"one-shots","instrument":"sub","family":"bass"}`,
+			`{"sha":"aaGrit/bass/Upright Bass C2.wav","category":"one-shots","instrument":"upright-bass","family":"bass"}`,
 		}, "\n") + "\n",
 	})
 	ws.Config.Locations[0].Vendor = "splice"
@@ -814,6 +817,7 @@ as="SPLICE"
 		"Grit/foley/Rain Loop.wav":               "FX/Loops/Grit/Rain Loop.wav",
 		"Grit/fx/Weird One.wav":                  "FX/_Unsorted/Grit/Weird One.wav",
 		"Grit/bass/Champion Sub.wav":             "Bass/One-Shots/Grit/Champion Sub.wav",
+		"Grit/bass/Upright Bass C2.wav":          "Bass/Upright Bass/One-Shots/Grit/Upright Bass C2.wav",
 	}
 	for src, out := range want {
 		if got[src] != out {
@@ -860,7 +864,7 @@ as="Shots"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(p.Entries) != 8 || len(p.Overlaps) != 0 || len(p.Errors) != 0 {
+	if len(p.Entries) != 9 || len(p.Overlaps) != 0 || len(p.Errors) != 0 {
 		t.Errorf("two rules: entries=%d overlaps=%d errors=%v", len(p.Entries), len(p.Overlaps), p.Errors)
 	}
 	got = map[string]string{}
@@ -874,6 +878,11 @@ as="Shots"
 	// stands in at {instrument} — Bass, not Sub.
 	if got["Grit/bass/Champion Sub.wav"] != "Bass/Splice/Grit/bass/Champion Sub.wav" {
 		t.Errorf("flat family at {instrument}: %q", got["Grit/bass/Champion Sub.wav"])
+	}
+	// ...but the split entry keeps its own name there, which is the whole
+	// point of it: Upright Bass, not Bass.
+	if got["Grit/bass/Upright Bass C2.wav"] != "Upright Bass/Splice/Grit/bass/Upright Bass C2.wav" {
+		t.Errorf("split instrument at {instrument}: %q", got["Grit/bass/Upright Bass C2.wav"])
 	}
 
 	// A template that needs metadata refuses to run against a location

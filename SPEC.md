@@ -582,7 +582,15 @@ glob = "**/*.asd"
   == family id), `{instrument}` renders as `_General/` instead of
   doubling the name (`Drums/_General/Loops/`, never `Drums/Drums/`);
   preflight counts these with an example, and teaching instruments.toml
-  a finer label is the durable fix. A file with
+  a finer label is the durable fix. A family the lexicon marks `flat`
+  drops the `{instrument}` level entirely (`Bass/One-Shots/<pack>/`) —
+  bass and synth sub-typing is genre jargon read out of filenames, not a
+  label worth a folder — except for a single entry marked `split`, a real
+  instrument the vendor names outright inside an otherwise-jargon family
+  (`Bass/Upright Bass/One-Shots/`); its folder name comes from the
+  lexicon's `display` when set. Under a template with no `{family}`, a
+  flat family renders its own name at `{instrument}` and a split entry
+  renders its own. A file with
   **no instrument label** cannot be
   placed by a template that asks for one and goes to
   `_Unsorted/{vendor}/{pack}/{path}` — the mirror tree, one folder down —
