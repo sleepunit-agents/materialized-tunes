@@ -146,12 +146,86 @@ func (lx *Lexicon) match(segment string, vendorFirst []Instrument) (id, family s
 			return ins.ID, lx.familyOf(ins.ID, ins.Family), lx.rankOf(ins.ID)
 		}
 	}
+	if conjunctionRe.MatchString(segment) {
+		if id, family, rank, ok := lx.compound(pad); ok {
+			return id, family, rank
+		}
+	}
 	for i, ins := range lx.Instruments {
 		if hit(pad, lx.patterns[i], lx.avoids[i]) {
 			return ins.ID, ins.Family, i
 		}
 	}
 	return "", "", 0
+}
+
+// conjunctionRe spots a segment that may be naming more than one thing —
+// "Cymbals and Hats", "Kicks & Snares", "Texture + FX", "Clap, Snare". It is
+// checked against the RAW segment because Normalize collapses "&" and "+" to
+// spaces. A false positive costs one extra scan and nothing else: compound
+// declines unless two different instruments actually turn up.
+var conjunctionRe = regexp.MustCompile(`(?i)(^|[^a-z0-9])and([^a-z0-9]|$)|[&+,]`)
+
+// compound reads a segment that names more than one thing. A folder holding
+// two kinds of sound is not a label for either of them: with plain
+// first-hit-wins, "Clap and Snare" files every clap under Snare and
+// "Cymbals and Hats" files every crash under Hat — no error, nothing
+// unsorted, just wrong. So no instrument may claim a file from such a
+// segment.
+//
+// What survives is only what the winners agree on: their shared family,
+// reported through that family's own catch-all entry ("drums", "synth", …).
+// Those entries sit at the END of their section by design, so any specific
+// label elsewhere on the path — the filename Polyend and Splice reliably
+// write — still outranks the folder and decides. When the families disagree
+// too the segment says nothing at all, and a file whose name says nothing
+// either lands in _Unsorted: visible, rather than silently mis-filed.
+//
+// ok is false when the segment names at most one thing after all, and the
+// caller falls through to the ordinary path. Two ways that happens: an alias
+// written for the whole phrase is a deliberate pin ("Claves and Guiro" is one
+// alias of clave, not a compound), and a hit swallowed by a longer one is the
+// same label seen twice ("bass drum" is a kick, not a kick plus a bass).
+func (lx *Lexicon) compound(pad string) (id, family string, rank int, ok bool) {
+	type span struct{ i, lo, hi int }
+	var kept []span
+	for i := range lx.Instruments {
+		p := lx.patterns[i]
+		if !hit(pad, p, lx.avoids[i]) {
+			continue
+		}
+		at := p.FindStringIndex(pad)
+		covered := false
+		for _, k := range kept {
+			if at[0] >= k.lo && at[1] <= k.hi {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			kept = append(kept, span{i, at[0], at[1]})
+		}
+	}
+	ids, fam := map[string]bool{}, ""
+	for _, k := range kept {
+		ins := lx.Instruments[k.i]
+		ids[ins.ID] = true
+		switch {
+		case fam == "":
+			fam = ins.Family
+		case fam != ins.Family:
+			fam = "\x00" // families disagree; the segment can only stay silent
+		}
+	}
+	if len(ids) < 2 {
+		return "", "", 0, false
+	}
+	// A family speaks through its own catch-all instrument (id == family id).
+	// A family without one has nothing to say at this depth.
+	if r := lx.rankOf(fam); r < len(lx.Instruments) {
+		return fam, fam, r, true
+	}
+	return "", "", 0, true
 }
 
 func (lx *Lexicon) rankOf(id string) int {

@@ -131,3 +131,138 @@ func TestNormalize(t *testing.T) {
 		}
 	}
 }
+
+// compoundLexicon adds the pieces the compound rule needs that the small
+// testLexicon lacks: a second word in the same family (snare/clap), a
+// family catch-all to degrade to (drums, synth), a cross-family pair
+// (pad/fx) and an alias written for a whole two-word phrase.
+const compoundLexicon = `
+[[instrument]]
+id = "kick"
+family = "drums"
+aliases = ["kick", "kicks", "bass drum"]
+
+[[instrument]]
+id = "snare"
+family = "drums"
+aliases = ["snare", "snares"]
+
+[[instrument]]
+id = "clap"
+family = "drums"
+aliases = ["clap", "claps"]
+
+[[instrument]]
+id = "drums"
+family = "drums"
+aliases = ["drum", "drums"]
+
+[[instrument]]
+id = "clave"
+family = "percussion"
+aliases = ["clave", "claves", "guiro", "claves and guiro"]
+
+[[instrument]]
+id = "percussion"
+family = "percussion"
+aliases = ["percussion", "perc"]
+
+[[instrument]]
+id = "sub"
+family = "bass"
+aliases = ["sub", "rumble"]
+
+[[instrument]]
+id = "pad"
+family = "synth"
+aliases = ["pad", "pads", "texture", "textures"]
+
+[[instrument]]
+id = "lead"
+family = "synth"
+aliases = ["lead", "leads"]
+
+[[instrument]]
+id = "synth"
+family = "synth"
+aliases = ["synth", "synths"]
+
+[[instrument]]
+id = "sax"
+family = "brass"
+aliases = ["sax"]
+avoid = ["brass sax"]
+
+[[instrument]]
+id = "brass"
+family = "brass"
+aliases = ["brass"]
+
+[[instrument]]
+id = "fx"
+family = "fx"
+aliases = ["fx", "effects"]
+`
+
+func compoundLex(t *testing.T) *Lexicon {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "instruments.toml"), []byte(compoundLexicon), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return LoadInstruments(dir)
+}
+
+// A folder naming two things is a label for neither. Without this the
+// earlier-ranked word takes the whole folder — every clap filed under Snare,
+// silently, with nothing unsorted to notice.
+func TestCompoundSegment(t *testing.T) {
+	lx := compoundLex(t)
+	cases := []struct {
+		name, stem  string
+		dirs        []string
+		want, wantF string
+	}{
+		// the filename decides, either way round
+		{"clap wins from filename", "Clap_Tight_1", []string{"CLAP AND SNARE"}, "clap", "drums"},
+		{"snare wins from filename", "Snare_Rim_1", []string{"CLAP AND SNARE"}, "snare", "drums"},
+		{"lead wins over pluck-side", "Lead_Saw_1", []string{"LEADS AND STABS"}, "lead", "synth"},
+		// filename says nothing: degrade to the family both words share,
+		// never to one of them
+		{"same family degrades", "Antidote_04", []string{"CLAP AND SNARE"}, "drums", "drums"},
+		{"same family, synth", "Antidote_04", []string{"Texture and Lead"}, "synth", "synth"},
+		// families disagree: the segment says nothing at all
+		{"cross-family stays silent", "Antidote_04", []string{"Texture and FX"}, "", ""},
+		{"kick and rumble stays silent", "Antidote_04", []string{"KICKS AND RUMBLE"}, "", ""},
+		{"rumble is a sub, not a kick", "Rumble_Long_1", []string{"KICKS AND RUMBLE"}, "sub", "bass"},
+		// other separators
+		{"ampersand", "Antidote_04", []string{"Kicks & Snares"}, "drums", "drums"},
+		{"plus", "Antidote_04", []string{"Clap + Snare"}, "drums", "drums"},
+		{"comma", "Antidote_04", []string{"Clap, Snare"}, "drums", "drums"},
+		// NOT compounds
+		{"one alias for the whole phrase is a pin", "Hit 01", []string{"Claves and Guiro"}, "clave", "percussion"},
+		{"a longer alias swallows a shorter", "Hit 01", []string{"Bass Drum and Kicks"}, "kick", "drums"},
+		{"no conjunction, no compound", "Deep 01", []string{"Synth Pad"}, "pad", "synth"},
+		{"avoid still wins", "Section 01", []string{"Brass & Sax"}, "brass", "brass"},
+		// the degraded family label must lose to a real one elsewhere
+		{"specific label outranks the family floor", "Kick 01", []string{"Clap and Snare"}, "kick", "drums"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, family := lx.Resolve(c.stem, c.dirs, nil)
+			if got != c.want || family != c.wantF {
+				t.Errorf("Resolve(%q, %v) = %q/%q, want %q/%q", c.stem, c.dirs, got, family, c.want, c.wantF)
+			}
+		})
+	}
+}
+
+// A vendor pin is the escape hatch: a vendor that really does mean one
+// instrument by a two-word folder says so and the compound rule stands down.
+func TestCompoundVendorPinWins(t *testing.T) {
+	lx := compoundLex(t)
+	vendor := []Instrument{{ID: "snare", Aliases: []string{"clap and snare"}}}
+	if got, _ := lx.Resolve("Antidote_04", []string{"CLAP AND SNARE"}, vendor); got != "snare" {
+		t.Errorf("vendor pin: got %q, want snare", got)
+	}
+}
