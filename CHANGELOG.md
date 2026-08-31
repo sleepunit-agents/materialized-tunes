@@ -7,6 +7,48 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.9 — 2026-08-31 (the vendor's device prep is not content)
+
+Follow-on the same night, and the wider call: "in sfm packs we need to
+ignore any of their predone shit. We prep for devices ourselves so their
+work is unnecessary."
+
+That is a different claim from v0.9.8's, and a better one. v0.9.8 treated
+Samples From Mars' sampler trees as *cuts to choose between* and taught
+the resolver to choose. But the cut resolver only ever sees a collision,
+and a sampler tree mostly does not collide with the canonical one — SFM
+files the same hit under `WAV/01. Clean/Agogo Hi 727 25.wav` and under
+`Battery/727 From Mars/Assorted 1 Samples/Agogo Hi 727 25.wav`. Different
+folder names, different output paths, no collision, both render. So after
+v0.9.8 the eight parallel trees collapsed to one — and that survivor was
+still a second copy of hits already present, landing somewhere else.
+~170 files per pack, times however many SFM packs are in the library.
+
+The reason the resolver was the wrong tool: those trees were never a
+choice. They are the vendor doing, ahead of time and for hosts the owner
+may not have, the one job this tool exists to do — prepare a library for
+a device. Their prep is not content. It is the same recordings in a
+folder shape nobody asked for, once per sampler, with that host's patches
+beside it.
+
+So `vendor_prep = "skip"` (default) drops them outright, before cuts are
+scored. Scope is the vendor's own declaration — `[formats] parallel_role
+= "reexport"` only, so Polyend is untouched and a cut vendor's parallel
+trees stay content that `cuts` decides. And it is **a swap, never a
+subtraction**: a pack's sampler trees are skipped only where that pack's
+canonical tree is in the selection to replace them, so a pack shipping
+nothing but a `Battery` tree keeps it, and so does one whose `WAV` tree
+the recipe's globs never picked. The two v0.9.8 tests pass unchanged for
+exactly that reason — they describe packs with no canonical tree.
+
+What it cannot prove is that every hit in a sampler tree also exists
+under the canonical one; nothing cheap can, since the trees are named
+differently, every byte differs by construction and the trims drift. So
+it does not claim to. The plan reports how many skipped names have no
+same-named file under the canonical tree and gives examples — zero being
+the answer that means the swap was clean, shown rather than assumed.
+`vendor_prep = "keep"` renders them like any other source.
+
 ## v0.9.8 — 2026-08-31 (a re-export is not a cut — length stops being the proof)
 
 Field report: "collision: 2 sources render to `drums/_general/one-shots/

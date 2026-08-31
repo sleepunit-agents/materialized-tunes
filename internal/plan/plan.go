@@ -76,6 +76,12 @@ type Entry struct {
 	// need not be the same length ([formats] parallel_role).
 	reexport bool
 
+	// pack: the source path through the pack directory ("Samples From
+	// Mars/727 From Mars"), set alongside tree. It is the scope every
+	// question about parallel trees is asked in — a tree only replaces,
+	// or is replaced by, another tree of the same pack.
+	pack string
+
 	placed placeFlags // what the layout template made of it; see recount
 }
 
@@ -134,6 +140,7 @@ type Plan struct {
 	Companions         int    `json:"companions,omitempty"`           // Ableton documents riding along, sample refs rewritten at materialize
 	Deduped            int    `json:"deduped,omitempty"`              // identical-content sources dropped by dedup = "content"
 	CutsDropped        int    `json:"cuts_dropped,omitempty"`         // redundant format cuts of a sample the pack ships several ways
+	VendorPrepSkipped  int    `json:"vendor_prep_skipped,omitempty"`  // files under a re-export vendor's per-sampler trees, dropped by vendor_prep = "skip"
 	Unsorted           int    `json:"unsorted,omitempty"`             // files a templated layout could not place (no instrument label) — under _Unsorted/
 	Uncategorized      int    `json:"uncategorized,omitempty"`        // placed files whose {category} fell back to an _Unsorted folder
 	General            int    `json:"general,omitempty"`              // placed files labeled only at family level — {instrument} rendered as _General
@@ -418,10 +425,10 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 			continue
 		}
 
-		srcForOut, tree, treeRank, reexport := ce.Path, "", 0, false
+		srcForOut, tree, treeRank, reexport, pack := ce.Path, "", 0, false, ""
 		if st := strippers[loc]; st != nil && (lay != nil || !globCoversTree(pk.inc, st.vendorDirs)) {
 			if stripped, t, ok := st.strip(ce.Path); ok {
-				srcForOut, tree, treeRank, reexport = stripped, t.name, t.rank, t.reexport
+				srcForOut, tree, treeRank, reexport, pack = stripped, t.name, t.rank, t.reexport, t.pack
 			}
 		}
 		// Where it lands: the template when the recipe has one, else the
@@ -461,6 +468,7 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 				tree:       tree,
 				treeRank:   treeRank,
 				reexport:   reexport,
+				pack:       pack,
 				placed:     placed,
 			})
 			continue
@@ -494,10 +502,19 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 			tree:        tree,
 			treeRank:    treeRank,
 			reexport:    reexport,
+			pack:        pack,
 			placed:      placed,
 		})
 	}
 	sort.Slice(p.Entries, func(i, j int) bool { return p.Entries[i].OutPath < p.Entries[j].OutPath })
+
+	// A re-export vendor's sampler trees leave first: they are not cuts to
+	// choose between, they are the vendor's own device prep, and dropping
+	// them here means the cut resolver never has to adjudicate a set that
+	// was never a real choice.
+	if v.VendorPrep != "keep" {
+		p.skipVendorPrep()
+	}
 
 	// Redundant format cuts go before anything that looks at output paths
 	// in aggregate: dedup, disambiguation and the fit are all answers about
@@ -621,6 +638,7 @@ type treeInfo struct {
 	name     string
 	rank     int
 	reexport bool
+	pack     string
 }
 
 // strip returns the path without its format-tree segment and what the
@@ -654,7 +672,7 @@ func (st *treeStripper) strip(p string) (out string, t treeInfo, ok bool) {
 		return p, treeInfo{}, false
 	}
 	kept := append(append([]string{}, segs[:packIdx+1]...), segs[packIdx+2:]...)
-	return strings.Join(kept, "/"), treeInfo{tree, rank, vendor.ParallelRole == "reexport"}, true
+	return strings.Join(kept, "/"), treeInfo{tree, rank, vendor.ParallelRole == "reexport", strings.Join(segs[:packIdx+1], "/")}, true
 }
 
 // prefixLabel names an include's output prefix for humans: the As value

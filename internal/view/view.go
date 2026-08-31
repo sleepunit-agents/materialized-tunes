@@ -40,6 +40,18 @@ type View struct {
 	// format_tree = "strip" means they collide.
 	Cuts string `toml:"cuts" json:"cuts,omitempty"`
 
+	// VendorPrep: what to do with a vendor's own per-sampler exports —
+	// Samples From Mars ships its whole library again under "Battery/",
+	// "Maschine/", "MPC/", "Kontakt/", patched for each host. "" / "skip"
+	// (default) drops them: mtunes prepares for the device itself, so the
+	// vendor's prep is the same recordings in a folder shape nobody asked
+	// for. "keep" renders them like any other source. Only ever touches a
+	// vendor whose annotation says [formats] parallel_role = "reexport",
+	// and only where the pack's canonical tree is present to replace them
+	// — the parallel cuts of a cut vendor (Polyend) are content, and
+	// `cuts` is what decides those.
+	VendorPrep string `toml:"vendor_prep" json:"vendor_prep,omitempty"`
+
 	// Layout: "" (default — mirror: source-relative paths under each
 	// include's `as` prefix) or a template over the tokens in
 	// ParseLayout's doc, e.g. "{family}/{instrument}/{category}/{pack}/{file}".
@@ -110,6 +122,11 @@ func LoadRaw(workspaceRoot, name string) (*View, error) {
 	case "", "best", "all":
 	default:
 		return nil, fmt.Errorf("view %s: cuts must be best or all", name)
+	}
+	switch v.VendorPrep {
+	case "", "skip", "keep":
+	default:
+		return nil, fmt.Errorf("view %s: vendor_prep must be skip or keep", name)
 	}
 	if _, err := ParseLayout(v.Layout); err != nil {
 		return nil, fmt.Errorf("view %s: %w", name, err)

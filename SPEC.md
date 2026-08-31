@@ -634,6 +634,27 @@ glob = "**/*.asd"
   Lab, BMT, Polyend Heights); unknown vendors mirror; an include whose glob
   root already reaches into the tree is left to its `as` (`"keep"` to
   disable).
+- `vendor_prep = "skip"` (default) drops a re-export vendor's per-sampler
+  trees outright, before cuts are scored. Samples From Mars does not ship
+  one library — it ships it again under `Battery/`, `Maschine/`, `MPC Live
+  & X/`, `Kontakt/`, `Ableton Live/`, each with that host's patches beside
+  audio re-rendered and re-trimmed for it. That is the vendor doing, ahead
+  of time and for machines the owner may not have, the job mtunes exists
+  to do; the tool prepares for *this* device, so the vendor's prep is the
+  same recordings in a folder shape nobody asked for. Scope is the
+  vendor's own declaration (`[formats] parallel_role = "reexport"` only —
+  a cut vendor's parallel trees are content, and `cuts` decides those) and
+  it is **a swap, never a subtraction**: a pack's sampler trees are
+  skipped only where that pack's canonical tree is present in the
+  selection to replace them, so a pack shipping nothing but a `Battery`
+  tree, or one whose `WAV` tree the globs never picked, keeps what it has.
+  What it cannot prove is that every hit in a sampler tree also exists
+  under the canonical one — the trees are named differently, every byte
+  differs by construction and durations drift — so the plan says out loud
+  how many skipped names have no same-named file under the canonical tree
+  and gives examples; zero is the answer that means the swap was clean,
+  and it is reported rather than assumed. `vendor_prep = "keep"` renders
+  them like any other source (`cuts` then dedupes them as before).
 - `cuts = "best"` (default) picks *which* tree, per file, from what the
   device can take. When a pack ships one sample under several trees —
   every Polyend Palette pack holds its one-shots as `24 bit stereo`,

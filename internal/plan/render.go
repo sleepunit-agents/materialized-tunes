@@ -52,6 +52,9 @@ func (p *Plan) Render(w io.Writer, verbose bool) {
 	if n := p.Deduped; n > 0 {
 		fmt.Fprintf(w, "  ℹ %d duplicate sources (identical bytes) render once — dedup = \"content\"\n", n)
 	}
+	if n := p.VendorPrepSkipped; n > 0 {
+		fmt.Fprintf(w, "  ℹ %d %s skipped from the vendor's own sampler exports (Battery/, Maschine/, MPC/ …) — this device is prepared here instead; vendor_prep = \"keep\" renders them\n", n, plural(n, "file", "files"))
+	}
 	if n := p.CutsDropped; n > 0 {
 		fmt.Fprintf(w, "  ℹ %d redundant format %s dropped — one sample, several vendor cuts; the one this device takes best renders (cuts = \"all\" keeps every cut)\n", n, plural(n, "cut", "cuts"))
 	}
