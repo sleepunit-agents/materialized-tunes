@@ -230,3 +230,71 @@ glob="**"
 		t.Errorf("warnings should count the output, got: %v", p.Warnings)
 	}
 }
+
+// sfmAnnotations is the other real shape: Samples From Mars re-exports its
+// whole library once per sampler (Battery, Maschine, Kontakt, MPC …)
+// beside the canonical WAV tree, so the parallel trees hold the same hits
+// re-rendered — same names, different bytes, trims a few frames apart.
+var sfmAnnotations = map[string]string{
+	"annotations/vendors/samples-from-mars/vendor.toml": "[vendor]\nname=\"Samples From Mars\"\nslug=\"samples-from-mars\"\n" +
+		"[formats]\ncanonical_dir=\"WAV\"\nparallel_role=\"reexport\"\nparallel_dirs=[\"Maschine\", \"Battery\"]\n",
+}
+
+// sfmPlan builds a plan over one pack's sampler trees.
+func sfmPlan(t *testing.T, entries []catalog.Entry) *Plan {
+	t.Helper()
+	ws := testWorkspace(t, entries, sfmAnnotations)
+	ws.Config.Locations[0].Layout = "vendor-dirs"
+	if err := ws.SaveConfig(); err != nil {
+		t.Fatal(err)
+	}
+	writeProfile(t, ws, "devices/dev.toml", device(24, 44100, "stereo"))
+	writeProfile(t, ws, "storage/sq.toml", bigStorage)
+	writeView(t, ws, "v", "name=\"v\"\ndevice=\"dev\"\nstorage=\"sq\"\n[[include]]\nlocation=\"src\"\nglob=\"**\"\n")
+	p, err := Build(ws, "v")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// TestPickCutsReexportKeepsLongest: the collision Jonathan hit on 727 From
+// Mars. Battery and Maschine hold the same agogo hit, trimmed differently
+// — for a re-export vendor equal length is not the proof of redundancy,
+// the two parallel trees are, and the longest render is the safe keep.
+func TestPickCutsReexportKeepsLongest(t *testing.T) {
+	const dir = "Samples From Mars/727 From Mars/"
+	const rest = "/727 From Mars/Assorted 1 Samples/Agogo Hi 727 25.wav"
+	p := sfmPlan(t, []catalog.Entry{
+		wavEntry(dir+"Battery"+rest, 2, 44100, 16, 22050),
+		wavEntry(dir+"Maschine"+rest, 2, 44100, 16, 21000), // trimmed shorter
+	})
+	if len(p.Errors) != 0 {
+		t.Fatalf("errors: %v", p.Errors)
+	}
+	if len(p.Entries) != 1 || p.CutsDropped != 1 {
+		t.Fatalf("%d entries, %d dropped — want 1 and 1", len(p.Entries), p.CutsDropped)
+	}
+	if e := p.Entries[0]; !strings.Contains(e.SourcePath, "Battery") {
+		t.Errorf("kept %q, want the longer Battery render", e.SourcePath)
+	}
+	if len(p.Warnings) != 1 || !strings.Contains(p.Warnings[0], "trimmed to a different length") {
+		t.Errorf("warnings %v, want the trim named", p.Warnings)
+	}
+}
+
+// TestPickCutsReexportStillNeedsTwoTrees: parallel_role relaxes the length
+// proof, not the structural one. Two files that collide from inside one
+// tree are a real collision for any vendor.
+func TestPickCutsReexportStillNeedsTwoTrees(t *testing.T) {
+	p := sfmPlan(t, []catalog.Entry{
+		wavEntry("Samples From Mars/727 From Mars/Battery/Kit/Agogo.wav", 2, 44100, 16, 22050),
+		wavEntry("Samples From Mars/727 From Mars/Battery/kit/Agogo.wav", 2, 44100, 16, 21000),
+	})
+	if p.CutsDropped != 0 {
+		t.Errorf("dropped %d — two files in one tree are not re-exports of each other", p.CutsDropped)
+	}
+	if len(p.Collisions) != 1 {
+		t.Errorf("collisions %v, want 1", p.Collisions)
+	}
+}

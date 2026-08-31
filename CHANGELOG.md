@@ -7,6 +7,45 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.8 — 2026-08-31 (a re-export is not a cut — length stops being the proof)
+
+Field report: "collision: 2 sources render to `drums/_general/one-shots/
+727 from mars/727 from mars - assorted 1 samples - agogo hi 727 25.wav`
+(`…/727 From Mars/Battery/…`, `…/727 From Mars/Maschine/…`) <- sfm needs a
+similar fix I think."
+
+Similar, and instructive about where the v0.9.7 rule was actually narrow.
+Everything upstream of the collision worked: the format-tree strip fired
+(both `Battery/` and `Maschine/` are gone from that output path), both
+entries carried their tree, and `cuts = "best"` was on. The cut resolver
+refused them anyway, because it demanded one thing more — that the
+members share a duration. That guard is load-bearing and stays: two files
+of different lengths under one name are ordinarily two recordings, and
+dropping one loses audio.
+
+It is only right for the kind of parallel tree Polyend ships. Polyend
+renders once and delivers that render at three bit depths, so its cuts
+*are* equal length by construction. Samples From Mars re-renders the whole
+library once per host instead — `Battery`, `Maschine`, `Kontakt`, `MPC…`
+beside the canonical `WAV` — and trims each render independently. The
+proof is in the pack's own manifest: 727 From Mars carries 1292 audio
+files and **1292 distinct sha256**, not one byte-identical pair across
+eight parallel trees. Equal length there can neither prove nor disprove
+that two files are the same hit.
+
+So the annotation says which kind a vendor is: `[formats] parallel_role =
+"cut"` (default) or `"reexport"`. For a re-export vendor the structure
+carries the whole proof — same pack, same relative path, two trees the
+vendor itself declared parallel — and **length leads the scoring**, so the
+longest render wins and nothing keeps a truncated copy over a whole one.
+Length is inert for cut vendors, whose renders are equal anyway, so
+Polyend's behaviour is unchanged to the byte. The warning names how many
+dropped cuts disagreed on length, because a silent trim is exactly the
+kind of thing you want told.
+
+The structural half of the proof is untouched: two files colliding from
+inside *one* tree are still a real collision, for every vendor.
+
 ## v0.9.7 — 2026-08-31 (one sample, one cut — the device decides which)
 
 Field report: "collision: 3 sources render to `_unsorted/polyend/bass

@@ -33,10 +33,17 @@ func cutDelivered(e Entry) (channels, rate, depth int, passthrough bool) {
 // betterCut reports whether a delivers more of the recording than b, or
 // delivers the same for less work. Total and deterministic — the final
 // tiebreak is the source path, so the choice pins in a lockfile.
+//
+// Length comes first, and only ever separates re-export sets (a vendor's
+// cuts of one render are the same length, so the test is inert there).
+// Between two re-exports of one hit the longer one is the safe keep: it
+// is the one that cannot be missing a tail the other has.
 func betterCut(a, b Entry) bool {
 	ach, art, adp, acp := cutDelivered(a)
 	bch, brt, bdp, bcp := cutDelivered(b)
 	switch {
+	case a.DurationS-b.DurationS > 1e-3 || b.DurationS-a.DurationS > 1e-3:
+		return a.DurationS > b.DurationS
 	case ach != bch:
 		return ach > bch
 	case art != brt:
@@ -53,19 +60,35 @@ func betterCut(a, b Entry) bool {
 
 // isCutSet reports whether entries at idx are the same sample in different
 // cuts rather than genuinely different files that happen to collide. The
-// proof is twofold: each comes out of a different format tree of the same
-// pack, and they are all the same length. Two files of different durations
-// under one name are a real collision and stay one — pickCuts refuses to
-// silently drop audio it cannot show is redundant.
+// first half of the proof is always the same: each comes out of a
+// different format tree of the same pack.
+//
+// The second half depends on what the vendor's parallel trees hold. For a
+// cut set — one render delivered at several bit depths — every cut is the
+// same length, and a length that disagrees means the two files are not
+// the same recording: the collision stands and pickCuts refuses to drop
+// audio it cannot show is redundant.
+//
+// A vendor that declares [formats] parallel_role = "reexport" re-renders
+// its library once per sampler instead, and those renders are trimmed
+// independently — Samples From Mars' Battery and Maschine copies of one
+// 727 hit differ by frames and by bytes. Length there proves nothing
+// either way, so the tree structure carries the whole proof: same pack,
+// same relative path, two trees the vendor itself declared parallel.
+// betterCut then keeps the longest, which cannot be the truncated one.
 func isCutSet(entries []Entry, idx []int) bool {
 	trees := make(map[string]bool, len(idx))
 	d0 := entries[idx[0]].DurationS
+	reexport := entries[idx[0]].reexport
 	for _, i := range idx {
 		e := entries[i]
 		if e.tree == "" || trees[e.tree] {
 			return false
 		}
 		trees[e.tree] = true
+		if reexport {
+			continue
+		}
 		if diff := e.DurationS - d0; diff > 1e-3 || diff < -1e-3 {
 			return false
 		}
@@ -97,6 +120,7 @@ func (p *Plan) pickCuts(caseSensitive bool) {
 	drop := map[int]bool{}
 	kept := map[string]int{}    // format tree → samples kept from it
 	dropped := map[string]int{} // format tree → cuts dropped
+	trimmed := 0                // re-export sets whose renders disagreed on length
 	var example string
 	for _, k := range order {
 		idx := byOut[k]
@@ -107,6 +131,9 @@ func (p *Plan) pickCuts(caseSensitive bool) {
 		for _, i := range idx[1:] {
 			if betterCut(p.Entries[i], p.Entries[best]) {
 				best = i
+			}
+			if d := p.Entries[i].DurationS - p.Entries[idx[0]].DurationS; d > 1e-3 || d < -1e-3 {
+				trimmed++
 			}
 		}
 		kept[p.Entries[best].tree]++
@@ -133,11 +160,16 @@ func (p *Plan) pickCuts(caseSensitive bool) {
 	}
 	p.Entries = surviving
 
+	trim := ""
+	if trimmed > 0 {
+		trim = fmt.Sprintf(" %d dropped %s a re-export the vendor trimmed to a different length; the longest render was kept.",
+			trimmed, plural(trimmed, "cut was", "cuts were"))
+	}
 	p.Warnings = append(p.Warnings, fmt.Sprintf(
-		"%d redundant format %s dropped — %d %s ship in more than one cut and render once, in the cut this device takes best: kept %s, dropped %s (e.g. %s). cuts = \"all\" keeps every cut.",
+		"%d redundant format %s dropped — %d %s shipped in more than one cut, rendered once in the cut this device takes best: kept %s, dropped %s (e.g. %s).%s cuts = \"all\" keeps every cut.",
 		p.CutsDropped, plural(p.CutsDropped, "cut", "cuts"),
 		len(kept), plural(len(kept), "sample", "samples"),
-		treeTally(kept), treeTally(dropped), example))
+		treeTally(kept), treeTally(dropped), example, trim))
 }
 
 // treeTally names format trees with their counts, busiest first — the

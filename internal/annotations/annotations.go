@@ -35,6 +35,16 @@ type Vendor struct {
 	CanonicalDir string   `json:"canonical_dir,omitempty"`
 	ParallelDirs []string `json:"parallel_dirs,omitempty"`
 
+	// ParallelRole says what the parallel trees hold. "cut" (the default)
+	// is Polyend's case: the same rendered file at another bit depth or
+	// channel count, so every cut of a sample is the same length. Vendors
+	// that re-export the whole library per sampler — Samples From Mars
+	// ships Battery, Maschine, Kontakt, MPC trees of the same hits —
+	// declare "reexport": same recordings, re-rendered, so the trims
+	// drift by a few frames and length can no longer be the proof that
+	// two files are the same sample.
+	ParallelRole string `json:"parallel_role,omitempty"`
+
 	// Naming: filename grammar facts (see SCHEMA [naming]). Consumers use
 	// them to harvest per-file metadata (key, bpm) and to rename safely.
 	Naming Naming `json:"naming,omitempty"`
@@ -213,6 +223,7 @@ func loadVendor(dir string) (*Vendor, error) {
 		Formats struct {
 			CanonicalDir string   `toml:"canonical_dir"`
 			ParallelDirs []string `toml:"parallel_dirs"`
+			ParallelRole string   `toml:"parallel_role"`
 		} `toml:"formats"`
 		Naming  Naming `toml:"naming"`
 		Install struct {
@@ -240,8 +251,9 @@ func loadVendor(dir string) (*Vendor, error) {
 		Grammar: vf.Packs.Grammar, Resolver: vf.Packs.Resolver, Categories: vf.Category,
 		Instruments:  vf.Instrument,
 		CanonicalDir: vf.Formats.CanonicalDir, ParallelDirs: vf.Formats.ParallelDirs,
-		Naming:     vf.Naming,
-		InstallMac: vf.Install.Macos, InstallLinux: vf.Install.Linux,
+		ParallelRole: vf.Formats.ParallelRole,
+		Naming:       vf.Naming,
+		InstallMac:   vf.Install.Macos, InstallLinux: vf.Install.Linux,
 		InstallWin: vf.Install.Windows, InstallNote: vf.Install.Note,
 		dir: dir,
 	}

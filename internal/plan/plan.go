@@ -71,6 +71,11 @@ type Entry struct {
 	tree     string
 	treeRank int
 
+	// reexport: the vendor re-renders its whole library per sampler
+	// rather than cutting one render several ways, so cuts of one sample
+	// need not be the same length ([formats] parallel_role).
+	reexport bool
+
 	placed placeFlags // what the layout template made of it; see recount
 }
 
@@ -413,10 +418,10 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 			continue
 		}
 
-		srcForOut, tree, treeRank := ce.Path, "", 0
+		srcForOut, tree, treeRank, reexport := ce.Path, "", 0, false
 		if st := strippers[loc]; st != nil && (lay != nil || !globCoversTree(pk.inc, st.vendorDirs)) {
-			if stripped, t, rank, ok := st.strip(ce.Path); ok {
-				srcForOut, tree, treeRank = stripped, t, rank
+			if stripped, t, ok := st.strip(ce.Path); ok {
+				srcForOut, tree, treeRank, reexport = stripped, t.name, t.rank, t.reexport
 			}
 		}
 		// Where it lands: the template when the recipe has one, else the
@@ -455,6 +460,7 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 				parents:    parents,
 				tree:       tree,
 				treeRank:   treeRank,
+				reexport:   reexport,
 				placed:     placed,
 			})
 			continue
@@ -487,6 +493,7 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 			parents:     parents,
 			tree:        tree,
 			treeRank:    treeRank,
+			reexport:    reexport,
 			placed:      placed,
 		})
 	}
@@ -606,16 +613,26 @@ func globCoversTree(inc view.Include, vendorDirs bool) bool {
 	return depth > packDepth
 }
 
-// strip returns the path without its format-tree segment, the segment it
-// removed, and the vendor's own rank for that tree (0 = canonical audio
-// dir). ok is false when there was no tree to remove.
-func (st *treeStripper) strip(p string) (out, tree string, rank int, ok bool) {
+// treeInfo is what strip learned about the format tree it removed: the
+// segment itself, the vendor's own rank for it (0 = canonical audio dir),
+// and whether this vendor's parallel trees are re-exports rather than
+// cuts of one render.
+type treeInfo struct {
+	name     string
+	rank     int
+	reexport bool
+}
+
+// strip returns the path without its format-tree segment and what the
+// vendor knows about that tree. ok is false when there was no tree to
+// remove.
+func (st *treeStripper) strip(p string) (out string, t treeInfo, ok bool) {
 	segs := strings.Split(p, "/")
 	packIdx := 0 // index of the pack dir segment
 	vendor := st.fixed
 	if st.vendorDirs {
 		if len(segs) < 4 { // vendor/pack/tree/file at minimum
-			return p, "", 0, false
+			return p, treeInfo{}, false
 		}
 		packIdx = 1
 		v, seen := st.byTop[segs[0]]
@@ -625,19 +642,19 @@ func (st *treeStripper) strip(p string) (out, tree string, rank int, ok bool) {
 		}
 		vendor = v
 	} else if len(segs) < 3 { // pack/tree/file
-		return p, "", 0, false
+		return p, treeInfo{}, false
 	}
 	if vendor == nil {
-		return p, "", 0, false
+		return p, treeInfo{}, false
 	}
 	pack := vendor.PackByDir(segs[packIdx])
-	tree = segs[packIdx+1]
-	rank, ok = vendor.FormatTreeRank(pack, tree)
+	tree := segs[packIdx+1]
+	rank, ok := vendor.FormatTreeRank(pack, tree)
 	if !ok {
-		return p, "", 0, false
+		return p, treeInfo{}, false
 	}
 	kept := append(append([]string{}, segs[:packIdx+1]...), segs[packIdx+2:]...)
-	return strings.Join(kept, "/"), tree, rank, true
+	return strings.Join(kept, "/"), treeInfo{tree, rank, vendor.ParallelRole == "reexport"}, true
 }
 
 // prefixLabel names an include's output prefix for humans: the As value

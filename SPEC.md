@@ -647,6 +647,18 @@ glob = "**/*.asd"
   group is only treated as cuts of one sample when its members come from
   *different* trees of one pack and share a duration — anything else is a
   real collision and still errors (§7). `cuts = "all"` renders every cut.
+- The duration half of that proof stands down for a vendor whose
+  annotation declares `[formats] parallel_role = "reexport"`: Samples From
+  Mars re-renders its whole library per host (`Battery`, `Maschine`,
+  `Kontakt`, `MPC…` beside `WAV`) rather than cutting one render several
+  ways, so the same hit is trimmed a few frames apart in each tree and
+  equal length can neither prove nor disprove redundancy. There the tree
+  structure carries the whole proof — same pack, same relative path, two
+  trees the vendor itself declared parallel — and *length leads the
+  scoring*, so the longest render wins and nothing keeps a truncated copy
+  over a whole one. Length is inert for `parallel_role = "cut"` vendors
+  (the default), whose cuts are equal by construction. The plan's warning
+  names how many dropped cuts disagreed on length.
 - `dedup = "content"` renders byte-identical sources once (first output
   path in sort order; deterministic, pinned). Opt-in, because a DAW kit
   folder wants its members even when they duplicate the one-shots folder.
