@@ -56,8 +56,14 @@ func LoadCategories(root string) *CategoryLexicon {
 // only speaks when no folder did. Within one segment, entries win in
 // lexicon order (specific before generic).
 func (cx *CategoryLexicon) Resolve(stem string, dirs []string) string {
+	id, _ := cx.ResolveSrc(stem, dirs)
+	return id
+}
+
+// ResolveSrc is Resolve that also says which segment and alias answered.
+func (cx *CategoryLexicon) ResolveSrc(stem string, dirs []string) (string, Source) {
 	if len(cx.Categories) == 0 {
-		return ""
+		return "", Source{}
 	}
 	segs := make([]string, 0, len(dirs)+1)
 	for i := len(dirs) - 1; i >= 0; i-- {
@@ -71,10 +77,10 @@ func (cx *CategoryLexicon) Resolve(stem string, dirs []string) string {
 		}
 		pad := " " + norm + " "
 		for i, c := range cx.Categories {
-			if hit(pad, cx.patterns[i], cx.avoids[i]) {
-				return c.ID
+			if w, ok := hit(pad, cx.patterns[i], cx.avoids[i]); ok {
+				return c.ID, Source{Tier: TierCategories, Segment: s, Word: w}
 			}
 		}
 	}
-	return ""
+	return "", Source{}
 }

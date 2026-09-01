@@ -15,6 +15,7 @@ package harvest
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path"
 	"path/filepath"
@@ -41,6 +42,32 @@ type Meta struct {
 	Instrument string   `json:"instrument,omitempty"`
 	Family     string   `json:"family,omitempty"`
 	Tags       []string `json:"tags,omitempty"`
+	// Why says which tier answered each facet and what it fired on —
+	// the evidence a correction targets (SPEC §19.2). Absent facets have
+	// no entry: nothing spoke.
+	Why *Why `json:"why,omitempty"`
+}
+
+// Why is the per-facet provenance of one record.
+type Why struct {
+	Category   *annotations.Source `json:"category,omitempty"`
+	Instrument *annotations.Source `json:"instrument,omitempty"`
+}
+
+// explain attaches a facet's source, allocating Why on first use.
+func (m *Meta) explain(facet string, src annotations.Source) {
+	if src.Tier == "" {
+		return
+	}
+	if m.Why == nil {
+		m.Why = &Why{}
+	}
+	switch facet {
+	case "category":
+		m.Why.Category = &src
+	case "instrument":
+		m.Why.Instrument = &src
+	}
 }
 
 // Result summarizes one location's harvest.
@@ -72,24 +99,140 @@ var camelot = map[string]string{
 	"7B": "F", "8B": "C", "9B": "G", "10B": "D", "11B": "A", "12B": "E",
 }
 
+// harvester is one location's harvest context: the annotations as
+// loaded, the vendor lookup the location's layout needs, and the
+// directory shapes computed over the paths in play. Building one is the
+// fixed cost; one is per path and pure, which is what lets Explain and a
+// partial re-harvest (SPEC §19.4) answer for a prefix without the whole
+// pass.
+type harvester struct {
+	fixed      *annotations.Vendor
+	vendors    []annotations.Vendor
+	byTop      map[string]*annotations.Vendor
+	vendorDirs bool
+	lex        *annotations.Lexicon
+	cats       *annotations.CategoryLexicon
+	msDirs     map[string]bool
+}
+
+// newHarvester loads the annotations and sizes up the directories the
+// given audio paths live in. paths must include every audio sibling of
+// any path later handed to one: the multisample tier reads the shape of
+// the whole directory.
+func newHarvester(ws *workspace.Workspace, lc workspace.LocationConfig, paths []string) (*harvester, error) {
+	vendors, err := annotations.Load(filepath.Join(ws.Root, "annotations"))
+	if err != nil {
+		return nil, err
+	}
+	return &harvester{
+		fixed:      annotations.BySlug(vendors)[lc.Vendor],
+		vendors:    vendors,
+		byTop:      map[string]*annotations.Vendor{},
+		vendorDirs: lc.Layout == "vendor-dirs",
+		lex:        annotations.LoadInstruments(filepath.Join(ws.Root, "annotations")),
+		cats:       annotations.LoadCategories(filepath.Join(ws.Root, "annotations")),
+		msDirs:     multisampleDirs(paths),
+	}, nil
+}
+
+// one harvests a single catalog path. ok is false when the path is too
+// shallow to sit inside a pack under the location's layout — there is
+// nothing to say about it.
+func (h *harvester) one(p string, e catalog.Entry) (m Meta, ok bool) {
+	segs := strings.Split(p, "/")
+	// vendor + pack for this path
+	vendor := h.fixed
+	packIdx := 0
+	if h.vendorDirs {
+		if len(segs) < 3 {
+			return Meta{}, false
+		}
+		packIdx = 1
+		v, seen := h.byTop[segs[0]]
+		if !seen {
+			v = annotations.ByName(h.vendors, segs[0])
+			h.byTop[segs[0]] = v
+		}
+		vendor = v
+	} else if len(segs) < 2 {
+		return Meta{}, false
+	}
+	var pack *annotations.Pack
+	if vendor != nil {
+		pack = vendor.PackByDir(segs[packIdx])
+	}
+	inPack := segs[packIdx+1:] // path within the pack, last = filename
+	m = Meta{Path: p, SHA: e.SHA256}
+	base := strings.TrimSuffix(inPack[len(inPack)-1], filepath.Ext(inPack[len(inPack)-1]))
+	dirs := inPack[:len(inPack)-1]
+
+	// labels are the dirs that can describe a sound; a dir that only
+	// restates the pack's name is not one, and speaks last (see labelDirs)
+	labels, echoes := labelDirs(dirs, segs[packIdx], pack)
+
+	m.BPM = harvestBPM(base, dirs, vendor)
+	m.Key = harvestKey(base, vendor)
+	var pinned string
+	var catSrc, pinSrc annotations.Source
+	m.Category, m.Tags, pinned, catSrc, pinSrc = harvestCategory(dirs, labels, vendor, pack, segs[packIdx])
+	if m.Category == "" {
+		// vendor annotation said nothing (or there is none) — the shared
+		// lexicon reads the same folder/filename grammar cross-vendor
+		m.Category, catSrc = h.cats.ResolveSrc(base, labels)
+	}
+	if m.Category == "" && len(echoes) > 0 {
+		// nothing on the path said; the pack's own name may ("Silk
+		// Vocals" holds vocals) — the echo is a fallback, not a label
+		c, _, _, src, _ := harvestCategory(dirs, echoes, vendor, pack, segs[packIdx])
+		if c == "" {
+			c, src = h.cats.ResolveSrc("", echoes)
+		}
+		src.Echo = true
+		m.Category, catSrc = c, src
+	}
+	if m.Category == "" && h.msDirs[path.Dir(p)] {
+		// no label anywhere claimed the file, but its directory has the
+		// multisample shape — chromatic note-suffixed siblings
+		m.Category = "multisamples"
+		catSrc = annotations.Source{Tier: annotations.TierMultisample, Segment: strings.Join(dirs, "/")}
+	}
+	m.explain("category", catSrc)
+	// overrides, most local first: the pack's own [[instrument]] blocks
+	// (Drumtrax's "Bass" is its kick), then the vendor's (SFM's "CH"),
+	// then the shared lexicon inside Resolve
+	var overrides []annotations.Instrument
+	if pack != nil {
+		overrides = append(overrides, pack.Instruments...)
+	}
+	if vendor != nil {
+		overrides = append(overrides, vendor.Instruments...)
+	}
+	var instSrc annotations.Source
+	if pinned != "" {
+		// the pack's [[dir]] map pinned the instrument — curated truth
+		// beats whatever the filenames appear to say
+		m.Instrument, m.Family = pinned, h.lex.FamilyOf(pinned, overrides)
+		instSrc = pinSrc
+	} else {
+		// the category is known by now, and a word that implies a
+		// different one (break = loops) is a title on this file, not
+		// a label — a kit called "Beat" holds kicks, not breaks
+		m.Instrument, m.Family, instSrc = h.lex.ResolveInSrc(m.Category, base, labels, overrides)
+		if m.Instrument == "" && len(echoes) > 0 {
+			m.Instrument, m.Family, instSrc = h.lex.ResolveInSrc(m.Category, "", echoes, overrides)
+			instSrc.Echo = true
+		}
+	}
+	m.explain("instrument", instSrc)
+	return m, true
+}
+
 // Run harvests one location's catalog and rewrites its meta cache file.
 func Run(ws *workspace.Workspace, lc workspace.LocationConfig) (*Result, error) {
 	entries, err := catalog.Load(ws.CatalogPath(lc.Name))
 	if err != nil {
 		return nil, err
 	}
-	vendors, err := annotations.Load(filepath.Join(ws.Root, "annotations"))
-	if err != nil {
-		return nil, err
-	}
-	lex := annotations.LoadInstruments(filepath.Join(ws.Root, "annotations"))
-	cats := annotations.LoadCategories(filepath.Join(ws.Root, "annotations"))
-	res := &Result{}
-	var out []Meta
-	byTop := map[string]*annotations.Vendor{}
-	fixed := annotations.BySlug(vendors)[lc.Vendor]
-	vendorDirs := lc.Layout == "vendor-dirs"
-
 	paths := make([]string, 0, len(entries))
 	for p, e := range entries {
 		if e.Audio != nil {
@@ -97,87 +240,17 @@ func Run(ws *workspace.Workspace, lc workspace.LocationConfig) (*Result, error) 
 		}
 	}
 	sort.Strings(paths)
-	msDirs := multisampleDirs(paths)
+	h, err := newHarvester(ws, lc, paths)
+	if err != nil {
+		return nil, err
+	}
+	res := &Result{}
+	var out []Meta
 	for _, p := range paths {
-		e := entries[p]
-		segs := strings.Split(p, "/")
-		// vendor + pack for this path
-		vendor := fixed
-		packIdx := 0
-		if vendorDirs {
-			if len(segs) < 3 {
-				continue
-			}
-			packIdx = 1
-			v, seen := byTop[segs[0]]
-			if !seen {
-				v = annotations.ByName(vendors, segs[0])
-				byTop[segs[0]] = v
-			}
-			vendor = v
-		} else if len(segs) < 2 {
+		m, ok := h.one(p, entries[p])
+		if !ok {
 			continue
 		}
-		var pack *annotations.Pack
-		if vendor != nil {
-			pack = vendor.PackByDir(segs[packIdx])
-		}
-		inPack := segs[packIdx+1:] // path within the pack, last = filename
-		m := Meta{Path: p, SHA: e.SHA256}
-		base := strings.TrimSuffix(inPack[len(inPack)-1], filepath.Ext(inPack[len(inPack)-1]))
-		dirs := inPack[:len(inPack)-1]
-
-		// labels are the dirs that can describe a sound; a dir that only
-		// restates the pack's name is not one, and speaks last (see labelDirs)
-		labels, echoes := labelDirs(dirs, segs[packIdx], pack)
-
-		m.BPM = harvestBPM(base, dirs, vendor)
-		m.Key = harvestKey(base, vendor)
-		var pinned string
-		m.Category, m.Tags, pinned = harvestCategory(dirs, labels, vendor, pack, segs[packIdx])
-		if m.Category == "" {
-			// vendor annotation said nothing (or there is none) — the shared
-			// lexicon reads the same folder/filename grammar cross-vendor
-			m.Category = cats.Resolve(base, labels)
-		}
-		if m.Category == "" && len(echoes) > 0 {
-			// nothing on the path said; the pack's own name may ("Silk
-			// Vocals" holds vocals) — the echo is a fallback, not a label
-			c, _, _ := harvestCategory(dirs, echoes, vendor, pack, segs[packIdx])
-			if c == "" {
-				c = cats.Resolve("", echoes)
-			}
-			m.Category = c
-		}
-		if m.Category == "" && msDirs[path.Dir(p)] {
-			// no label anywhere claimed the file, but its directory has the
-			// multisample shape — chromatic note-suffixed siblings
-			m.Category = "multisamples"
-		}
-		// overrides, most local first: the pack's own [[instrument]] blocks
-		// (Drumtrax's "Bass" is its kick), then the vendor's (SFM's "CH"),
-		// then the shared lexicon inside Resolve
-		var overrides []annotations.Instrument
-		if pack != nil {
-			overrides = append(overrides, pack.Instruments...)
-		}
-		if vendor != nil {
-			overrides = append(overrides, vendor.Instruments...)
-		}
-		if pinned != "" {
-			// the pack's [[dir]] map pinned the instrument — curated truth
-			// beats whatever the filenames appear to say
-			m.Instrument, m.Family = pinned, lex.FamilyOf(pinned, overrides)
-		} else {
-			// the category is known by now, and a word that implies a
-			// different one (break = loops) is a title on this file, not
-			// a label — a kit called "Beat" holds kicks, not breaks
-			m.Instrument, m.Family = lex.ResolveIn(m.Category, base, labels, overrides)
-			if m.Instrument == "" && len(echoes) > 0 {
-				m.Instrument, m.Family = lex.ResolveIn(m.Category, "", echoes, overrides)
-			}
-		}
-
 		if m.BPM == 0 && m.Key == "" && m.Category == "" && m.Instrument == "" && len(m.Tags) == 0 {
 			continue
 		}
@@ -239,11 +312,79 @@ func Run(ws *workspace.Workspace, lc workspace.LocationConfig) (*Result, error) 
 	return res, nil
 }
 
+// Explainer answers "why did this file land there" for one location:
+// it harvests a path afresh from the annotations on disk and returns
+// every facet with its source. The meta cache is not consulted — this is
+// what the cache will say after the next harvest, so editing an
+// annotation and asking again shows the effect. The catalog is loaded
+// once; each Explain reads the path's audio siblings for the multisample
+// tier.
+type Explainer struct {
+	ws      *workspace.Workspace
+	lc      workspace.LocationConfig
+	entries map[string]catalog.Entry
+}
+
+// NewExplainer loads the location's catalog.
+func NewExplainer(ws *workspace.Workspace, lc workspace.LocationConfig) (*Explainer, error) {
+	entries, err := catalog.Load(ws.CatalogPath(lc.Name))
+	if err != nil {
+		return nil, err
+	}
+	return &Explainer{ws: ws, lc: lc, entries: entries}, nil
+}
+
+// Has reports whether the location's catalog lists p.
+func (x *Explainer) Has(p string) bool {
+	_, ok := x.entries[p]
+	return ok
+}
+
+// Explain harvests one path and returns its record with provenance.
+func (x *Explainer) Explain(p string) (Meta, error) {
+	e, ok := x.entries[p]
+	if !ok {
+		return Meta{}, fmt.Errorf("%s: not in location %q's catalog", p, x.lc.Name)
+	}
+	if e.Audio == nil {
+		return Meta{}, fmt.Errorf("%s: not audio, nothing is harvested for it", p)
+	}
+	dir := path.Dir(p)
+	var siblings []string
+	for q, se := range x.entries {
+		if se.Audio != nil && path.Dir(q) == dir {
+			siblings = append(siblings, q)
+		}
+	}
+	h, err := newHarvester(x.ws, x.lc, siblings)
+	if err != nil {
+		return Meta{}, err
+	}
+	m, ok := h.one(p, e)
+	if !ok {
+		return Meta{}, fmt.Errorf("%s: not inside a pack under the %q layout", p, x.lc.Layout)
+	}
+	return m, nil
+}
+
+// Explain is a one-shot Explainer for a single path.
+func Explain(ws *workspace.Workspace, lc workspace.LocationConfig, p string) (Meta, error) {
+	x, err := NewExplainer(ws, lc)
+	if err != nil {
+		return Meta{}, err
+	}
+	return x.Explain(p)
+}
+
 // metaFormat versions the meta cache's shape. Bump it when a record's
 // meaning changes — readers treat a cache written under another format as
 // absent, and MetaFresh lets callers re-run harvest before trusting it.
 // "2": records carry the source path and are keyed by it, not by SHA.
-const metaFormat = "2"
+// "3": records carry per-facet provenance (why).
+const metaFormat = "3"
+
+// MetaFormat is the current cache format, for tests that write a cache by hand.
+const MetaFormat = metaFormat
 
 // MetaFresh reports whether the meta cache on disk was written by this
 // build's format. False means harvest must run again before LoadMeta's
@@ -405,9 +546,10 @@ func labelDirs(dirs []string, packDir string, p *annotations.Pack) (labels, echo
 // pin when the deepest matching entry carries one — "" otherwise.
 // dirs is the full in-pack path ([[dir]] pins address it); labels is the
 // same minus the pack-name echoes, and is what the [[category]] globs see.
-func harvestCategory(dirs, labels []string, v *annotations.Vendor, p *annotations.Pack, packDir string) (category string, tags []string, instrument string) {
+// catSrc and instSrc say which entry or rule answered.
+func harvestCategory(dirs, labels []string, v *annotations.Vendor, p *annotations.Pack, packDir string) (category string, tags []string, instrument string, catSrc, instSrc annotations.Source) {
 	if v == nil {
-		return "", nil, ""
+		return "", nil, "", annotations.Source{}, annotations.Source{}
 	}
 	seen := map[string]bool{}
 	addTags := func(ts []string) {
@@ -439,10 +581,12 @@ func harvestCategory(dirs, labels []string, v *annotations.Vendor, p *annotation
 			if d.Category != "" && len(dp) > best {
 				best = len(dp)
 				category = d.Category
+				catSrc = annotations.Source{Tier: annotations.TierDir, Segment: rel, Word: d.Path}
 			}
 			if d.Instrument != "" && len(dp) > bestInst {
 				bestInst = len(dp)
 				instrument = d.Instrument
+				instSrc = annotations.Source{Tier: annotations.TierDir, Segment: rel, Word: d.Path}
 			}
 		}
 	}
@@ -451,6 +595,7 @@ func harvestCategory(dirs, labels []string, v *annotations.Vendor, p *annotation
 			for _, dp := range c.DedicatedPacks {
 				if ok, _ := doublestar.Match(dp, packDir); ok {
 					category = c.ID
+					catSrc = annotations.Source{Tier: annotations.TierDedicatedPack, Segment: packDir, Word: dp}
 				}
 			}
 		}
@@ -466,17 +611,19 @@ func harvestCategory(dirs, labels []string, v *annotations.Vendor, p *annotation
 					name := strings.ToLower(dirOrderRe.ReplaceAllString(d, ""))
 					if ok, _ := doublestar.Match(gl, name); ok {
 						category = c.ID
+						catSrc = annotations.Source{Tier: annotations.TierVendorCategory, Segment: d, Word: g}
 						break outer
 					}
 					if ok, _ := doublestar.Match(gl, strings.ToLower(d)); ok {
 						category = c.ID
+						catSrc = annotations.Source{Tier: annotations.TierVendorCategory, Segment: d, Word: g}
 						break outer
 					}
 				}
 			}
 		}
 	}
-	return category, tags, instrument
+	return category, tags, instrument, catSrc, instSrc
 }
 
 // LoadMeta reads a location's harvested metadata cache, keyed by source

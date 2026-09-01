@@ -24,10 +24,10 @@ import (
 	"time"
 
 	"github.com/sleepunit-agents/materialized-tunes/internal/annotations"
-	"github.com/sleepunit-agents/materialized-tunes/internal/harvest"
 	"github.com/sleepunit-agents/materialized-tunes/internal/browse"
 	"github.com/sleepunit-agents/materialized-tunes/internal/cache"
 	"github.com/sleepunit-agents/materialized-tunes/internal/catalog"
+	"github.com/sleepunit-agents/materialized-tunes/internal/harvest"
 	"github.com/sleepunit-agents/materialized-tunes/internal/location"
 	"github.com/sleepunit-agents/materialized-tunes/internal/lock"
 	"github.com/sleepunit-agents/materialized-tunes/internal/materialize"
@@ -98,6 +98,7 @@ func Handler(ws *workspace.Workspace) http.Handler {
 	mux.HandleFunc("/api/samples", s.samples)
 	mux.HandleFunc("/api/pack", s.packDetail)
 	mux.HandleFunc("/api/preview", s.preview)
+	mux.HandleFunc("/api/why", s.why)
 	mux.HandleFunc("/api/locations", s.locations)
 	mux.HandleFunc("/api/suggestions", s.suggestions)
 	mux.HandleFunc("/api/scan", s.scanEndpoint)
@@ -886,6 +887,25 @@ func (s *Server) preview(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "audio/flac")
 	}
 	http.ServeFile(w, r, local)
+}
+
+// why explains one file's harvested facets: the record as harvest would
+// write it now, with per-facet provenance (SPEC §19.2). Computed live
+// from the annotations on disk, not read from the cache, so a correction
+// in progress shows its effect before the next full harvest.
+func (s *Server) why(w http.ResponseWriter, r *http.Request) {
+	locName, path := r.URL.Query().Get("location"), r.URL.Query().Get("path")
+	lc, ok := s.ws.Location(locName)
+	if !ok {
+		jsonErr(w, http.StatusNotFound, fmt.Errorf("no location named %q", locName))
+		return
+	}
+	m, err := harvest.Explain(s.ws, lc, strings.ReplaceAll(path, "\\", "/"))
+	if err != nil {
+		jsonErr(w, http.StatusNotFound, err)
+		return
+	}
+	jsonOut(w, m)
 }
 
 // ---- local per-file metadata (annotations-cache/meta/<location>.jsonl) ----

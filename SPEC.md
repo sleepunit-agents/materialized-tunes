@@ -1373,10 +1373,16 @@ one action vocabulary:
 The **why** panel is the primitive both share: per facet, which tier
 answered (pack `[[dir]]` pin / pack `[[instrument]]` / vendor block /
 `categories.toml` entry / pack-name echo / multisample shape / nothing) and
-the exact word and path segment it fired on. Harvest records this today in
-neither the meta cache nor the plan; adding a per-facet source to
-`harvest.Meta` is the enabling change for everything below, and it costs a
-few bytes per file.
+the exact word and path segment it fired on.
+
+*Shipped 2026-09-01 (v0.9.15):* `harvest.Meta.why` carries an
+`annotations.Source` per facet — `tier`, `segment`, `word`, `echo` — and
+the meta cache format is 3. `mtunes catalog why <path>…` and
+`GET /api/why?location=&path=` harvest the path afresh from the
+annotations on disk (`harvest.Explainer`), so a correction shows its
+effect before the next full harvest. Harvest itself is now a per-path
+pure function over a location context (`harvester.one`), which is the
+partial re-harvest §19.4 needs.
 
 ### 19.3 The kinds of "unsorted" — different questions, different tools
 
@@ -1486,9 +1492,8 @@ shadow of the repo and the cascade rots into two sources of truth.
 
 ### 19.6 Order of work (when Jonathan says go)
 
-1. Per-facet provenance in `harvest.Meta` + a `why` endpoint. Small; the
-   evidence everything else stands on; useful on its own (`catalog
-   harvest --explain <path>`).
+1. ~~Per-facet provenance in `harvest.Meta` + a `why` endpoint~~ —
+   shipped 2026-09-01 as `catalog why` / `/api/why` (v0.9.15).
 2. N-root `annotations.Load` + `default_*` + `observed`/`note` in the
    schema (one annotations PR, one mtunes change). The cascade exists
    before any UI writes to it.

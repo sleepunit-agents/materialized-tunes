@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sleepunit-agents/materialized-tunes/internal/annotations"
 	"github.com/sleepunit-agents/materialized-tunes/internal/audio"
 	"github.com/sleepunit-agents/materialized-tunes/internal/catalog"
 	"github.com/sleepunit-agents/materialized-tunes/internal/workspace"
@@ -116,6 +117,50 @@ func TestHarvest(t *testing.T) {
 	}
 	if _, ok := got["s7"]; ok {
 		t.Error("s7 has nothing to harvest and must be absent")
+	}
+
+	// every resolved facet says which tier answered and what it fired on
+	why := func(sha, facet, tier, segment, word string) {
+		m := got[sha]
+		var src *annotations.Source
+		if m.Why != nil {
+			if facet == "category" {
+				src = m.Why.Category
+			} else {
+				src = m.Why.Instrument
+			}
+		}
+		if src == nil {
+			t.Errorf("%s: %s has no source, want %s %q on %q", sha, facet, tier, word, segment)
+			return
+		}
+		if src.Tier != tier || src.Segment != segment || src.Word != word {
+			t.Errorf("%s: %s source = %s %q on %q, want %s %q on %q", sha, facet, src.Tier, src.Word, src.Segment, tier, word, segment)
+		}
+	}
+	why("s1", "category", annotations.TierDir, "Bass", "Bass")                                        // pack [[dir]] pin
+	why("s2", "category", annotations.TierVendorCategory, "Breaks", "Breaks")                         // vendor glob on the dir
+	why("s5", "category", annotations.TierVendorCategory, "01. Individual Hits", "*Individual Hits*") // the glob, not the dir
+	why("s6", "category", annotations.TierCategories, "Loops", "loops")                               // shared alias, normalized
+	why("s9", "category", annotations.TierCategories, "Snare Hit 03", "hit")                          // from the stem
+	why("s11", "category", annotations.TierDir, "Programmed Loops", "Programmed Loops")               //
+	why("s11", "instrument", annotations.TierDir, "Programmed Loops", "Programmed Loops")             // the pin, not the lexicon's "sub"
+	why("s1", "instrument", annotations.TierLexicon, "Champion Sub - 10A", "sub")                     // shared lexicon from the stem
+	why("ms1", "category", annotations.TierMultisample, "WAV/Bass", "")                               // no word; the directory's shape
+	if m := got["s7"]; m.Why != nil {
+		t.Errorf("s7: nothing spoke, why must be nil, got %+v", m.Why)
+	}
+
+	// Explain answers for one path from the annotations on disk, siblings included
+	ex, err := Explain(ws, ws.Config.Locations[0], "Samples From Mars/101 From Mars/WAV/Bass/0_FishFriend_SH101_C-2-NBQM.wav")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ex.Category != "multisamples" || ex.Why == nil || ex.Why.Category == nil || ex.Why.Category.Tier != annotations.TierMultisample {
+		t.Errorf("Explain: got %+v, want multisamples via the directory shape", ex)
+	}
+	if _, err := Explain(ws, ws.Config.Locations[0], "Nobody/nope.wav"); err == nil {
+		t.Error("Explain of a path outside the catalog must fail")
 	}
 }
 

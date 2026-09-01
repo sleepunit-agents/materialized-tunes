@@ -268,6 +268,9 @@ func loadVendor(dir string) (*Vendor, error) {
 	if v.Slug == "" {
 		v.Slug = filepath.Base(dir)
 	}
+	for i := range v.Instruments {
+		v.Instruments[i].Scope = "vendor"
+	}
 
 	packFiles, _ := filepath.Glob(filepath.Join(dir, "packs", "*.toml"))
 	for _, pf := range packFiles {
@@ -296,6 +299,9 @@ func loadVendor(dir string) (*Vendor, error) {
 		}
 		if err := toml.Unmarshal(data, &f); err != nil {
 			return nil, err
+		}
+		for i := range f.Instrument {
+			f.Instrument[i].Scope = "pack"
 		}
 		v.Packs = append(v.Packs, Pack{
 			Name: f.Pack.Name, Slug: f.Pack.Slug, Dir: f.Pack.Dir,

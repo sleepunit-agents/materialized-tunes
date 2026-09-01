@@ -7,6 +7,24 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.15 — 2026-09-01 (every facet says why)
+
+The first piece of SPEC §19 (seeing before doing). Every harvested
+category and instrument now carries its provenance: which tier answered
+— pack `[[dir]]` pin, vendor `dedicated_packs`, vendor `[[category]]`
+glob, `categories.toml` alias, the directory's multisample shape; pack /
+vendor `[[instrument]]` alias or code, `instruments.toml` alias or code,
+a compound segment's family catch-all, a demoted word's family
+catch-all — and the exact path segment and word it fired on (`Meta.why`,
+`annotations.Source`; meta cache format 3, so the next run re-harvests).
+`mtunes catalog why <path>…` and `GET /api/why?location=&path=` compute
+the answer fresh from the annotations on disk rather than reading the
+cache, so an annotation edit can be checked before a 70 s re-harvest.
+Under the hood `harvest.Run` is now a location context plus a pure
+per-path `one`, which is the partial re-harvest §19.4 will lean on.
+Nothing about placement changed; the probe over Jonathan's 167k-file
+listing resolves identically.
+
 ## v0.9.14 — 2026-09-01 (breaks have no one-shots)
 
 A kit called "Beat" filed its 808/909 kicks under Drums/Break/One-Shots.

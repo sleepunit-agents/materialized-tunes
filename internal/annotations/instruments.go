@@ -46,6 +46,30 @@ type Instrument struct {
 	// where "one-shots" → "One-Shots" is right); a multi-word instrument
 	// name wants the space back: "upright-bass" → "Upright Bass".
 	Display string `toml:"display" json:"display,omitempty"`
+	// Scope says whose block this is when it is an override: "pack" or
+	// "vendor". Set by the loader, never by the file; it only names the
+	// tier in a Source.
+	Scope string `toml:"-" json:"-"`
+}
+
+// tier names the Source tier an override block answers as.
+func (ins Instrument) tier(code bool) string {
+	switch ins.Scope {
+	case "pack":
+		if code {
+			return TierPackCode
+		}
+		return TierPackInstrument
+	case "vendor":
+		if code {
+			return TierVendorCode
+		}
+		return TierVendorInstrument
+	}
+	if code {
+		return TierOverrideCode
+	}
+	return TierOverride
 }
 
 // Family is one [[family]] block of the shared lexicon: knowledge about a
@@ -201,7 +225,7 @@ func Normalize(s string) string {
 // vendorFirst, when non-nil, is consulted before the shared lexicon so a
 // vendor can fix its own oddities ("CH" = closed hat on SFM).
 func (lx *Lexicon) Match(segment string, vendorFirst []Instrument) (id, family string) {
-	id, family, _ = lx.match(segment, vendorFirst, "")
+	id, family, _, _ = lx.match(segment, vendorFirst, "")
 	return id, family
 }
 
@@ -223,65 +247,67 @@ func (lx *Lexicon) Match(segment string, vendorFirst []Instrument) (id, family s
 // entries get their turn, and if none of them speak it stands in for its
 // family alone — the catch-all entry, ranked where catch-alls rank, so a
 // real label anywhere else on the path still wins.
-func (lx *Lexicon) match(segment string, vendorFirst []Instrument, category string) (id, family string, rank int) {
+func (lx *Lexicon) match(segment string, vendorFirst []Instrument, category string) (id, family string, rank int, src Source) {
 	norm := Normalize(segment)
 	if norm == "" {
-		return "", "", 0
+		return "", "", 0, Source{}
 	}
 	pad := " " + norm + " "
-	demoted := "" // family of the first word the category ruled out
-	note := func(fam string) {
+	demoted := ""        // family of the first word the category ruled out
+	var demotedBy Source // and the word it was
+	note := func(fam, word string) {
 		if demoted == "" {
 			demoted = fam
+			demotedBy = Source{Tier: TierDemoted, Word: word}
 		}
 	}
 	for _, ins := range vendorFirst {
-		if hit(pad, wordAlternation(ins.Aliases), wordAlternation(ins.Avoid)) {
+		if w, ok := hit(pad, wordAlternation(ins.Aliases), wordAlternation(ins.Avoid)); ok {
 			if lx.gated(ins.ID, category) {
-				note(lx.familyOf(ins.ID, ins.Family))
+				note(lx.familyOf(ins.ID, ins.Family), w)
 				continue
 			}
-			return ins.ID, lx.familyOf(ins.ID, ins.Family), lx.rankOf(ins.ID)
+			return ins.ID, lx.familyOf(ins.ID, ins.Family), lx.rankOf(ins.ID), Source{Tier: ins.tier(false), Word: w}
 		}
 	}
 	if conjunctionRe.MatchString(segment) {
 		if id, family, rank, ok := lx.compound(pad); ok {
-			return id, family, rank
+			return id, family, rank, Source{Tier: TierCompound, Word: norm}
 		}
 	}
 	for i, ins := range lx.Instruments {
-		if hit(pad, lx.patterns[i], lx.avoids[i]) {
+		if w, ok := hit(pad, lx.patterns[i], lx.avoids[i]); ok {
 			if lx.gated(ins.ID, category) {
-				note(ins.Family)
+				note(ins.Family, w)
 				continue
 			}
-			return ins.ID, ins.Family, i
+			return ins.ID, ins.Family, i, Source{Tier: TierLexicon, Word: w}
 		}
 	}
 	for _, ins := range vendorFirst {
-		if hit(pad, wordAlternation(ins.Codes), wordAlternation(ins.Avoid)) {
+		if w, ok := hit(pad, wordAlternation(ins.Codes), wordAlternation(ins.Avoid)); ok {
 			if lx.gated(ins.ID, category) {
-				note(lx.familyOf(ins.ID, ins.Family))
+				note(lx.familyOf(ins.ID, ins.Family), w)
 				continue
 			}
-			return ins.ID, lx.familyOf(ins.ID, ins.Family), lx.rankOf(ins.ID)
+			return ins.ID, lx.familyOf(ins.ID, ins.Family), lx.rankOf(ins.ID), Source{Tier: ins.tier(true), Word: w}
 		}
 	}
 	for i, ins := range lx.Instruments {
-		if hit(pad, lx.codes[i], lx.avoids[i]) {
+		if w, ok := hit(pad, lx.codes[i], lx.avoids[i]); ok {
 			if lx.gated(ins.ID, category) {
-				note(ins.Family)
+				note(ins.Family, w)
 				continue
 			}
-			return ins.ID, ins.Family, i
+			return ins.ID, ins.Family, i, Source{Tier: TierLexiconCode, Word: w}
 		}
 	}
 	if demoted != "" {
 		if r := lx.rankOf(demoted); r < len(lx.Instruments) {
-			return demoted, demoted, r
+			return demoted, demoted, r, demotedBy
 		}
 	}
-	return "", "", 0
+	return "", "", 0, Source{}
 }
 
 // gated reports whether an instrument's word is ruled out on a file of the
@@ -328,7 +354,7 @@ func (lx *Lexicon) compound(pad string) (id, family string, rank int, ok bool) {
 	var kept []span
 	for i := range lx.Instruments {
 		p := lx.patterns[i]
-		if !hit(pad, p, lx.avoids[i]) {
+		if _, ok := hit(pad, p, lx.avoids[i]); !ok {
 			continue
 		}
 		at := p.FindStringIndex(pad)
@@ -374,14 +400,21 @@ func (lx *Lexicon) rankOf(id string) int {
 	return len(lx.Instruments) // unknown id: least specific
 }
 
-func hit(padded string, pat, avoid *regexp.Regexp) bool {
-	if pat == nil || !pat.MatchString(padded) {
-		return false
+// hit reports whether a pattern claims the padded segment and which of
+// its phrases did — the alternation's second group, the word a Source
+// records. An avoid phrase anywhere in the segment vetoes the match.
+func hit(padded string, pat, avoid *regexp.Regexp) (word string, ok bool) {
+	if pat == nil {
+		return "", false
+	}
+	m := pat.FindStringSubmatch(padded)
+	if m == nil {
+		return "", false
 	}
 	if avoid != nil && avoid.MatchString(padded) {
-		return false
+		return "", false
 	}
-	return true
+	return m[2], true
 }
 
 // FamilyOf reports the family of a known instrument id — for callers that
@@ -424,15 +457,23 @@ func (lx *Lexicon) Resolve(stem string, dirs []string, vendorFirst []Instrument)
 // there, not a label, and speaks only for its family. "" means unknown and
 // every word stands.
 func (lx *Lexicon) ResolveIn(category, stem string, dirs []string, vendorFirst []Instrument) (id, family string) {
+	id, family, _ = lx.ResolveInSrc(category, stem, dirs, vendorFirst)
+	return id, family
+}
+
+// ResolveInSrc is ResolveIn that also says why: the tier, segment and
+// word the winning label came from. src is zero when nothing spoke.
+func (lx *Lexicon) ResolveInSrc(category, stem string, dirs []string, vendorFirst []Instrument) (id, family string, src Source) {
 	best := -1
 	for _, seg := range append([]string{stem}, dirs...) {
-		gotID, gotFamily, rank := lx.match(seg, vendorFirst, category)
+		gotID, gotFamily, rank, gotSrc := lx.match(seg, vendorFirst, category)
 		if gotID == "" {
 			continue
 		}
 		if best < 0 || rank < best {
-			best, id, family = rank, gotID, gotFamily
+			best, id, family, src = rank, gotID, gotFamily, gotSrc
+			src.Segment = seg
 		}
 	}
-	return id, family
+	return id, family, src
 }
