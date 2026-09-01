@@ -140,6 +140,7 @@ type Plan struct {
 	Companions         int    `json:"companions,omitempty"`           // Ableton documents riding along, sample refs rewritten at materialize
 	Deduped            int    `json:"deduped,omitempty"`              // identical-content sources dropped by dedup = "content"
 	CutsDropped        int    `json:"cuts_dropped,omitempty"`         // redundant format cuts of a sample the pack ships several ways
+	CutsSplit          int    `json:"cuts_split,omitempty"`           // samples whose cuts land on different output paths, so every cut ships
 	VendorPrepSkipped  int    `json:"vendor_prep_skipped,omitempty"`  // files under a re-export vendor's per-sampler trees, dropped by vendor_prep = "skip"
 	Unsorted           int    `json:"unsorted,omitempty"`             // files a templated layout could not place (no instrument label) — under _Unsorted/
 	Uncategorized      int    `json:"uncategorized,omitempty"`        // placed files whose {category} fell back to an _Unsorted folder

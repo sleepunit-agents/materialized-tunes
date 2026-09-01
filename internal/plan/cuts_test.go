@@ -397,3 +397,86 @@ func TestHeuristicTreeRank(t *testing.T) {
 		t.Errorf("rank order %d %d %d, want 24-bit stereo closest to canonical", r24, r16s, r16m)
 	}
 }
+
+// cutPlanEntries is cutPlan over an arbitrary entry set.
+func cutPlanEntries(t *testing.T, entries []catalog.Entry) *Plan {
+	t.Helper()
+	ws := testWorkspace(t, entries, polyendAnnotations)
+	ws.Config.Locations[0].Layout = "vendor-dirs"
+	if err := ws.SaveConfig(); err != nil {
+		t.Fatal(err)
+	}
+	writeProfile(t, ws, "devices/dev.toml", device(24, 44100, "stereo"))
+	writeProfile(t, ws, "storage/sq.toml", bigStorage)
+	writeView(t, ws, "v", "name=\"v\"\ndevice=\"dev\"\nstorage=\"sq\"\n[[include]]\nlocation=\"src\"\nglob=\"**\"\n")
+	p, err := Build(ws, "v")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// TestPickCutsWarningCountsSamples: the warning's "N samples shipped in
+// more than one cut" counts samples, not the trees the picks came from.
+// Two samples resolved from one pack is "2 samples" even though every
+// keep came out of the same tree — Jonathan read "12 samples" on a plan
+// that had resolved 2367 of them, because the count was len(trees).
+func TestPickCutsWarningCountsSamples(t *testing.T) {
+	entries := append(bassTools(),
+		wavEntry("Polyend/Bass Tools/Pack 24 bit stereo/MIDS/Mids_Broke_F.wav", 2, 44100, 24, 44100),
+		wavEntry("Polyend/Bass Tools/Pack 16 bit stereo/MIDS/Mids_Broke_F.wav", 2, 44100, 16, 44100),
+		wavEntry("Polyend/Bass Tools/Pack 16 bit mono/MIDS/Mids_Broke_F.wav", 1, 44100, 16, 44100),
+	)
+	p := cutPlanEntries(t, entries)
+	if p.CutsDropped != 4 || len(p.Entries) != 2 {
+		t.Fatalf("dropped %d, %d entries — want 4 and 2", p.CutsDropped, len(p.Entries))
+	}
+	joined := strings.Join(p.Warnings, "\n")
+	if !strings.Contains(joined, "2 samples shipped in more than one cut") {
+		t.Errorf("warning should count 2 samples, got: %v", p.Warnings)
+	}
+}
+
+// TestSplitCutsDetectsDivergentPaths: the Fractured tally hole. When a
+// format tree files a sample under its own idea of the folder ("Toms"
+// where the stereo trees say "Tom"), that cut lands on an output path of
+// its own — the resolver, which groups by output path, never sees the
+// three as one sample, so the stray cut ships alongside the kept one with
+// no collision to say so. The plan must say so instead.
+func TestSplitCutsDetectsDivergentPaths(t *testing.T) {
+	entries := []catalog.Entry{
+		wavEntry("Polyend/Fractured/Fractured 24 bit stereo/Tom/Perc_Tom_Bloat.wav", 2, 44100, 24, 44100),
+		wavEntry("Polyend/Fractured/Fractured 16 bit stereo/Tom/Perc_Tom_Bloat.wav", 2, 44100, 16, 44100),
+		wavEntry("Polyend/Fractured/Fractured 16 bit mono/Toms/Perc_Tom_Bloat.wav", 1, 44100, 16, 44100),
+	}
+	p := cutPlanEntries(t, entries)
+	if len(p.Errors) != 0 {
+		t.Fatalf("errors: %v", p.Errors)
+	}
+	if p.CutsDropped != 1 || len(p.Entries) != 2 {
+		t.Fatalf("dropped %d, %d entries — want 1 and 2 (the stray mono cut survives)", p.CutsDropped, len(p.Entries))
+	}
+	if p.CutsSplit != 1 {
+		t.Fatalf("cuts_split = %d, want 1", p.CutsSplit)
+	}
+	joined := strings.Join(p.Warnings, "\n")
+	if !strings.Contains(joined, "1 sample still ships in more than one cut") ||
+		!strings.Contains(joined, "Toms/Perc_Tom_Bloat.wav") {
+		t.Errorf("warning should name the split and the stray path, got: %v", p.Warnings)
+	}
+}
+
+// TestSplitCutsIgnoresRepeatedNames: "Kick_01" existing in two kits of
+// one tree is two samples sharing a name, not one sample in cuts — the
+// split warning must stay silent.
+func TestSplitCutsIgnoresRepeatedNames(t *testing.T) {
+	entries := []catalog.Entry{
+		wavEntry("Polyend/Fractured/Fractured 24 bit stereo/Kit A/Kick_01.wav", 2, 44100, 24, 44100),
+		wavEntry("Polyend/Fractured/Fractured 24 bit stereo/Kit B/Kick_01.wav", 2, 44100, 24, 44100),
+		wavEntry("Polyend/Fractured/Fractured 16 bit mono/Kit A/Kick_01.wav", 1, 44100, 16, 44100),
+	}
+	p := cutPlanEntries(t, entries)
+	if p.CutsSplit != 0 {
+		t.Errorf("cuts_split = %d, want 0 — a repeated name inside one tree disqualifies the group: %v", p.CutsSplit, p.Warnings)
+	}
+}

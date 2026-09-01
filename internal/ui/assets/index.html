@@ -178,12 +178,14 @@
   .meter .reserve { position: absolute; top: 0; bottom: 0; right: 0; background: repeating-linear-gradient(-45deg, #343a40 0 4px, #23272b 4px 8px); }
   .meter .mark { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--fg-dim); }
   .legend { display: flex; gap: 14px; font: 500 10.5px var(--mono); margin-bottom: 14px; flex-wrap: wrap; }
-  .issue { display: flex; align-items: center; gap: 8px; border-radius: 4px; padding: 7px 10px; border: 1px solid; margin-bottom: 6px; }
+  .issues { max-height: 42vh; overflow-y: auto; }
+  .issue { display: flex; align-items: flex-start; gap: 8px; border-radius: 4px; padding: 7px 10px; border: 1px solid; margin-bottom: 6px; cursor: pointer; }
   .issue.warn { background: rgba(224,182,79,.08); border-color: rgba(224,182,79,.25); }
   .issue.err { background: rgba(229,96,79,.10); border-color: rgba(229,96,79,.35); }
-  .issue .k { font: 700 10px var(--mono); flex: none; }
+  .issue .k { font: 700 10px var(--mono); flex: none; padding-top: 2px; }
   .issue.warn .k { color: var(--warn); } .issue.err .k { color: var(--err); }
-  .issue .t { font: 400 11.5px var(--sans); }
+  .issue .t { font: 400 11.5px var(--sans); min-width: 0; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; }
+  .issue.open .t { display: block; -webkit-line-clamp: unset; }
   .issue.warn .t { color: #d9c68e; } .issue.err .t { color: #e8a99f; }
   .mat-btn { margin-top: 16px; text-align: center; background: var(--amber); color: #1a1205; border-radius: 5px; padding: 9px 0; font: 700 12px var(--sans); letter-spacing: .05em; cursor: pointer; }
   .mat-btn:hover { background: #f5ad52; }

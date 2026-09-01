@@ -80,20 +80,24 @@ func betterCut(a, b Entry) bool {
 // length, so the longest render is kept and pickCuts says out loud how
 // many dropped cuts disagreed.
 func isCutSet(entries []Entry, idx []int) bool {
-	rel := func(e Entry) string {
-		r := strings.TrimPrefix(e.SourcePath, e.pack+"/"+e.tree+"/")
-		return strings.ToLower(strings.TrimSuffix(r, path.Ext(r)))
-	}
 	trees := make(map[string]bool, len(idx))
-	r0 := rel(entries[idx[0]])
+	r0 := cutRel(entries[idx[0]])
 	for _, i := range idx {
 		e := entries[i]
-		if e.tree == "" || trees[e.tree] || rel(e) != r0 {
+		if e.tree == "" || trees[e.tree] || cutRel(e) != r0 {
 			return false
 		}
 		trees[e.tree] = true
 	}
 	return true
+}
+
+// cutRel is the sample's coordinate inside its format tree: the relative
+// path with case and extension folded away — a re-render into another
+// container or case is still the same recording.
+func cutRel(e Entry) string {
+	r := strings.TrimPrefix(e.SourcePath, e.pack+"/"+e.tree+"/")
+	return strings.ToLower(strings.TrimSuffix(r, path.Ext(r)))
 }
 
 // pickCuts drops the redundant cuts, keeping one entry per output path.
@@ -120,6 +124,7 @@ func (p *Plan) pickCuts(caseSensitive bool) {
 	drop := map[int]bool{}
 	kept := map[string]int{}    // format tree → samples kept from it
 	dropped := map[string]int{} // format tree → cuts dropped
+	sets := 0                   // samples that shipped in more than one cut
 	trimmed := 0                // re-export sets whose renders disagreed on length
 	var example string
 	for _, k := range order {
@@ -127,6 +132,7 @@ func (p *Plan) pickCuts(caseSensitive bool) {
 		if len(idx) < 2 || !isCutSet(p.Entries, idx) {
 			continue
 		}
+		sets++
 		best := idx[0]
 		for _, i := range idx[1:] {
 			if betterCut(p.Entries[i], p.Entries[best]) {
@@ -148,28 +154,103 @@ func (p *Plan) pickCuts(caseSensitive bool) {
 			example = fmt.Sprintf("%s kept from %q", p.Entries[best].OutPath, p.Entries[best].tree)
 		}
 	}
-	if len(drop) == 0 {
-		return
+	if len(drop) > 0 {
+		surviving := p.Entries[:0]
+		for i, e := range p.Entries {
+			if !drop[i] {
+				surviving = append(surviving, e)
+			}
+		}
+		p.Entries = surviving
+
+		trim := ""
+		if trimmed > 0 {
+			trim = fmt.Sprintf(" %d dropped %s trimmed to a different length than its siblings; the longest render was kept.",
+				trimmed, plural(trimmed, "cut was", "cuts were"))
+		}
+		p.Warnings = append(p.Warnings, fmt.Sprintf(
+			"%d redundant format %s dropped — %d %s shipped in more than one cut, rendered once in the cut this device takes best: kept %s, dropped %s (e.g. %s).%s cuts = \"all\" keeps every cut.",
+			p.CutsDropped, plural(p.CutsDropped, "cut", "cuts"),
+			sets, plural(sets, "sample", "samples"),
+			treeTally(kept), treeTally(dropped), example, trim))
 	}
 
-	surviving := p.Entries[:0]
+	p.splitCuts(caseSensitive)
+}
+
+// splitCuts finds the cut siblings pickCuts could never adjudicate: cuts
+// of one sample whose trees disagree about its folder or its name, so each
+// lands on an output path of its own and every one of them ships. The
+// resolver groups by output path — landing together is its trigger — so a
+// mono tree that files its toms under "Toms" while the stereo trees say
+// "Tom" sails straight past it and the device gets the sample twice, in
+// two folders, with no collision to say so. The grouping here is looser on
+// purpose: same pack, same filename, one member per tree — and it only
+// speaks when those members are headed to more than one output path.
+// A name that repeats inside a single tree ("Kit A/Kick", "Kit B/Kick")
+// disqualifies its group: that is two samples sharing a name, not one
+// sample in cuts.
+func (p *Plan) splitCuts(caseSensitive bool) {
+	type group struct {
+		idx     []int
+		trees   map[string]bool
+		treeDup bool
+	}
+	byName := map[string]*group{}
+	var order []string
 	for i, e := range p.Entries {
-		if !drop[i] {
-			surviving = append(surviving, e)
+		if e.tree == "" || e.Companion {
+			continue
+		}
+		base := path.Base(e.SourcePath)
+		k := e.pack + "\x00" + strings.ToLower(strings.TrimSuffix(base, path.Ext(base)))
+		g := byName[k]
+		if g == nil {
+			g = &group{trees: map[string]bool{}}
+			byName[k] = g
+			order = append(order, k)
+		}
+		if g.trees[e.tree] {
+			g.treeDup = true
+		}
+		g.trees[e.tree] = true
+		g.idx = append(g.idx, i)
+	}
+	var example string
+	for _, k := range order {
+		g := byName[k]
+		if len(g.idx) < 2 || g.treeDup {
+			continue
+		}
+		fold := func(o string) string {
+			if caseSensitive {
+				return o
+			}
+			return strings.ToLower(o)
+		}
+		o0 := fold(p.Entries[g.idx[0]].OutPath)
+		split := false
+		for _, i := range g.idx[1:] {
+			if fold(p.Entries[i].OutPath) != o0 {
+				split = true
+				if example == "" {
+					a, b := p.Entries[g.idx[0]], p.Entries[i]
+					example = fmt.Sprintf("%q lands at %s while %q lands at %s",
+						a.SourcePath, a.OutPath, b.SourcePath, b.OutPath)
+				}
+				break
+			}
+		}
+		if split {
+			p.CutsSplit++
 		}
 	}
-	p.Entries = surviving
-
-	trim := ""
-	if trimmed > 0 {
-		trim = fmt.Sprintf(" %d dropped %s trimmed to a different length than its siblings; the longest render was kept.",
-			trimmed, plural(trimmed, "cut was", "cuts were"))
+	if p.CutsSplit == 0 {
+		return
 	}
 	p.Warnings = append(p.Warnings, fmt.Sprintf(
-		"%d redundant format %s dropped — %d %s shipped in more than one cut, rendered once in the cut this device takes best: kept %s, dropped %s (e.g. %s).%s cuts = \"all\" keeps every cut.",
-		p.CutsDropped, plural(p.CutsDropped, "cut", "cuts"),
-		len(kept), plural(len(kept), "sample", "samples"),
-		treeTally(kept), treeTally(dropped), example, trim))
+		"%d %s in more than one cut anyway — their format trees disagree about the file's folder or name, so the cuts land on different output paths and the redundancy is invisible to the cut resolver: %s. The pack's [[dir]] annotation can teach the trees to agree.",
+		p.CutsSplit, plural(p.CutsSplit, "sample still ships", "samples still ship"), example))
 }
 
 // treeTally names format trees with their counts, busiest first — the

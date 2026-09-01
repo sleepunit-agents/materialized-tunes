@@ -1311,8 +1311,8 @@ function renderRecipe() {
     const usablePct = usable / cap * 100, reservePct = 100 - usablePct;
     const ovPct = over > 0 ? Math.min(over / cap * 100, reservePct) : 0;
     const issues = [
-      ...errors.map(t => `<div class="issue err"><span class="k">ERROR</span><span class="t">${esc(t)}</span></div>`),
-      ...warnings.map(t => `<div class="issue warn"><span class="k">WARN</span><span class="t">${esc(t)}</span></div>`),
+      ...errors.map(t => `<div class="issue err" data-act="issue-toggle" title="click to expand"><span class="k">ERROR</span><span class="t">${esc(t)}</span></div>`),
+      ...warnings.map(t => `<div class="issue warn" data-act="issue-toggle" title="click to expand"><span class="k">WARN</span><span class="t">${esc(t)}</span></div>`),
     ].join('') || `<div style="font:400 11px var(--mono);color:var(--fg-faint);padding:6px 2px">0 issues — clean pre-flight</div>`;
     right = `
       <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:12px">
@@ -1334,7 +1334,7 @@ function renderRecipe() {
         <div style="flex:1"></div>
         <span style="color:${over > 0 ? 'var(--err)' : 'var(--green)'}">${over > 0 ? fmtB(over) + ' over' : fmtB(usable - onDisk) + ' free'}</span>
       </div>
-      <div>${issues}</div>
+      <div class="issues">${issues}</div>
       <div class="mat-btn ${!fits || errors.length ? 'blocked' : ''}" data-act="go-run">MATERIALIZE — ${n(S.pf.files ?? 0)} FILES</div>
       ${pf.migrate ? `<div class="mat-btn ${errors.length ? 'blocked' : ''}" style="margin-top:8px" data-act="go-migrate">MIGRATE — MOVE ${n(pf.migrate.moves + pf.migrate.companions)} FILES INTO THE NEW LAYOUT</div>
       <div style="font:400 10px var(--mono);color:var(--fg-faint);margin-top:6px;text-align:center">renames the last materialize in place — nothing re-rendered, no duplicates, emptied folders removed</div>` : ''}
@@ -1467,6 +1467,7 @@ function wire() {
     el.addEventListener('click', (e) => {
       const act = el.dataset.act;
       if (act === 'tab') { stopPlayback(); S.packOpen = null; S.pd = null; S.screen = el.dataset.k; if (S.screen === 'cards') { S.locks = []; } render(); }
+      if (act === 'issue-toggle') { if (!String(window.getSelection())) el.classList.toggle('open'); } // a click that selected text is a copy, not a toggle
       if (act === 'clear-lens') { S.lens = null; loadPacks().then(render); }
       if (act === 'toggle-menu') { S.lensMenu = !S.lensMenu; render(); }
       if (act === 'close-menu') { S.lensMenu = false; render(); }
