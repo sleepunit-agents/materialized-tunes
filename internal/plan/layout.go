@@ -83,7 +83,11 @@ type placement struct {
 	fx            bool // known FX — consolidated under FX/ regardless of instrument
 }
 
-func (ly *layouter) place(loc, srcPath, sha string) placement {
+// place decides where one file lands. srcPath is the path the output
+// tokens read (a format-tree file arrives with its tree segment already
+// stripped); catPath is the file's real catalog path, which is what the
+// harvested metadata is keyed by.
+func (ly *layouter) place(loc, srcPath, catPath string) placement {
 	lc := ly.locs[loc]
 	segs := strings.Split(srcPath, "/")
 	vals := map[string]string{}
@@ -112,7 +116,7 @@ func (ly *layouter) place(loc, srcPath, sha string) placement {
 	vals[view.TokFile] = inPack[len(inPack)-1]
 	var meta harvest.Meta
 	catchAll, isFX := false, false
-	if m, ok := ly.meta[loc][sha]; ok {
+	if m, ok := ly.meta[loc][catPath]; ok {
 		meta = m
 		vals[view.TokFamily] = displayName(m.Family)
 		vals[view.TokInstrument] = displayName(m.Instrument)

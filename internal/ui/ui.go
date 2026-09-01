@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/sleepunit-agents/materialized-tunes/internal/annotations"
+	"github.com/sleepunit-agents/materialized-tunes/internal/harvest"
 	"github.com/sleepunit-agents/materialized-tunes/internal/browse"
 	"github.com/sleepunit-agents/materialized-tunes/internal/cache"
 	"github.com/sleepunit-agents/materialized-tunes/internal/catalog"
@@ -73,7 +74,7 @@ func Handler(ws *workspace.Workspace) http.Handler {
 	// immediately: classification fixes apply on launch, not after the next
 	// scan someone remembers to run.
 	go func() {
-		if annotations.Sync(context.Background(), ws.Root).Changed() {
+		if annotations.Sync(context.Background(), ws.Root).Changed() || !harvest.MetaFresh(ws) {
 			s.reharvestAll()
 		}
 	}()
@@ -789,7 +790,7 @@ func (s *Server) packDetail(w http.ResponseWriter, r *http.Request) {
 	for _, p := range shown {
 		ce := byPath[p]
 		f := file{Path: ce.Path, Name: p[strings.LastIndex(p, "/")+1:], Size: ce.Size}
-		if mr, ok := meta[ce.SHA256]; ok {
+		if mr, ok := meta[p]; ok {
 			f.BPM, f.Key, f.Chord, f.Cat = mr.BPM, mr.Key, mr.Chord, mr.Category
 		}
 		if ce.Audio != nil {
@@ -888,10 +889,11 @@ func (s *Server) preview(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---- local per-file metadata (annotations-cache/meta/<location>.jsonl) ----
-// Harvested vendor data (bpm, key, tags), keyed by content SHA — proprietary
+// Harvested vendor data (bpm, key, tags), keyed by source path — proprietary
 // vendor databases stay in the workspace, never in the annotations repo.
 
 type fileMeta struct {
+	Path     string   `json:"path"`
 	SHA      string   `json:"sha"`
 	BPM      int      `json:"bpm,omitempty"`
 	Key      string   `json:"key,omitempty"`
@@ -919,7 +921,9 @@ func (s *Server) loadMeta(location string) map[string]fileMeta {
 			if dec.Decode(&r) != nil {
 				break
 			}
-			m[r.SHA] = r
+			if r.Path != "" {
+				m[r.Path] = r
+			}
 		}
 	}
 	s.meta[location] = m

@@ -18,6 +18,7 @@ import (
 
 	"github.com/sleepunit-agents/materialized-tunes/internal/annotations"
 	"github.com/sleepunit-agents/materialized-tunes/internal/catalog"
+	"github.com/sleepunit-agents/materialized-tunes/internal/harvest"
 	"github.com/sleepunit-agents/materialized-tunes/internal/profile"
 	"github.com/sleepunit-agents/materialized-tunes/internal/view"
 	"github.com/sleepunit-agents/materialized-tunes/internal/workspace"
@@ -329,6 +330,15 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 
 	var ly *layouter
 	if lay != nil {
+		if !harvest.MetaFresh(ws) {
+			// the meta cache predates this build's format — re-derive it
+			// from the catalogs so the layout reads current classifications
+			for _, inc := range v.Include {
+				if lc, ok := ws.Location(inc.Location); ok {
+					harvest.Run(ws, lc)
+				}
+			}
+		}
 		if ly, err = newLayouter(ws, v, lay, vendors); err != nil {
 			return nil, err
 		}
@@ -438,7 +448,7 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 		var parents []string
 		var placed placeFlags
 		if ly != nil {
-			pl := ly.place(loc, srcForOut, ce.SHA256)
+			pl := ly.place(loc, srcForOut, ce.Path)
 			out, parents = pl.out, pl.parents
 			if pl.unsorted {
 				placed |= placeUnsorted

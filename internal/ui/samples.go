@@ -86,7 +86,7 @@ func (s *Server) samples(w http.ResponseWriter, r *http.Request) {
 			if ce.Audio == nil {
 				continue
 			}
-			m := meta[ce.SHA256]
+			m := meta[p]
 			if instrument != "" && !strings.EqualFold(m.Instrument, instrument) {
 				continue
 			}

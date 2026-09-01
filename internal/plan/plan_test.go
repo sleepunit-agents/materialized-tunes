@@ -42,6 +42,11 @@ func testWorkspace(t *testing.T, entries []catalog.Entry, files map[string]strin
 		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
+		if strings.HasPrefix(rel, "annotations-cache/meta/") {
+			// a planted meta fixture speaks the current format — without
+			// the stamp, Build would re-harvest right over it
+			os.WriteFile(filepath.Join(dir, "annotations-cache", "meta", ".format"), []byte("2\n"), 0o644)
+		}
 	}
 	// reload so the location config is live
 	ws2, err := workspace.Load(dir)
@@ -770,17 +775,17 @@ func TestLayoutTemplate(t *testing.T) {
 		"annotations/instruments.toml": "[[family]]\nid=\"bass\"\nflat=true\n[[family]]\nid=\"fx\"\nflat=true\n" +
 			"[[instrument]]\nid=\"upright-bass\"\nfamily=\"bass\"\nsplit=true\ndisplay=\"Upright Bass\"\naliases=[\"upright bass\"]\n",
 		"annotations-cache/meta/src.jsonl": strings.Join([]string{
-			`{"sha":"aaGrit/one_shots/kicks/GTH_Kick_03.wav","category":"one-shots","instrument":"kick","family":"drums"}`,
-			`{"sha":"aaGrit/loops/drums/GTH_Drum_Loop_124.wav","category":"loops","instrument":"drums","family":"drums","bpm":124}`,
-			`{"sha":"aaGrit/one_shots/rim/Rim 01.wav","category":"one-shots","instrument":"rim","family":"drums"}`,
-			`{"sha":"aaGrit/one_shots/rim_alt/Rim 01.wav","category":"one-shots","instrument":"rim","family":"drums"}`,
-			`{"sha":"aaTech Funk/hits/TFH_Rim_A.wav","instrument":"rim","family":"drums"}`,
-			`{"sha":"aaTech Funk/loops/TFH_Loop_124_Gmin.wav","category":"loops","bpm":124}`,
-			`{"sha":"aaGrit/fx/Flute Riser.wav","category":"fx","instrument":"flute","family":"woodwind"}`,
-			`{"sha":"aaGrit/foley/Rain Loop.wav","category":"loops","instrument":"foley","family":"fx"}`,
-			`{"sha":"aaGrit/fx/Weird One.wav","category":"fx","instrument":"fx","family":"fx"}`,
-			`{"sha":"aaGrit/bass/Champion Sub.wav","category":"one-shots","instrument":"sub","family":"bass"}`,
-			`{"sha":"aaGrit/bass/Upright Bass C2.wav","category":"one-shots","instrument":"upright-bass","family":"bass"}`,
+			`{"path":"Grit/one_shots/kicks/GTH_Kick_03.wav","category":"one-shots","instrument":"kick","family":"drums"}`,
+			`{"path":"Grit/loops/drums/GTH_Drum_Loop_124.wav","category":"loops","instrument":"drums","family":"drums","bpm":124}`,
+			`{"path":"Grit/one_shots/rim/Rim 01.wav","category":"one-shots","instrument":"rim","family":"drums"}`,
+			`{"path":"Grit/one_shots/rim_alt/Rim 01.wav","category":"one-shots","instrument":"rim","family":"drums"}`,
+			`{"path":"Tech Funk/hits/TFH_Rim_A.wav","instrument":"rim","family":"drums"}`,
+			`{"path":"Tech Funk/loops/TFH_Loop_124_Gmin.wav","category":"loops","bpm":124}`,
+			`{"path":"Grit/fx/Flute Riser.wav","category":"fx","instrument":"flute","family":"woodwind"}`,
+			`{"path":"Grit/foley/Rain Loop.wav","category":"loops","instrument":"foley","family":"fx"}`,
+			`{"path":"Grit/fx/Weird One.wav","category":"fx","instrument":"fx","family":"fx"}`,
+			`{"path":"Grit/bass/Champion Sub.wav","category":"one-shots","instrument":"sub","family":"bass"}`,
+			`{"path":"Grit/bass/Upright Bass C2.wav","category":"one-shots","instrument":"upright-bass","family":"bass"}`,
 		}, "\n") + "\n",
 	})
 	ws.Config.Locations[0].Vendor = "splice"
@@ -918,8 +923,8 @@ func TestLayoutVendorDirs(t *testing.T) {
 		wavEntry("Samples From Mars/808 From Mars/WAV/Snares/SD 01.wav", 1, 48000, 16, 4800),
 	}, map[string]string{
 		"annotations/vendors/sfm/vendor.toml": "[vendor]\nname=\"Samples From Mars\"\nslug=\"samples-from-mars\"\n[formats]\ncanonical_dir=\"WAV\"\n",
-		"annotations-cache/meta/src.jsonl": `{"sha":"aaSamples From Mars/808 From Mars/WAV/Kicks/BD 01.wav","instrument":"kick","family":"drums"}` + "\n" +
-			`{"sha":"aaSamples From Mars/808 From Mars/WAV/Snares/SD 01.wav","instrument":"snare","family":"drums"}` + "\n",
+		"annotations-cache/meta/src.jsonl": `{"path":"Samples From Mars/808 From Mars/WAV/Kicks/BD 01.wav","instrument":"kick","family":"drums"}` + "\n" +
+			`{"path":"Samples From Mars/808 From Mars/WAV/Snares/SD 01.wav","instrument":"snare","family":"drums"}` + "\n",
 	})
 	ws.Config.Locations[0].Layout = "vendor-dirs"
 	if err := ws.SaveConfig(); err != nil {

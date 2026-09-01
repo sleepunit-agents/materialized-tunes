@@ -222,7 +222,7 @@ func TestPickCutsCountersDescribeOutput(t *testing.T) {
 	// three cuts land unsorted, and only the kept one may be counted.
 	var meta []string
 	for _, e := range bassTools() {
-		meta = append(meta, `{"sha":"`+e.SHA256+`"}`)
+		meta = append(meta, `{"path":"`+e.Path+`","sha":"`+e.SHA256+`"}`)
 	}
 	files["annotations-cache/meta/src.jsonl"] = strings.Join(meta, "\n") + "\n"
 

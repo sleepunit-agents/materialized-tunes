@@ -29,7 +29,7 @@ func TestPickCutsPackDirMapShape(t *testing.T) {
 	}
 	var meta []string
 	for _, e := range entries {
-		meta = append(meta, `{"sha":"`+e.SHA256+`"}`)
+		meta = append(meta, `{"path":"`+e.Path+`","sha":"`+e.SHA256+`"}`)
 	}
 	ann["annotations-cache/meta/src.jsonl"] = strings.Join(meta, "\n") + "\n"
 	ws := testWorkspace(t, entries, ann)

@@ -100,7 +100,7 @@ samples the vendor left unlabelled simply do not match.`,
 				if ce.Audio == nil {
 					continue
 				}
-				m := meta[ce.SHA256]
+				m := meta[p]
 				if !matches(m, smpInstrument, smpFamily, smpCategory, smpKey, lo, hi) {
 					continue
 				}

@@ -120,3 +120,49 @@ func TestHarvest(t *testing.T) {
 }
 
 func jsonDecoder(f *os.File) interface{ Decode(any) error } { return json.NewDecoder(f) }
+
+// A vendor ships the same bytes at two paths — a Step Kit folder holds
+// copies of the pack's own hits. Each path's labels come from that path;
+// under content keying, whichever copy harvested last wrote the
+// classification for both, and Polyend's mono cuts filed under Drums
+// because their kit twins said "kit" (the 33-stray split of 2026-09-01).
+func TestHarvestSharedBytesKeepTheirOwnLabels(t *testing.T) {
+	dir := t.TempDir()
+	ws, err := workspace.Init(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws.Config.Locations = []workspace.LocationConfig{{Name: "src", Type: "local", Root: dir, Layout: "vendor-dirs"}}
+	ws.SaveConfig()
+	inst := filepath.Join(dir, "annotations", "instruments.toml")
+	os.MkdirAll(filepath.Dir(inst), 0o755)
+	os.WriteFile(inst, []byte("[[instrument]]\nid=\"drums\"\nfamily=\"drums\"\naliases=[\"drum\",\"drums\",\"kit\",\"kits\"]\n"+
+		"[[instrument]]\nid=\"percussion\"\nfamily=\"percussion\"\naliases=[\"percussion\",\"perc\"]\n"), 0o644)
+	mk := func(path string) catalog.Entry {
+		return catalog.Entry{Path: path, SHA256: "same-bytes", Size: 1, ScannedAt: time.Now(),
+			Audio: &audio.Meta{Format: "wav", Channels: 1, SampleRate: 44100, BitDepth: 16, Frames: 10}}
+	}
+	cut := "Polyend/Fractured/Fractured 16 bit mono/Bright/Perc_Bright.wav"
+	kit := "Polyend/Fractured/Step Kits/Bright Kit/Perc_Bright.wav"
+	cat := map[string]catalog.Entry{cut: mk(cut), kit: mk(kit)}
+	if err := catalog.Write(ws.CatalogPath("src"), cat); err != nil {
+		t.Fatal(err)
+	}
+	ws, _ = workspace.Load(dir)
+	if MetaFresh(ws) {
+		t.Fatal("no harvest has run — the format must not read as fresh")
+	}
+	if _, err := Run(ws, ws.Config.Locations[0]); err != nil {
+		t.Fatal(err)
+	}
+	m := LoadMeta(ws, "src")
+	if got := m[cut].Family; got != "percussion" {
+		t.Errorf("cut family = %q, want percussion — its kit twin must not label it", got)
+	}
+	if got := m[kit].Family; got != "drums" {
+		t.Errorf("kit copy family = %q, want drums", got)
+	}
+	if !MetaFresh(ws) {
+		t.Error("harvest must stamp the meta cache format")
+	}
+}

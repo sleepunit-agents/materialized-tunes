@@ -3,8 +3,13 @@
 // "RZA_Bass_03_C3.wav", "Hat Loop 03 124 Bpm.wav", "Champion Sub - 10A",
 // "Bass Lines 166.5/" — plus the annotation layer's category and [[dir]]
 // maps. Output is the workspace's annotations-cache/meta/<location>.jsonl,
-// keyed by content SHA, which the UI already reads. Deterministic and
+// keyed by source path, which the UI already reads. Deterministic and
 // cheap (string ops over the catalog), so it reruns after every scan.
+//
+// Path, not SHA: the labels come from the path, so the path is the key.
+// Vendors ship the same bytes at more than one path — a Step Kit holds
+// copies of the pack's own drum hits — and under a content key whichever
+// copy harvests last writes the classification for every one of them.
 package harvest
 
 import (
@@ -27,6 +32,7 @@ import (
 
 // Meta is one harvested record. Same shape the UI's meta cache reads.
 type Meta struct {
+	Path       string   `json:"path"`
 	SHA        string   `json:"sha"`
 	BPM        int      `json:"bpm,omitempty"`
 	Key        string   `json:"key,omitempty"`
@@ -117,7 +123,7 @@ func Run(ws *workspace.Workspace, lc workspace.LocationConfig) (*Result, error) 
 			pack = vendor.PackByDir(segs[packIdx])
 		}
 		inPack := segs[packIdx+1:] // path within the pack, last = filename
-		m := Meta{SHA: e.SHA256}
+		m := Meta{Path: p, SHA: e.SHA256}
 		base := strings.TrimSuffix(inPack[len(inPack)-1], filepath.Ext(inPack[len(inPack)-1]))
 		dirs := inPack[:len(inPack)-1]
 
@@ -204,7 +210,22 @@ func Run(ws *workspace.Workspace, lc workspace.LocationConfig) (*Result, error) 
 		os.Remove(tmp)
 		return nil, err
 	}
+	os.WriteFile(filepath.Join(dir, ".format"), []byte(metaFormat+"\n"), 0o644)
 	return res, nil
+}
+
+// metaFormat versions the meta cache's shape. Bump it when a record's
+// meaning changes — readers treat a cache written under another format as
+// absent, and MetaFresh lets callers re-run harvest before trusting it.
+// "2": records carry the source path and are keyed by it, not by SHA.
+const metaFormat = "2"
+
+// MetaFresh reports whether the meta cache on disk was written by this
+// build's format. False means harvest must run again before LoadMeta's
+// answers mean anything — including the cache simply not existing yet.
+func MetaFresh(ws *workspace.Workspace) bool {
+	b, err := os.ReadFile(filepath.Join(ws.Root, "annotations-cache", "meta", ".format"))
+	return err == nil && strings.TrimSpace(string(b)) == metaFormat
 }
 
 // multisampleDirs finds the one structural signature vendors never
@@ -380,8 +401,10 @@ func harvestCategory(dirs []string, v *annotations.Vendor, p *annotations.Pack, 
 	return category, tags, instrument
 }
 
-// LoadMeta reads a location's harvested metadata cache, keyed by content
-// SHA. Missing cache is empty, not an error — harvest may not have run.
+// LoadMeta reads a location's harvested metadata cache, keyed by source
+// path. Missing cache is empty, not an error — harvest may not have run.
+// Records without a path predate the current format and are dropped; run
+// harvest again (MetaFresh says when) rather than guessing what they meant.
 func LoadMeta(ws *workspace.Workspace, location string) map[string]Meta {
 	out := map[string]Meta{}
 	f, err := os.Open(filepath.Join(ws.Root, "annotations-cache", "meta", location+".jsonl"))
@@ -395,6 +418,8 @@ func LoadMeta(ws *workspace.Workspace, location string) map[string]Meta {
 		if dec.Decode(&m) != nil {
 			return out
 		}
-		out[m.SHA] = m
+		if m.Path != "" {
+			out[m.Path] = m
+		}
 	}
 }
