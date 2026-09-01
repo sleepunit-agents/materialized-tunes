@@ -7,6 +7,33 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.23 — 2026-09-01 (a rack lands beside its samples)
+
+Jonathan asked how Ableton handles multisampled instruments and whether
+the file that "just makes that shit work" could ride to Push. It can and
+it already did mechanically — companions (§4.4) rewrite every `<FileRef>`
+— but under his `{family}/{instrument}/{category}/{pack}/{file}` layout a
+document had nowhere to go: it is not audio, so the harvest never gave it
+family or instrument, and the template sent every one of Samples From
+Mars' 1,692 `.adg`s to `_Unsorted/`. Live would find them there; nobody
+browsing for a synth would.
+
+Now the catalog records what a document points at (scan reads each one
+whole and stores its refs; old catalogs backfill on the next scan), and
+plan places the document by a vote over the referenced samples' harvested
+facts. A Sampler multisample follows its zone map — `SuperPulse.adg`
+lands in the same folder as `SuperPulse C0.wav`. A drum kit spanning
+kick, snare and hat is a drums thing, not a hat thing: instrument and
+category need two thirds of the pads to agree, else the level falls to
+`_General` / `_Unsorted`. The resolution order that decides which file a
+ref means is now one type, `ableton.Resolver`, used by plan and
+materialize alike, so what the plan says a rack is made of is what the
+rewrite wires.
+
+Not proven on hardware yet: whether Push 3 standalone resolves the
+User-Library-relative paths from a relocated library. First real `.adg`
+through the pipe answers it.
+
 ## v0.9.22 — 2026-09-01 (a correction can be withdrawn)
 
 Jonathan, first session with the Plan step: he set MS10's SuperPulse to

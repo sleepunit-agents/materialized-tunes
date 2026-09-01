@@ -6,7 +6,9 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/sleepunit-agents/materialized-tunes/internal/ableton"
 	"github.com/sleepunit-agents/materialized-tunes/internal/annotations"
+	"github.com/sleepunit-agents/materialized-tunes/internal/catalog"
 	"github.com/sleepunit-agents/materialized-tunes/internal/harvest"
 	"github.com/sleepunit-agents/materialized-tunes/internal/view"
 	"github.com/sleepunit-agents/materialized-tunes/internal/workspace"
@@ -38,13 +40,16 @@ type layouter struct {
 	byTop    map[string]*annotations.Vendor // vendor-dirs: top dir → vendor (nil = unknown)
 	meta     map[string]map[string]harvest.Meta
 	lex      *annotations.Lexicon // flat-family knowledge; nil when the template reads no metadata
+
+	in     *Inputs
+	docIdx map[string]*ableton.Resolver // location → every audio path in its catalog; built on first document
 }
 
 func newLayouter(in *Inputs, v *view.View, lay *view.Layout, vendors []annotations.Vendor) (*layouter, error) {
 	ws := in.ws
 	fb, _ := view.ParseLayout(UnsortedDir + "/{vendor}/{pack}/{path}")
 	ly := &layouter{
-		lay: lay, fallback: fb,
+		lay: lay, fallback: fb, in: in, docIdx: map[string]*ableton.Resolver{},
 		locs:    map[string]workspace.LocationConfig{},
 		vendors: vendors, bySlug: annotations.BySlug(vendors),
 		byTop: map[string]*annotations.Vendor{},
@@ -88,6 +93,102 @@ type placement struct {
 // stripped); catPath is the file's real catalog path, which is what the
 // harvested metadata is keyed by.
 func (ly *layouter) place(loc, srcPath, catPath string) placement {
+	m, ok := ly.meta[loc][catPath]
+	return ly.placeMeta(loc, srcPath, m, ok)
+}
+
+// docMeta is what a companion document inherits from the samples it
+// references: a rack is what its pads are. Every ref is resolved against
+// the location's whole catalog (not the selection — placement is a fact
+// about the document, not about this recipe), and the referenced files'
+// harvested facts are put to a vote. Family is the plurality; instrument
+// and category must be near-unanimous (two thirds) to stand, else the
+// level says so — instrument falls to the family's catch-all (_General)
+// and category to _Unsorted — because a kit that spans kick, snare and
+// hat is a drums thing, not a hat thing. Returns the inherited record and
+// how many refs resolved out of how many the document carries.
+func (ly *layouter) docMeta(loc string, ce catalog.Entry) (m harvest.Meta, resolved, total int) {
+	if ce.Doc == nil || len(ce.Doc.Refs) == 0 || ly.in == nil {
+		return m, 0, 0
+	}
+	total = len(ce.Doc.Refs)
+	rs, ok := ly.docIdx[loc]
+	if !ok {
+		var paths []string
+		if cat, err := ly.in.Catalog(loc); err == nil {
+			for p, e := range cat {
+				if e.Audio != nil {
+					paths = append(paths, p)
+				}
+			}
+		}
+		sort.Strings(paths)
+		rs = ableton.NewResolver(paths)
+		ly.docIdx[loc] = rs
+	}
+	var metas []harvest.Meta
+	for _, r := range ce.Doc.Refs {
+		src, ok := rs.Resolve(ce.Path, r)
+		if !ok {
+			continue
+		}
+		resolved++
+		if sm, ok := ly.meta[loc][src]; ok {
+			metas = append(metas, sm)
+		}
+	}
+	return inherit(metas), resolved, total
+}
+
+// inherit votes one record out of many. Plurality ties break by name so
+// the answer pins.
+func inherit(metas []harvest.Meta) harvest.Meta {
+	var m harvest.Meta
+	if len(metas) == 0 {
+		return m
+	}
+	top := func(vals []string) (string, int) {
+		n := map[string]int{}
+		for _, v := range vals {
+			if v != "" {
+				n[v]++
+			}
+		}
+		best, bestN := "", 0
+		for v, c := range n {
+			if c > bestN || (c == bestN && v < best) {
+				best, bestN = v, c
+			}
+		}
+		return best, bestN
+	}
+	var fams []string
+	for _, sm := range metas {
+		fams = append(fams, sm.Family)
+	}
+	m.Family, _ = top(fams)
+	var insts, cats []string
+	for _, sm := range metas {
+		if sm.Family != m.Family {
+			continue
+		}
+		insts = append(insts, sm.Instrument)
+		cats = append(cats, sm.Category)
+	}
+	if inst, n := top(insts); inst != "" && n*3 >= len(insts)*2 {
+		m.Instrument = inst
+	} else if m.Family != "" {
+		m.Instrument = m.Family // the catch-all: labeled only as deep as the family
+	}
+	if cat, n := top(cats); cat != "" && n*3 >= len(cats)*2 {
+		m.Category = cat
+	}
+	return m
+}
+
+// placeMeta is place with the record given rather than looked up: a
+// companion document brings the record it inherited from its samples.
+func (ly *layouter) placeMeta(loc, srcPath string, meta harvest.Meta, hasMeta bool) placement {
 	lc := ly.locs[loc]
 	segs := strings.Split(srcPath, "/")
 	vals := map[string]string{}
@@ -114,10 +215,9 @@ func (ly *layouter) place(loc, srcPath, catPath string) placement {
 	}
 	vals[view.TokPath] = strings.Join(inPack, "/")
 	vals[view.TokFile] = inPack[len(inPack)-1]
-	var meta harvest.Meta
 	catchAll, isFX := false, false
-	if m, ok := ly.meta[loc][catPath]; ok {
-		meta = m
+	if hasMeta {
+		m := meta
 		vals[view.TokFamily] = displayName(m.Family)
 		vals[view.TokInstrument] = displayName(m.Instrument)
 		if d := ly.lex.DisplayName(m.Instrument); d != "" {

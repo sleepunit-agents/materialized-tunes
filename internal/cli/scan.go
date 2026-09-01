@@ -67,6 +67,9 @@ var scanCmd = &cobra.Command{
 			if res.AudioErrs > 0 {
 				fmt.Printf(", %d audio parse errors", res.AudioErrs)
 			}
+			if res.Docs > 0 {
+				fmt.Printf(", %d Live documents read", res.Docs)
+			}
 			if res.DualMonoChecked > 0 {
 				fmt.Printf(", %d stereo files checked for dual-mono", res.DualMonoChecked)
 			}

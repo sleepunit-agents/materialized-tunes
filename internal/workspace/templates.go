@@ -95,7 +95,8 @@ glob     = "samples-from-mars/808 From Mars/WAV/**"
 as       = "808"          # optional: output prefix replacing the glob's static root
 
 [[exclude]]
-glob = "**/Ableton*/**"
+glob = "**/Ableton*/**"   # drop this line when the device carries companions:
+                          # the vendor's Drum Racks and Sampler presets live in here
 `,
 }
 

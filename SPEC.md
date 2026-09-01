@@ -365,10 +365,39 @@ anchor = "user-library"           # | "document"
 user_library_prefix = "Samples"   # where the recipe target sits inside the Live User Library
 ```
 
+- **Scan** reads every document whole (they are small) and records the
+  sample references it carries in the catalog entry (`doc.refs`, as
+  written: relative path, absolute path, name), or `doc_err` when the
+  file is not a Live document. A catalog written before the field is
+  backfilled by the next scan — those entries are re-read even though
+  size and mtime match. Plan therefore never opens a document: the
+  catalog stays its only input.
 - **Plan** treats a selected companion as an entry of its own: output
   path follows the same `as`/strip/sanitize/rename rules as audio (the
   extension is kept), `out_bytes` is the source size (a close estimate —
   the rewritten gzip is not size-predictable). Counted as `companions`.
+  A document with `doc_err` is skipped as non-audio.
+- **Placement under a layout template (shipped 2026-09-01, v0.9.23).** A
+  document has no harvested facts of its own — it is not audio and its
+  name says nothing (`SuperPulse.adg` under `Presets/Leads/`). It
+  inherits them from the samples it references: every ref is resolved
+  against the location's *whole* catalog (placement is a fact about the
+  document, not about this recipe's selection), and the referenced
+  files' harvested family / instrument / category are put to a vote.
+  Family is the plurality. Instrument and category must hold two thirds
+  of the referenced files to stand; otherwise the level says so —
+  instrument falls to the family catch-all (`_General`) and category to
+  `_Unsorted` — because a kit that spans kick, snare and hat is a drums
+  thing, not a hat thing. The record then goes through the same template
+  rules as audio, so a Sampler multisample lands beside its zone map's
+  samples (`Synth/Lead/Multisamples/MS10 From Mars/SuperPulse.adg` next
+  to `SuperPulse C0.wav`) and a drum kit beside its pack's hits
+  (`Drums/_General/One-Shots/808 From Mars/Clean Kit 01.adg`). Local
+  corrections flow through, since the vote reads the samples' current
+  records. A document none of whose refs the catalog holds falls to
+  `_Unsorted/` by its own path and is named in a warning. The ref
+  resolution order is one definition, `ableton.Resolver`, shared with
+  materialize.
 - **Materialize** decodes, resolves every reference to a selected source
   and rewrites it to that source's *output* path, re-encodes
   deterministically (no gzip mtime) and hashes it into the lock like any
@@ -550,8 +579,9 @@ glob     = "packs/*breaks*/**"
 
 [[exclude]]
 glob = "**/Ableton*/**"           # vendor parallel-format trees, DAW project
-[[exclude]]                       # files, etc.; format_tree (below) handles the common case
-glob = "**/*.asd"
+[[exclude]]                       # files, etc.; format_tree (below) handles the common case.
+glob = "**/*.asd"                 # Drop the Ableton line when companions (§4.4) ride —
+                                  # that tree is where the vendor's racks and presets are.
 ```
 
 - Selection is path-based (doublestar globs), evaluated against the catalog —

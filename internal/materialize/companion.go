@@ -21,24 +21,23 @@ type companionCtx struct {
 	target string // absolute target root, slash-separated, for the Path attribute
 
 	// Materialize: resolve refs against the plan.
-	outOf  map[string]string              // location\x00srcPath → OutPath (incl. dedup aliases)
-	byName map[string]map[string][]string // location → lower(basename) → srcPaths
+	outOf     map[string]string            // location\x00srcPath → OutPath (incl. dedup aliases)
+	resolvers map[string]*ableton.Resolver // location → selected sources
 }
 
 func newCompanionCtx(p *plan.Plan, target string) *companionCtx {
 	c := &companionCtx{
-		dev:    p.Device.Companions,
-		target: strings.TrimSuffix(strings.ReplaceAll(target, `\`, "/"), "/"),
-		outOf:  map[string]string{},
-		byName: map[string]map[string][]string{},
+		dev:       p.Device.Companions,
+		target:    strings.TrimSuffix(strings.ReplaceAll(target, `\`, "/"), "/"),
+		outOf:     map[string]string{},
+		resolvers: map[string]*ableton.Resolver{},
 	}
 	add := func(loc, src, out string) {
 		c.outOf[loc+"\x00"+src] = out
-		if c.byName[loc] == nil {
-			c.byName[loc] = map[string][]string{}
+		if c.resolvers[loc] == nil {
+			c.resolvers[loc] = ableton.NewResolver(nil)
 		}
-		k := strings.ToLower(path.Base(src))
-		c.byName[loc][k] = append(c.byName[loc][k], src)
+		c.resolvers[loc].Add(src)
 	}
 	for _, e := range p.Entries {
 		if !e.Companion {
@@ -54,71 +53,19 @@ func newCompanionCtx(p *plan.Plan, target string) *companionCtx {
 
 // resolve finds the selected source a reference means, from the point of
 // view of a companion at srcPath in loc, and returns its output path.
-// Order: the relative path as written, anchored at the companion's dir
-// and each parent; the absolute path's longest tail that is a selected
-// source; a basename that is unique within the nearest enclosing dir.
+// The resolution order is ableton.Resolver's — the same one plan used
+// to learn what the document is made of.
 func (c *companionCtx) resolve(loc, srcPath string, r ableton.Ref) (string, bool) {
-	dir := path.Dir(srcPath)
-	if dir == "." {
-		dir = ""
-	}
-	parents := []string{dir}
-	for d := dir; d != "" && d != "."; {
-		d = path.Dir(d)
-		if d == "." {
-			d = ""
-		}
-		parents = append(parents, d)
-	}
-	lookup := func(src string) (string, bool) {
-		out, ok := c.outOf[loc+"\x00"+src]
-		return out, ok
-	}
-
-	if rel := strings.ReplaceAll(r.Rel, `\`, "/"); rel != "" {
-		for _, base := range parents {
-			cand := path.Clean(path.Join(base, rel))
-			if strings.HasPrefix(cand, "../") {
-				continue
-			}
-			if out, ok := lookup(cand); ok {
-				return out, true
-			}
-		}
-	}
-
-	names := c.byName[loc][strings.ToLower(r.Name)]
-	if len(names) == 0 {
+	rs := c.resolvers[loc]
+	if rs == nil {
 		return "", false
 	}
-	if abs := strings.ReplaceAll(r.Abs, `\`, "/"); abs != "" {
-		best, bestLen := "", 0
-		for _, src := range names {
-			if len(src) > bestLen && strings.HasSuffix(strings.ToLower("/"+abs), strings.ToLower("/"+src)) {
-				best, bestLen = src, len(src)
-			}
-		}
-		if best != "" {
-			out, _ := lookup(best)
-			return out, true
-		}
+	src, ok := rs.Resolve(srcPath, r)
+	if !ok {
+		return "", false
 	}
-	for _, base := range parents {
-		var hits []string
-		for _, src := range names {
-			if base == "" || strings.HasPrefix(src, base+"/") {
-				hits = append(hits, src)
-			}
-		}
-		if len(hits) == 1 {
-			out, _ := lookup(hits[0])
-			return out, true
-		}
-		if len(hits) > 1 {
-			return "", false // ambiguous at the nearest level: guessing would wire a wrong pad
-		}
-	}
-	return "", false
+	out, ok := c.outOf[loc+"\x00"+src]
+	return out, ok
 }
 
 // target builds the paths to write for a resolved output.

@@ -217,6 +217,8 @@ type Plan struct {
 // listing. Empty reason means eligible.
 func Eligibility(dev *profile.Device, ce catalog.Entry) (reason string) {
 	switch {
+	case ce.Audio == nil && ce.DocErr != "" && dev.Companion(ce.Path):
+		return "unreadable Live document: " + ce.DocErr
 	case ce.Audio == nil && ce.AudioErr == "" && dev.Companion(ce.Path):
 		return ""
 	case ce.Audio == nil && ce.AudioErr != "":
@@ -499,6 +501,7 @@ func BuildWith(ws *workspace.Workspace, v *view.View, opt Options) (*Plan, error
 			o.Files, o.Location, o.RuleA+1, o.GlobA, prefixLabel(o.AsA), o.RuleB+1, o.GlobB, prefixLabel(o.AsB)))
 	}
 
+	var docsBlind []string // documents none of whose refs are in their location's catalog
 	for si, pk := range selection {
 		if si%2000 == 0 {
 			progress(StagePlace, si, len(selection))
@@ -531,7 +534,16 @@ func BuildWith(ws *workspace.Workspace, v *view.View, opt Options) (*Plan, error
 		var placed placeFlags
 		packPath := packPathOf(ws, loc, ce.Path)
 		if ly != nil {
-			pl := ly.place(loc, srcForOut, ce.Path)
+			var pl placement
+			if ce.Audio == nil { // a document lands beside the samples it points at
+				m, resolved, _ := ly.docMeta(loc, ce)
+				pl = ly.placeMeta(loc, srcForOut, m, resolved > 0)
+				if resolved == 0 {
+					docsBlind = append(docsBlind, path.Base(ce.Path))
+				}
+			} else {
+				pl = ly.place(loc, srcForOut, ce.Path)
+			}
 			out, parents = pl.out, pl.parents
 			if pl.unsorted {
 				placed |= placeUnsorted
@@ -616,6 +628,16 @@ func BuildWith(ws *workspace.Workspace, v *view.View, opt Options) (*Plan, error
 	// was never a real choice.
 	if v.VendorPrep != "keep" {
 		p.skipVendorPrep()
+	}
+
+	if n := len(docsBlind); n > 0 {
+		sort.Strings(docsBlind)
+		ex := docsBlind
+		if len(ex) > 3 {
+			ex = append(ex[:3], "…")
+		}
+		p.Warnings = append(p.Warnings, fmt.Sprintf("%d Ableton %s at no sample this location's catalog holds — placed under %s/ by its own path (%s); rescan the location if the catalog predates the doc field",
+			n, plural(n, "document points", "documents point"), UnsortedDir, strings.Join(ex, ", ")))
 	}
 
 	// Redundant format cuts go before anything that looks at output paths

@@ -7,6 +7,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/sleepunit-agents/materialized-tunes/internal/ableton"
+	"io"
 	"os"
 	"runtime"
 	"sort"
@@ -87,6 +89,7 @@ type Result struct {
 	Removed   int
 	Unchanged int
 	AudioErrs int
+	Docs      int // Ableton documents whose sample refs were read
 
 	DualMonoChecked int // stereo PCM sources analyzed for L≈R this run (new + backfilled)
 }
@@ -110,7 +113,8 @@ func Run(ctx context.Context, loc location.Location, catalogPath string, progres
 	var toHash []location.File
 
 	for _, f := range files {
-		if prev, ok := old[f.Path]; ok && prev.Size == f.Size && prev.MTime == f.MTime {
+		if prev, ok := old[f.Path]; ok && prev.Size == f.Size && prev.MTime == f.MTime &&
+			!(ableton.IsCompanion(f.Path) && prev.Doc == nil && prev.DocErr == "") { // predates the doc field: read it once
 			entries[f.Path] = prev
 			res.Unchanged++
 			continue
@@ -158,6 +162,17 @@ func Run(ctx context.Context, loc location.Location, catalogPath string, progres
 					res.AudioErrs++
 				} else {
 					e.Audio = meta
+				}
+			} else if ableton.IsCompanion(f.Path) {
+				// A Live document's sample refs are a fact about the file,
+				// recorded here so plan can place a rack beside what it
+				// points at without opening anything but the catalog.
+				doc, err := readDoc(ctx, loc, f.Path)
+				if err != nil {
+					e.DocErr = err.Error()
+				} else {
+					e.Doc = doc
+					res.Docs++
 				}
 			}
 			entries[f.Path] = e
@@ -251,4 +266,18 @@ func analyzeDualMono(ctx context.Context, loc location.Location, entries map[str
 		}
 	}
 	return done
+}
+
+// readDoc reads one companion document whole and lists its sample refs.
+func readDoc(ctx context.Context, loc location.Location, p string) (*ableton.Doc, error) {
+	rc, err := loc.Open(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	defer rc.Close()
+	gz, err := io.ReadAll(rc)
+	if err != nil {
+		return nil, err
+	}
+	return ableton.ParseDoc(gz)
 }

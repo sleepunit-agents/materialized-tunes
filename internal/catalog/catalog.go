@@ -8,6 +8,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"github.com/sleepunit-agents/materialized-tunes/internal/ableton"
 	"os"
 	"sort"
 	"time"
@@ -16,13 +17,15 @@ import (
 )
 
 type Entry struct {
-	Path      string      `json:"path"` // relative to the location root
-	Size      int64       `json:"size"`
-	MTime     int64       `json:"mtime"` // unix seconds
-	SHA256    string      `json:"sha256"`
-	Audio     *audio.Meta `json:"audio,omitempty"`
-	AudioErr  string      `json:"audio_err,omitempty"` // why Audio is absent
-	ScannedAt time.Time   `json:"scanned_at"`
+	Path      string       `json:"path"` // relative to the location root
+	Size      int64        `json:"size"`
+	MTime     int64        `json:"mtime"` // unix seconds
+	SHA256    string       `json:"sha256"`
+	Audio     *audio.Meta  `json:"audio,omitempty"`
+	AudioErr  string       `json:"audio_err,omitempty"` // why Audio is absent
+	Doc       *ableton.Doc `json:"doc,omitempty"`       // Ableton document (.adg/.adv/.als): the sample refs it carries
+	DocErr    string       `json:"doc_err,omitempty"`   // why Doc is absent on a document-shaped file
+	ScannedAt time.Time    `json:"scanned_at"`
 }
 
 // Load reads a catalog file into a path-keyed map. A missing file is an
