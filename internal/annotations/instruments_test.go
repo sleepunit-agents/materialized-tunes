@@ -179,7 +179,8 @@ func TestInstrumentVendorOverride(t *testing.T) {
 	// without the override the same path says nothing
 	if got, _ := lx.Resolve("CH Clean 04", []string{"05. HH"}, nil); got != "" {
 		t.Errorf("without override: got %q, want none", got)
-		// a vendor block's codes follow the same rule as the shared lexicon's:
+	}
+	// a vendor block's codes follow the same rule as the shared lexicon's:
 	// they yield to any word in the segment, and speak when none does
 	coded := []Instrument{{ID: "tom", Codes: []string{"lt", "mt", "ht"}}}
 	if got, _ := lx.Resolve("LT 808 Kick Layer", nil, coded); got != "kick" {
