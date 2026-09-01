@@ -1,7 +1,12 @@
 package lock
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"os"
+	"path/filepath"
+
 	"github.com/sleepunit-agents/materialized-tunes/internal/plan"
 	"github.com/sleepunit-agents/materialized-tunes/internal/transcode"
 )
@@ -56,9 +61,23 @@ func WarnMoved(workspaceRoot string, p *plan.Plan) {
 	if moved == 0 {
 		return
 	}
-	why := "the recipe's `as` prefixes changed"
-	if l.Layout != p.View.Layout {
+	// Name the cause honestly: the layout when it moved, the recipe when
+	// its hash moved, and otherwise the classification rules — the app's
+	// own grammar and the annotations both place files, and blaming the
+	// recipe for their movement sends the user hunting in the wrong file.
+	why := "the recipe or the classification rules changed"
+	switch {
+	case l.Layout != p.View.Layout:
 		why = fmt.Sprintf("layout changed from %s to %s", layoutLabel(l.Layout), layoutLabel(p.View.Layout))
+	case l.RecipeSHA256 != "":
+		if b, err := os.ReadFile(filepath.Join(workspaceRoot, "views", p.View.Name+".toml")); err == nil {
+			sum := sha256.Sum256(b)
+			if hex.EncodeToString(sum[:]) == l.RecipeSHA256 {
+				why = "the classification rules changed since that build"
+			} else {
+				why = "the recipe changed"
+			}
+		}
 	}
 	p.Warnings = append(p.Warnings, fmt.Sprintf(
 		"%d of the %d files from the last materialize (%s) now land at a different path — %s. Materialize does not prune: `mtunes migrate %s` renames them into place; otherwise empty the target first, or the old tree stays beside the new one",
