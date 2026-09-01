@@ -25,6 +25,7 @@ const S = {
   discover: false, obtainable: true, disc: null, discBusy: false,
   view: null,                      // selected recipe name
   pf: null, pfBusy: false, pfProgress: null, disabled: new Set(),
+  pl: { tab: 'queues', kind: '', q: null, busy: false, sel: null, files: null, file: null, tree: null, prefix: '', lex: null, form: null, radius: null, msg: '', local: null },
   rOpen: new Set(), rFilter: '', rModel: null,  // Recipe screen: expanded vendor rows, filter, the group model clicks act on
   run: { status: 'idle' }, runLog: ['[idle] no run started this session'],
   selCard: 0, locks: [], diff: null, diffBusy: false,
@@ -263,7 +264,7 @@ async function startMigrate() {
 /* ---------- render ---------- */
 
 function render() {
-  const screens = { library: renderLibrary, recipe: renderRecipe, run: renderRun, cards: renderCards, sources: renderSources };
+  const screens = { library: renderLibrary, recipe: renderRecipe, plan: renderPlan, run: renderRun, cards: renderCards, sources: renderSources };
   $app.innerHTML = `
     ${titlebar()}
     ${tabbar()}
@@ -444,7 +445,7 @@ function titlebar() {
 }
 
 function tabbar() {
-  const tabs = [['library', 'Library', '1'], ['recipe', 'Recipe', '2'], ['run', 'Materialize', '3'], ['cards', 'Cards', '4'], ['sources', 'Setup', '5']];
+  const tabs = [['library', 'Library', '1'], ['recipe', 'Recipe', '2'], ['plan', 'Plan', '3'], ['run', 'Materialize', '4'], ['cards', 'Cards', '5'], ['sources', 'Setup', '6']];
   const lens = S.lens ? `
     <div class="lens-chip"><span class="dot"></span><span class="name">Lens · ${esc(S.lens)}</span>
     <span class="x" data-act="clear-lens">✕</span></div>` : '';
@@ -1359,6 +1360,7 @@ function renderRecipe() {
       </div>
       <div class="issues">${issues}</div>
       <div class="mat-btn ${!fits || errors.length ? 'blocked' : ''}" data-act="go-run">MATERIALIZE — ${n(S.pf.files ?? 0)} FILES</div>
+      ${(pf.plan && (pf.plan.unsorted || pf.plan.uncategorized || pf.plan.general)) ? `<div class="mat-btn" style="margin-top:8px;background:var(--bg-raise);color:var(--fg);border:1px solid var(--bord-raise)" data-act="go-plan">REVIEW PLAN — ${n((pf.plan.unsorted||0) + (pf.plan.uncategorized||0) + (pf.plan.general||0))} FILES NEED A DECISION</div>` : `<div class="mat-btn" style="margin-top:8px;background:var(--bg-raise);color:var(--fg-dim);border:1px solid var(--bord-raise)" data-act="go-plan">REVIEW PLAN — WALK THE TREE</div>`}
       ${pf.migrate ? `<div class="mat-btn ${errors.length ? 'blocked' : ''}" style="margin-top:8px" data-act="go-migrate">MIGRATE — MOVE ${n(pf.migrate.moves + pf.migrate.companions)} FILES INTO THE NEW LAYOUT</div>
       <div style="font:400 10px var(--mono);color:var(--fg-faint);margin-top:6px;text-align:center">renames the last materialize in place — nothing re-rendered, no duplicates, emptied folders removed</div>` : ''}
       <div style="font:400 10px var(--mono);color:var(--fg-faint);margin-top:8px;text-align:center">writes to the recipe's target — exactly what the checked vendors select</div>`;
@@ -1481,6 +1483,255 @@ function renderCards() {
       ${S.toast ? `<div style="font:500 11px var(--mono);color:var(--green);margin-top:10px">${esc(S.toast)}</div>` : ''}
     </div>
   </div>`;
+}
+
+
+/* ---------- plan: the review surface (SPEC §19.2) ---------- */
+
+const KIND_LABEL = { unsorted: 'no instrument', uncategorized: 'loop or one-shot?', general: 'family only' };
+const KIND_ASK = {
+  unsorted: 'Nothing on the path names an instrument. Say what this folder holds — at whatever depth you honestly know — or leave it.',
+  uncategorized: 'The instrument is known; nothing says loop or one-shot. One answer for the folder, or a default that lets any labelled file keep its own word.',
+  general: 'Only the family is known. Name the instrument if there is one — numbered takes often have none, and leaving it is the honest answer.',
+};
+const TIER_LABEL = {
+  'dir': 'pack [[dir]]', 'dir-default': 'pack [[dir]] default', 'dedicated-pack': 'vendor dedicated_packs', 'vendor-category': 'vendor [[category]]',
+  'categories': 'categories.toml', 'multisample': 'multisample shape of the directory', 'pack-instrument': 'pack [[instrument]]',
+  'vendor-instrument': 'vendor [[instrument]]', 'override': 'override', 'compound': 'compound segment → family catch-all', 'lexicon': 'instruments.toml',
+  'pack-code': 'pack [[instrument]] code', 'vendor-code': 'vendor [[instrument]] code', 'override-code': 'override code', 'lexicon-code': 'instruments.toml code',
+  'demoted': 'word demoted (its category disagrees) → family catch-all',
+};
+function whySrc(src) {
+  if (!src) return '<span class="t">nothing spoke</span>';
+  let out = `<span class="t">${esc(TIER_LABEL[src.tier] || src.tier)}</span>`;
+  if (src.word) out += ` "${esc(src.word)}"`;
+  if (src.segment) out += ` <span class="t">on</span> "${esc(src.segment)}"${src.echo ? ' <span class="t">(pack-name echo)</span>' : ''}`;
+  return out;
+}
+function whyPanel(f) {
+  const w = f.why || {};
+  return `<div class="why">
+    <div><b>category</b> ${esc(f.category || '—')} · ${whySrc(w.category)}</div>
+    <div><b>instrument</b> ${esc(f.instrument || '—')}${f.family && f.family !== f.instrument ? ` (${esc(f.family)})` : ''} · ${whySrc(w.instrument)}</div>
+  </div>`;
+}
+
+async function loadPlanReview() {
+  const pl = S.pl;
+  if (!S.view || pl.busy) return;
+  pl.busy = true; render();
+  try {
+    if (!S.pf) await loadPreflight();
+    if (!S.pf || S.pf.error) return;
+    if (!pl.lex) pl.lex = await api('/api/lexicon');
+    pl.local = await api('/api/local');
+    if (pl.tab === 'queues') {
+      const q = new URLSearchParams({ view: S.view });
+      if (pl.kind) q.set('kind', pl.kind);
+      pl.q = await api('/api/plan/queues?' + q);
+    } else {
+      pl.tree = await api('/api/plan/tree?' + new URLSearchParams({ view: S.view, prefix: pl.prefix }));
+    }
+  } finally { pl.busy = false; render(); }
+}
+
+async function openQueueRow(i) {
+  const pl = S.pl;
+  const row = pl.q.rows[i];
+  pl.sel = row; pl.file = null; pl.files = null; pl.radius = null; pl.msg = '';
+  // the default action per kind: a category answer, an instrument, or a name
+  pl.form = { location: row.location, path: row.folder, facet: row.kind === 'uncategorized' ? 'category' : 'instrument',
+    value: '', mode: row.kind === 'unsorted' ? 'default' : 'pin', note: '', local: false, word: '' };
+  render();
+  pl.files = await api('/api/plan/folder?' + new URLSearchParams({ view: S.view, location: row.location, folder: row.folder }));
+  render();
+}
+
+function openTreeFile(f) {
+  const pl = S.pl;
+  pl.file = f; pl.sel = null; pl.radius = null; pl.msg = '';
+  const folder = f.source_path.split('/').slice(0, -1).join('/');
+  pl.form = { location: f.location, path: folder, facet: 'instrument', value: '', mode: 'pin', note: '', local: false,
+    word: (f.why && f.why.instrument && f.why.instrument.word) || '' };
+  render();
+}
+
+function readForm() {
+  const f = S.pl.form; if (!f) return null;
+  const g = (id) => document.getElementById(id);
+  if (g('pl-note')) f.note = g('pl-note').value;
+  if (g('pl-word')) f.word = g('pl-word').value;
+  if (g('pl-local')) f.local = g('pl-local').checked;
+  if (g('pl-path')) f.path = g('pl-path').value;
+  if (g('pl-value')) f.value = g('pl-value').value;
+  return f;
+}
+
+async function planCorrect(preview) {
+  const f = readForm(); if (!f) return;
+  const pl = S.pl;
+  if (!f.value && f.facet !== 'role') { pl.msg = 'pick a value first'; render(); return; }
+  pl.busy = true; pl.msg = ''; render();
+  const body = { location: f.location, path: f.path, facet: f.facet, value: f.value, mode: f.mode, note: f.note, local: f.local, word: f.word, preview };
+  const r = await api('/api/correct', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  pl.busy = false;
+  if (r.error) { pl.msg = r.error; render(); return; }
+  pl.radius = r.radius;
+  if (!preview) {
+    pl.msg = `written to annotations.local/${r.radius.target.file} — re-planning`;
+    pl.sel = null; pl.file = null; pl.form = null; pl.radius = null;
+    S.pf = null; render();
+    await loadPreflight();
+    await loadPlanReview();
+    return;
+  }
+  render();
+}
+
+async function planAck() {
+  const pl = S.pl; const f = readForm(); if (!pl.sel) return;
+  await api('/api/ack', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: pl.sel.location, folder: pl.sel.folder, note: f ? f.note : '' }) });
+  pl.msg = 'left as-is — it will not come back to the queue'; pl.sel = null; pl.form = null; pl.files = null;
+  await loadPlanReview();
+}
+
+async function planReport() {
+  const f = readForm(); if (!f) return;
+  await api('/api/report', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: f.location, path: S.pl.file ? S.pl.file.source_path : f.path, note: f.note, value: f.value }) });
+  S.pl.msg = 'reported — logged to annotations.local/corrections.jsonl with what the app resolved and why'; render();
+}
+
+function instrumentOptions(lex, current) {
+  if (!lex) return '';
+  const fams = {};
+  for (const i of lex.instruments || []) (fams[i.family || '?'] ||= []).push(i);
+  return Object.keys(fams).sort().map(fam => `<optgroup label="${esc(fam)}">${fams[fam].map(i =>
+    `<option value="${esc(i.id)}" ${i.id === current ? 'selected' : ''}>${esc(i.display || i.id)}${i.id === fam ? ' (family catch-all)' : ''}</option>`).join('')}</optgroup>`).join('');
+}
+
+function renderPlanForm() {
+  const pl = S.pl, f = pl.form, lex = pl.lex;
+  if (!f) return '';
+  const facet = f.facet;
+  const facetSeg = ['instrument', 'category', 'alias', 'role'].map(k =>
+    `<span class="${facet === k ? 'on' : ''}" data-act="pl-facet" data-k="${k}">${k === 'alias' ? 'word means' : k === 'role' ? 'skip' : k}</span>`).join('');
+  let value = '';
+  if (facet === 'category') {
+    value = `<div class="pl-btns">${(lex ? lex.categories : ['loops', 'one-shots']).map(c =>
+      `<span class="pl-btn ${f.value === c ? 'on' : ''}" data-act="pl-value" data-v="${esc(c)}">${esc(c)}</span>`).join('')}</div>`;
+  } else if (facet === 'instrument' || facet === 'alias') {
+    value = `<select id="pl-value" data-act="pl-value-sel"><option value="">— pick an instrument —</option>${instrumentOptions(lex, f.value)}</select>`;
+  } else if (facet === 'role') {
+    value = `<div class="pl-btns">${['format-tree', 'docs'].map(c =>
+      `<span class="pl-btn ${f.value === c ? 'on' : ''}" data-act="pl-value" data-v="${c}">${c}</span>`).join('')}</div>
+      <div style="font:400 10.5px var(--sans);color:var(--fg-faint)">marks the folder as not content: a parallel sampler export, or manuals and artwork. Nothing under it materializes.</div>`;
+  }
+  const mode = (facet === 'category' || facet === 'instrument') ? `
+    <label>how it applies</label>
+    <div class="seg"><span class="${f.mode === 'pin' ? 'on' : ''}" data-act="pl-mode" data-k="pin">pin — beats the filenames</span><span class="${f.mode === 'default' ? 'on' : ''}" data-act="pl-mode" data-k="default">default — only where nothing spoke</span></div>` : '';
+  const word = facet === 'alias' ? `
+    <label>the word, as written in this pack</label>
+    <input type="text" id="pl-word" value="${esc(f.word)}" placeholder="e.g. Bass">
+    <div style="font:400 10.5px var(--sans);color:var(--fg-faint)">a pack [[instrument]] block: inside this pack only, this word means the instrument above. Drumtrax's "Bass" is its kick.</div>` : '';
+  const rad = pl.radius ? `<div class="radius">
+      <div><b>${n(pl.radius.covered)}</b> files covered · <b>${n(pl.radius.changed)}</b> change · <b>${n(pl.radius.filled)}</b> filled in${pl.radius.moved ? ` · <span class="mv"><b>${n(pl.radius.moved)}</b> currently resolve elsewhere</span>` : ''}</div>
+      ${(pl.radius.changes || []).slice(0, 6).map(c => `<div>${n(c.count)} × ${esc(c.from)} → ${esc(c.to)}<div class="t" style="color:var(--fg-faint);padding-left:12px">${c.examples.map(e => esc(e.split('/').pop())).join(' · ')}</div></div>`).join('')}
+      ${pl.radius.changed === 0 ? '<div class="t" style="color:var(--fg-faint)">nothing would move — the layer already says this</div>' : ''}
+      <div class="t" style="color:var(--fg-faint)">→ annotations.local/${esc(pl.radius.target.file)}${pl.radius.target.new_vendor ? ' (new vendor)' : pl.radius.target.new_pack ? ' (new pack)' : ''}</div>
+    </div>` : '';
+  return `<div class="pl-form">
+    <label>correct</label>
+    <div class="seg">${facetSeg}</div>
+    <label>${facet === 'alias' ? 'means' : 'is'}</label>
+    ${value}
+    ${word}
+    ${mode}
+    <label>covers</label>
+    <input type="text" id="pl-path" value="${esc(f.path)}" title="the folder, or a glob within the pack (WAV/Textures/Chop *.wav)">
+    <label>note — the evidence</label>
+    <input type="text" id="pl-note" value="${esc(f.note)}" placeholder="all 143 are chops; the folder name lies">
+    <div style="display:flex;align-items:center;gap:6px;font:400 11px var(--sans);color:var(--fg-dim)"><input type="checkbox" id="pl-local" ${f.local ? 'checked' : ''}> my opinion only — keep it out of the export</div>
+    ${rad}
+    <div class="pl-btns">
+      <span class="pl-btn" data-act="pl-preview">preview — what moves</span>
+      <span class="pl-btn go" data-act="pl-apply">${pl.radius ? 'apply' : 'apply (previews first)'}</span>
+      ${pl.sel ? '<span class="pl-btn" data-act="pl-ack" title="reviewed, leave it as-is">leave it</span>' : ''}
+      <span class="pl-btn warn" data-act="pl-report" title="log it as a parser bug — no annotation written">this is the parser</span>
+    </div>
+    ${pl.msg ? `<div style="font:500 11px var(--mono);color:var(--amber)">${esc(pl.msg)}</div>` : ''}
+  </div>`;
+}
+
+function renderPlan() {
+  const pl = S.pl;
+  if (!S.view) return `<div class="run-wrap"><div style="font:400 12px var(--sans);color:var(--fg-faint)">Pick a recipe first — the plan is built from one.</div></div>`;
+  const need = !S.pf ? true : (pl.tab === 'queues' ? !pl.q : !pl.tree);
+  if (need && !pl.busy && !S.pfBusy && !(S.pf && S.pf.error)) setTimeout(loadPlanReview, 0);
+  const counts = (pl.q && pl.q.kinds) || {};
+  const plan = (S.pf && S.pf.plan) || {};
+  const kindChips = ['', 'uncategorized', 'unsorted', 'general'].map(k => {
+    const c = k ? (plan[k] || 0) : ((plan.unsorted || 0) + (plan.uncategorized || 0) + (plan.general || 0));
+    return `<span class="chip ${pl.kind === k ? 'on' : ''}" data-act="pl-kind" data-k="${k}" style="${pl.kind === k ? 'color:var(--fg);border-color:var(--bord-hover)' : ''}">${k ? KIND_LABEL[k] : 'all'} · ${n(c)}</span>`;
+  }).join('');
+  const head = `<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
+      <span style="font:600 14px var(--sans)">Plan</span>
+      <span style="font:500 11px var(--mono);color:var(--fg-faint)">${esc(S.view)} · ${n(S.pf ? S.pf.files || 0 : 0)} files${S.pfBusy ? ' · ' + esc(pfProgressLabel()) : ''}</span>
+      <div style="flex:1"></div>
+      <div class="seg"><span class="${pl.tab === 'queues' ? 'on' : ''}" data-act="pl-tab" data-k="queues">Queues</span><span class="${pl.tab === 'tree' ? 'on' : ''}" data-act="pl-tab" data-k="tree">Tree</span></div>
+      ${pl.local ? `<span class="chip" data-act="pl-export" title="zip of annotations.local minus your local-only entries — drop it in the channel">local layer · ${n((pl.local.entries || []).length)} entries · export</span>` : ''}
+    </div>
+    ${pl.tab === 'queues' ? `<div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">${kindChips}</div>` : ''}`;
+
+  let list = '';
+  if (pl.tab === 'queues') {
+    const rows = (pl.q && pl.q.rows) || [];
+    list = rows.length ? rows.map((r, i) => `<div class="pl-row ${pl.sel === r ? 'on' : ''}" data-act="pl-row" data-i="${i}">
+        <div><div class="f" title="${esc(r.folder)}">${esc(r.folder)}</div><div class="ex">${r.instrument ? esc(r.instrument) + ' · ' : ''}${r.category ? esc(r.category) + ' · ' : ''}${r.examples.map(esc).join(' · ')}</div></div>
+        <div class="n">${n(r.count)}</div>
+        <div><span class="pl-tag ${r.kind}">${KIND_LABEL[r.kind] || r.kind}</span></div>
+      </div>`).join('') + (pl.q.total_rows > rows.length ? `<div style="font:400 10.5px var(--mono);color:var(--fg-faint);padding:8px 10px">… ${n(pl.q.total_rows - rows.length)} more folders — decide these first</div>` : '')
+      : `<div style="font:400 11.5px var(--sans);color:var(--fg-faint);padding:24px 10px">${(S.pf && S.pf.error) ? 'plan failed: ' + esc(S.pf.error) : (pl.q && pl.q.error) ? esc(pl.q.error) : (pl.busy || S.pfBusy) ? 'building the plan…' : 'nothing waiting — every file the layout reads has a place'}</div>`;
+  } else {
+    const t = pl.tree;
+    const parts = pl.prefix ? pl.prefix.split('/') : [];
+    const crumb = `<div class="crumb"><span data-act="pl-crumb" data-p="">${esc(S.view)}</span>${parts.map((p, i) => ` / <span data-act="pl-crumb" data-p="${esc(parts.slice(0, i + 1).join('/'))}">${esc(p)}</span>`).join('')}${t ? ` <span style="color:var(--fg-faint)">· ${n(t.total)} files</span>` : ''}</div>`;
+    list = crumb + (t ? (t.dirs.map(d => `<div class="pl-dir" data-act="pl-dir" data-name="${esc(d.name)}"><span>${esc(d.name)}/</span><span style="color:var(--fg-faint)">${n(d.count)}</span></div>`).join('')
+      + t.files.map((f, i) => `<div class="pl-file ${pl.file === f ? 'on' : ''}" data-act="pl-file" data-i="${i}">
+          <span class="play-btn" data-act="pl-play" data-path="${esc(f.source_path)}" data-loc="${esc(f.location)}">${S.player && S.player.path === f.source_path && S.player.playing ? '❚❚' : '▶'}</span>
+          <span class="nm" title="${esc(f.source_path)}">${esc(f.name)}</span>
+          <span style="color:var(--fg-faint)">${esc(f.instrument || '—')}</span><span style="color:var(--fg-faint)">${esc(f.category || '—')}</span>
+        </div>`).join('') + (t.total > t.dirs.reduce((a, d) => a + d.count, 0) + t.files.length ? `<div style="font:400 10.5px var(--mono);color:var(--fg-faint);padding:8px 4px">… more files at this level</div>` : ''))
+      : `<div style="font:400 11.5px var(--sans);color:var(--fg-faint);padding:24px 10px">building the plan…</div>`);
+  }
+
+  let panel = '';
+  if (pl.sel) {
+    const r = pl.sel;
+    const files = pl.files ? pl.files.files : [];
+    panel = `<div style="font:600 12px var(--sans)">${esc(r.folder.split('/').pop())} <span style="font:400 10.5px var(--mono);color:var(--fg-faint)">· ${esc(r.pack_path)} · ${n(r.count)} files</span></div>
+      <div style="font:400 11px var(--sans);color:var(--fg-dim)">${esc(KIND_ASK[r.kind] || '')}</div>
+      ${whyPanel({ category: r.category, instrument: r.instrument, family: r.family, why: r.why })}
+      <div style="max-height:180px;overflow:auto;border:1px solid var(--bord);border-radius:5px">${files.map((f, i) => `<div class="pl-file ${pl.file === f ? 'on' : ''}" data-act="pl-qfile" data-i="${i}">
+          <span class="play-btn" data-act="pl-play" data-path="${esc(f.source_path)}" data-loc="${esc(f.location)}">${S.player && S.player.path === f.source_path && S.player.playing ? '❚❚' : '▶'}</span>
+          <span class="nm">${esc(f.name)}</span><span style="color:var(--fg-faint)">${esc(f.instrument || '—')}</span><span style="color:var(--fg-faint)">${esc(f.category || '—')}</span>
+        </div>`).join('') || `<div style="padding:8px;font:400 10.5px var(--mono);color:var(--fg-faint)">${pl.files ? 'no files' : 'loading…'}</div>`}</div>
+      ${pl.file ? whyPanel(pl.file) : ''}
+      ${renderPlanForm()}`;
+  } else if (pl.file) {
+    const f = pl.file;
+    panel = `<div style="font:600 12px var(--sans)">${esc(f.name)}</div>
+      <div style="font:400 10.5px var(--mono);color:var(--fg-faint)">${esc(f.source_path)}<br>→ ${esc(f.out_path)}</div>
+      ${whyPanel(f)}
+      <div style="font:400 11px var(--sans);color:var(--fg-dim)">Wrong? The why says which level answered. Fix that level: the folder (a pin), a word that means something else in this pack (word means), or report it as the parser's mistake.</div>
+      ${renderPlanForm()}`;
+  } else {
+    panel = `<div style="font:400 11.5px var(--sans);color:var(--fg-faint)">${pl.tab === 'queues' ? 'Pick a folder. One decision per folder — the files inside are there to listen to, not to label one by one.' : 'Walk the tree as it will be written. Click a file to see why it landed there; confident misfiles live here, no queue holds them.'}</div>
+      ${pl.msg ? `<div style="font:500 11px var(--mono);color:var(--green)">${esc(pl.msg)}</div>` : ''}
+      ${pl.local && pl.local.entries && pl.local.entries.length ? `<div style="font:600 10px var(--sans);color:var(--fg-faint);letter-spacing:.05em;text-transform:uppercase;margin-top:6px">your local layer</div>
+        ${pl.local.entries.slice(0, 12).map(e => `<div style="font:400 10.5px var(--mono);color:var(--fg-dim)">${esc(e.vendor)}/${esc(e.pack)} · ${e.kind === 'dir' ? esc(e.entry.path || '') : 'word ' + esc((e.entry.aliases || []).join(', '))} → ${esc(e.entry.category || e.entry.default_category || e.entry.instrument || e.entry.default_instrument || e.entry.role || e.entry.id || '')}${e.entry.local ? ' <span style="color:var(--fg-faint)">(local only)</span>' : ''}</div>`).join('')}
+        <div style="font:400 10.5px var(--sans);color:var(--fg-faint)">${esc(pl.local.dir)}</div>` : ''}`;
+  }
+  return `<div class="pl-wrap">${head ? `<div class="pl-list">${head}${list}</div>` : ''}<div class="pl-panel">${panel}</div></div>`;
 }
 
 /* ---------- events ---------- */
@@ -1663,6 +1914,23 @@ function wire() {
           `collapsed ${gs.length} ${gs.length === 1 ? 'vendor' : 'vendors'} — same selection, fewer rules`);
       }
       if (act === 'go-run') { if (!el.classList.contains('blocked')) { S.screen = 'run'; render(); } }
+      if (act === 'go-plan') { S.screen = 'plan'; S.pl.q = null; S.pl.tree = null; render(); }
+      if (act === 'pl-tab') { S.pl.tab = el.dataset.k; S.pl.sel = null; S.pl.file = null; S.pl.form = null; S.pl.q = null; S.pl.tree = null; render(); }
+      if (act === 'pl-kind') { S.pl.kind = el.dataset.k; S.pl.q = null; S.pl.sel = null; S.pl.form = null; render(); }
+      if (act === 'pl-row') { openQueueRow(+el.dataset.i); }
+      if (act === 'pl-qfile') { e.stopPropagation(); S.pl.file = S.pl.files.files[+el.dataset.i]; render(); }
+      if (act === 'pl-file') { openTreeFile(S.pl.tree.files[+el.dataset.i]); }
+      if (act === 'pl-play') { e.stopPropagation(); playFile(el.dataset.path, el.dataset.path.split('/').pop(), 0, el.dataset.loc); }
+      if (act === 'pl-dir') { S.pl.prefix = S.pl.prefix ? S.pl.prefix + '/' + el.dataset.name : el.dataset.name; S.pl.tree = null; S.pl.file = null; S.pl.form = null; render(); }
+      if (act === 'pl-crumb') { S.pl.prefix = el.dataset.p; S.pl.tree = null; S.pl.file = null; S.pl.form = null; render(); }
+      if (act === 'pl-facet') { readForm(); S.pl.form.facet = el.dataset.k; S.pl.form.value = ''; S.pl.radius = null; if (el.dataset.k === 'alias' && S.pl.file && S.pl.file.why && S.pl.file.why.instrument) S.pl.form.word = S.pl.file.why.instrument.word || ''; if (el.dataset.k === 'alias') S.pl.form.path = (S.pl.file && S.pl.file.pack_path) || (S.pl.sel && S.pl.sel.pack_path) || S.pl.form.path; render(); }
+      if (act === 'pl-mode') { readForm(); S.pl.form.mode = el.dataset.k; S.pl.radius = null; render(); }
+      if (act === 'pl-value') { readForm(); S.pl.form.value = el.dataset.v; S.pl.radius = null; render(); }
+      if (act === 'pl-preview') { planCorrect(true); }
+      if (act === 'pl-apply') { if (S.pl.radius) planCorrect(false); else planCorrect(true).then(() => { if (S.pl.radius && !S.pl.msg) planCorrect(false); }); }
+      if (act === 'pl-ack') { planAck(); }
+      if (act === 'pl-report') { planReport(); }
+      if (act === 'pl-export') { window.open('/api/local/export', '_blank'); }
       if (act === 'go-migrate') { if (!el.classList.contains('blocked')) { S.screen = 'run'; startMigrate(); } }
       if (act === 'start-run') startRun();
       if (act === 'pick-card') { S.selCard = +el.dataset.i; loadCards(); }
@@ -1739,6 +2007,8 @@ function wire() {
   bind('f-cat', 'fCat', 'change');
   bind('f-key', 'fKey', 'input');
   bind('f-bpm', 'fBpm', 'input');
+  const pv = document.getElementById('pl-value');
+  if (pv) pv.addEventListener('change', () => { readForm(); S.pl.radius = null; });
   const vp = document.getElementById('view-pick');
   if (vp) vp.addEventListener('change', () => { S.view = vp.value; S.disabled = new Set(); S.pf = null; loadPreflight(); });
   const lp = document.getElementById('layout-pick');
@@ -1776,7 +2046,7 @@ window.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && e.target.id === 'rn-name') document.querySelector('[data-act="rename-save"]')?.click();
     return;
   }
-  const map = { 1: 'library', 2: 'recipe', 3: 'run', 4: 'cards', 5: 'sources' };
+  const map = { 1: 'library', 2: 'recipe', 3: 'plan', 4: 'run', 5: 'cards', 6: 'sources' };
   if (e.key === 'Escape' && S.packOpen) { stopPlayback(); S.packOpen = null; S.pd = null; render(); return; }
   if (S.packOpen && (e.key === 'ArrowDown' || e.key === 'ArrowUp') && S.pd?.files?.length) {
     e.preventDefault();

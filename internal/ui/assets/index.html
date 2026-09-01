@@ -191,6 +191,39 @@
   .mat-btn:hover { background: #f5ad52; }
   .mat-btn.blocked { background: var(--bord-raise); color: var(--fg-faint); cursor: not-allowed; }
 
+  /* ---- plan: the review surface (SPEC §19.2) ---- */
+  .pl-wrap { display: grid; grid-template-columns: minmax(0, 1fr) 420px; gap: 14px; padding: 16px 18px; height: 100%; min-height: 0; }
+  .pl-list { min-width: 0; overflow: auto; }
+  .pl-panel { background: var(--bg-panel); border: 1px solid var(--bord-card); border-radius: 6px; padding: 12px 14px; overflow: auto; display: flex; flex-direction: column; gap: 10px; }
+  .pl-row { display: grid; grid-template-columns: minmax(0, 1fr) 64px 118px; gap: 10px; align-items: center; padding: 7px 10px; border-bottom: 1px solid #16191c; cursor: pointer; }
+  .pl-row:hover { background: var(--bg-card); }
+  .pl-row.on { background: var(--bg-sel); }
+  .pl-row .f { font: 500 11px var(--mono); color: var(--fg-num); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pl-row .ex { font: 400 10px var(--mono); color: var(--fg-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pl-row .n { font: 600 11px var(--mono); color: var(--fg); text-align: right; }
+  .pl-tag { font: 600 9.5px var(--mono); letter-spacing: .04em; text-transform: uppercase; padding: 2px 6px; border-radius: 3px; background: var(--bg-raise); color: var(--fg-dim); white-space: nowrap; }
+  .pl-tag.unsorted { color: var(--err); } .pl-tag.uncategorized { color: var(--amber); } .pl-tag.general { color: var(--teal); }
+  .pl-file { display: grid; grid-template-columns: 22px minmax(0, 1fr) 90px 80px; gap: 8px; align-items: center; padding: 3px 4px; border-bottom: 1px solid #16191c; font: 400 10.5px var(--mono); color: var(--fg-num); cursor: pointer; }
+  .pl-file:hover, .pl-file.on { background: var(--bg-card); }
+  .pl-file .nm { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .why { font: 400 10.5px var(--mono); color: var(--fg-dim); display: flex; flex-direction: column; gap: 3px; background: var(--bg-deep); border: 1px solid var(--bord); border-radius: 5px; padding: 8px 10px; }
+  .why b { color: var(--fg); font-weight: 600; }
+  .why .t { color: var(--fg-faint); }
+  .pl-form { display: flex; flex-direction: column; gap: 8px; }
+  .pl-form label { font: 600 10px var(--sans); color: var(--fg-faint); letter-spacing: .05em; text-transform: uppercase; }
+  .pl-form select, .pl-form input[type=text] { font: 400 11.5px var(--mono); color: var(--fg); background: var(--bg-raise); border: 1px solid var(--bord-raise); border-radius: 4px; padding: 5px 8px; width: 100%; box-sizing: border-box; }
+  .pl-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+  .pl-btn { font: 600 11px var(--sans); color: var(--fg-dim); background: var(--bg-raise); border: 1px solid var(--bord-raise); border-radius: 4px; padding: 5px 11px; cursor: pointer; user-select: none; }
+  .pl-btn:hover { color: var(--fg); border-color: var(--bord-hover); }
+  .pl-btn.on { color: var(--fg); background: var(--bg-sel); }
+  .pl-btn.go { color: #111; background: var(--amber); border-color: var(--amber-deep); }
+  .pl-btn.warn { color: var(--err); }
+  .radius { font: 400 11px var(--mono); color: var(--fg-dim); background: var(--bg-deep); border: 1px solid var(--bord); border-radius: 5px; padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; }
+  .radius .mv { color: var(--amber); }
+  .crumb { font: 500 11px var(--mono); color: var(--fg-dim); display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 8px; }
+  .crumb span { cursor: pointer; } .crumb span:hover { color: var(--fg); }
+  .pl-dir { display: flex; justify-content: space-between; padding: 6px 10px; border-bottom: 1px solid #16191c; font: 500 11px var(--mono); color: var(--fg-num); cursor: pointer; }
+  .pl-dir:hover { background: var(--bg-card); }
   .run-wrap { max-width: 780px; margin: 0 auto; padding: 22px 18px; }
   .runbar { position: relative; height: 14px; background: var(--bg-raise); border: 1px solid var(--bord-raise); border-radius: 4px; overflow: hidden; margin-bottom: 8px; }
   .runbar .fill { position: absolute; top: 0; bottom: 0; left: 0; background: linear-gradient(180deg, var(--amber), var(--amber-deep)); transition: width .18s linear; }

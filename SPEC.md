@@ -1420,6 +1420,26 @@ glob (`path = "WAV/Textures/Chop *.wav"`); a single file is allowed and
 discouraged. All three are `[[dir]]` entries — the schema already takes
 globs.
 
+*Shipped 2026-09-01 (v0.9.18):* the **Plan** step (tab 3). Queues
+(`GET /api/plan/queues`) group the artifact's failures by source folder
+with kind, count, the facets that did resolve and their why; the tree
+(`GET /api/plan/tree?prefix=`) walks the destination one level at a
+time; a folder's files (`GET /api/plan/folder`) audition through
+`/api/preview`. One form for every kind — facet (category / instrument /
+word-means / skip), value from the lexicon only, pin or default, the path
+it covers (editable to a glob), a note, a local-only flag — and
+`POST /api/correct` previews it as an overlay in memory
+(`annotations.Overlay` + `harvest.ExplainPrefix`, the partial re-harvest)
+returning the blast radius (covered / changed / filled / moved, before →
+after groups with examples) before `apply` writes the entry into
+`annotations.local/`, logs it, and patches the meta cache for the covered
+files. `POST /api/ack` is *leave it*; `POST /api/report` is *this is the
+parser*; `GET /api/local` lists the layer and `GET /api/local/export`
+zips it minus local-only entries and acks. Measured on the 167k probe:
+queues 30 ms, a 291-file preview 0.2 s, apply 1.6 s, the re-plan after
+it 3.8 s (a full rebuild — re-placing only the covered entries is the
+remaining §19.4 optimization).
+
 ### 19.4 Plan as an artifact
 
 The plan used to be rebuilt from scratch on every preflight — once per
@@ -1524,9 +1544,10 @@ yet: anything that *writes* the local layer (§19.6 step 4).
    The cascade exists before any UI writes to it.
 3. ~~Plan as a run + cached artifact (§19.4)~~ — shipped 2026-09-01
    (v0.9.17); the partial re-harvest on correction rides with step 4.
-4. Queues + tree + why panel on the Plan step, writing `[[dir]]` and pack
+4. ~~Queues + tree + why panel on the Plan step, writing `[[dir]]` and pack
    `[[instrument]]` entries to `annotations.local/` with blast-radius
-   preview, ack list, corrections log, export zip.
+   preview, ack list, corrections log, export zip~~ — shipped 2026-09-01
+   (v0.9.18, `internal/correct`).
 5. Reconciliation after sync.
 6. The Library → Recipe → Plan → Materialize re-cut of the UI (§19.1) —
    last, because it touches the most and unblocks the least.

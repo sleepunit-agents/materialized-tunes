@@ -7,6 +7,38 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.18 — 2026-09-01 (the plan is the review surface)
+
+SPEC §19.6 step 4: seeing before doing, and correcting what you saw.
+A new **Plan** step (tab 3, or *review plan* from the Recipe screen)
+reads the cached artifact two ways. **Queues** group every placement
+failure by source folder, biggest first — 7,792 uncategorized files are
+a few hundred folders — with the kind of question each asks (no
+instrument / loop or one-shot? / family only), the facets that did
+resolve, and the why. **Tree** walks the destination as it will be
+written, one level at a time, every file's why one click away; that is
+where a confident misfile is found. Files audition through the existing
+preview endpoint.
+
+One form for every kind, offering only what the schema can hold as a
+fact: the facet (category, instrument, *word means* — a pack
+`[[instrument]]` block, *skip* — a `[[dir]]` role), a value from the
+lexicon, pin or default, the path it covers (a folder, or a glob within
+the pack), a note, and a local-only flag. *Preview* lays the entry over
+the loaded annotations in memory and re-harvests only the files it
+covers (`annotations.Overlay`, `harvest.ExplainPrefix`), then shows the
+blast radius — covered, changed, filled in, and the ones that currently
+resolve elsewhere, grouped before → after with examples. *Apply* writes
+the entry into `<workspace>/annotations.local/vendors/<vendor>/packs/<pack>.toml`
+(a vendor or pack the checkout does not know gets a minimal identity
+file), logs the evidence to `corrections.jsonl` — what the app resolved
+and via which tier, app version, annotations SHA — and patches the meta
+cache for the covered files. *Leave it* acks a folder out of the queue
+without inventing a label; *this is the parser* logs a report with no
+TOML. The local layer's entries are listed on the Plan step and
+`/api/local/export` zips them, minus local-only entries and acks, as the
+submission. `internal/correct` holds all of it; the endpoints are thin.
+
 ## v0.9.17 — 2026-09-01 (the plan is a run, and it is kept)
 
 SPEC §19.6 step 3, and the fix for the preflight hang on Jonathan's

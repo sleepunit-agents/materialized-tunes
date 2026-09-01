@@ -124,6 +124,12 @@ func newHarvester(ws *workspace.Workspace, lc workspace.LocationConfig, paths []
 	if err != nil {
 		return nil, err
 	}
+	return newHarvesterWith(ws, lc, paths, vendors), nil
+}
+
+// newHarvesterWith is newHarvester over annotations the caller already
+// holds — or has altered in memory to see what would change.
+func newHarvesterWith(ws *workspace.Workspace, lc workspace.LocationConfig, paths []string, vendors []annotations.Vendor) *harvester {
 	return &harvester{
 		fixed:      annotations.BySlug(vendors)[lc.Vendor],
 		vendors:    vendors,
@@ -132,7 +138,7 @@ func newHarvester(ws *workspace.Workspace, lc workspace.LocationConfig, paths []
 		lex:        annotations.LoadInstruments(filepath.Join(ws.Root, "annotations")),
 		cats:       annotations.LoadCategories(filepath.Join(ws.Root, "annotations")),
 		msDirs:     multisampleDirs(paths),
-	}, nil
+	}
 }
 
 // one harvests a single catalog path. ok is false when the path is too
@@ -283,9 +289,17 @@ func Run(ws *workspace.Workspace, lc workspace.LocationConfig) (*Result, error) 
 		out = append(out, m)
 	}
 
+	if err := writeMeta(ws, lc, out); err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+
+// writeMeta replaces a location's meta cache file atomically.
+func writeMeta(ws *workspace.Workspace, lc workspace.LocationConfig, out []Meta) error {
 	dir := filepath.Join(ws.Root, "annotations-cache", "meta")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, err
+		return err
 	}
 	path := filepath.Join(dir, lc.Name+".jsonl")
 	// unique temp name: a scan's harvest and an annotations-update re-harvest
@@ -293,7 +307,7 @@ func Run(ws *workspace.Workspace, lc workspace.LocationConfig) (*Result, error) 
 	// stay atomic, not the scratch file
 	f, err := os.CreateTemp(dir, lc.Name+".jsonl.tmp*")
 	if err != nil {
-		return nil, err
+		return err
 	}
 	tmp := f.Name()
 	w := bufio.NewWriter(f)
@@ -302,24 +316,24 @@ func Run(ws *workspace.Workspace, lc workspace.LocationConfig) (*Result, error) 
 		if err := enc.Encode(m); err != nil {
 			f.Close()
 			os.Remove(tmp)
-			return nil, err
+			return err
 		}
 	}
 	if err := w.Flush(); err != nil {
 		f.Close()
 		os.Remove(tmp)
-		return nil, err
+		return err
 	}
 	if err := f.Close(); err != nil {
 		os.Remove(tmp)
-		return nil, err
+		return err
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		os.Remove(tmp)
-		return nil, err
+		return err
 	}
 	os.WriteFile(filepath.Join(dir, ".format"), []byte(metaFormat+"\n"), 0o644)
-	return res, nil
+	return nil
 }
 
 // Explainer answers "why did this file land there" for one location:
@@ -375,6 +389,81 @@ func (x *Explainer) Explain(p string) (Meta, error) {
 		return Meta{}, fmt.Errorf("%s: not inside a pack under the %q layout", p, x.lc.Layout)
 	}
 	return m, nil
+}
+
+// ExplainPrefix harvests every audio path under prefix (the folder
+// itself, or a glob over the location) against the given annotations —
+// nil means the layers on disk — and returns each record, empty ones
+// included. It is the partial re-harvest of SPEC §19.4: a correction
+// re-plans only the files it covers.
+func ExplainPrefix(ws *workspace.Workspace, lc workspace.LocationConfig, entries map[string]catalog.Entry, prefix string, vendors []annotations.Vendor) (map[string]Meta, error) {
+	if vendors == nil {
+		v, err := annotations.Load(ws.AnnotationRoots()...)
+		if err != nil {
+			return nil, err
+		}
+		vendors = v
+	}
+	isGlob := strings.ContainsAny(prefix, "*?[{")
+	var paths []string
+	for p, e := range entries {
+		if e.Audio == nil {
+			continue
+		}
+		if isGlob {
+			if ok, _ := doublestar.Match(prefix, p); ok {
+				paths = append(paths, p)
+			}
+		} else if p == prefix || strings.HasPrefix(p, prefix+"/") {
+			paths = append(paths, p)
+		}
+	}
+	sort.Strings(paths)
+	// the multisample tier reads whole directories: include every audio
+	// sibling of every covered path, then answer only for the covered ones
+	dirs := map[string]bool{}
+	for _, p := range paths {
+		dirs[path.Dir(p)] = true
+	}
+	var scope []string
+	for p, e := range entries {
+		if e.Audio != nil && dirs[path.Dir(p)] {
+			scope = append(scope, p)
+		}
+	}
+	h := newHarvesterWith(ws, lc, scope, vendors)
+	out := make(map[string]Meta, len(paths))
+	for _, p := range paths {
+		if m, ok := h.one(p, entries[p]); ok {
+			out[p] = m
+		}
+	}
+	return out, nil
+}
+
+// Patch rewrites part of a location's meta cache: each given record
+// replaces the one at its path (or is added), and a record with nothing
+// harvested removes it — the same rule Run applies. The file is rewritten
+// atomically, as Run writes it.
+func Patch(ws *workspace.Workspace, lc workspace.LocationConfig, updates map[string]Meta) error {
+	current := LoadMeta(ws, lc.Name)
+	for p, m := range updates {
+		if m.BPM == 0 && m.Key == "" && m.Category == "" && m.Instrument == "" && len(m.Tags) == 0 {
+			delete(current, p)
+			continue
+		}
+		current[p] = m
+	}
+	paths := make([]string, 0, len(current))
+	for p := range current {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	out := make([]Meta, 0, len(paths))
+	for _, p := range paths {
+		out = append(out, current[p])
+	}
+	return writeMeta(ws, lc, out)
 }
 
 // Explain is a one-shot Explainer for a single path.

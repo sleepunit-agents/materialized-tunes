@@ -44,6 +44,15 @@ type Entry struct {
 	Location   string `json:"location"`
 	SourcePath string `json:"source_path"`
 	Rule       int    `json:"rule"` // index of the include that picked it, in the view the plan was built from
+	// PackPath is the source path through the pack directory ("Samples
+	// From Mars/727 From Mars" under vendor-dirs, "727 From Mars" under a
+	// flat location) — what a correction is scoped to (SPEC §19.3).
+	PackPath string `json:"pack_path,omitempty"`
+	// Kind names the placement failure a templated layout hit, if any:
+	// "unsorted" (no instrument, mirror tree), "uncategorized" ({category}
+	// fell back to _Unsorted), "general" ({instrument} is the family
+	// catch-all) — the queues of SPEC §19.3, kinds B / A / C.
+	Kind       string `json:"kind,omitempty"`
 	SHA256     string `json:"sha256"`
 	SourceSize int64  `json:"source_size"`
 
@@ -98,6 +107,38 @@ const (
 	placeGeneral
 	placeFX
 )
+
+// kind names the worst placement failure the flags record — the queue
+// a file belongs in. A file can be both general and uncategorized; the
+// missing category is the faster question, so it goes there first.
+func (f placeFlags) kind() string {
+	switch {
+	case f&placeUnsorted != 0:
+		return "unsorted"
+	case f&placeUncategorized != 0:
+		return "uncategorized"
+	case f&placeGeneral != 0:
+		return "general"
+	}
+	return ""
+}
+
+// packPathOf is the source path through the pack directory under the
+// location's layout, or "" for a path too shallow to sit in a pack.
+func packPathOf(ws *workspace.Workspace, loc, srcPath string) string {
+	lc, _ := ws.Location(loc)
+	segs := strings.Split(srcPath, "/")
+	if lc.Layout == "vendor-dirs" {
+		if len(segs) < 3 {
+			return ""
+		}
+		return segs[0] + "/" + segs[1]
+	}
+	if len(segs) < 2 {
+		return ""
+	}
+	return segs[0]
+}
 
 type Skip struct {
 	Location string `json:"location"`
@@ -488,6 +529,7 @@ func BuildWith(ws *workspace.Workspace, v *view.View, opt Options) (*Plan, error
 		var out string
 		var parents []string
 		var placed placeFlags
+		packPath := packPathOf(ws, loc, ce.Path)
 		if ly != nil {
 			pl := ly.place(loc, srcForOut, ce.Path)
 			out, parents = pl.out, pl.parents
@@ -511,6 +553,8 @@ func BuildWith(ws *workspace.Workspace, v *view.View, opt Options) (*Plan, error
 				Location:   loc,
 				SourcePath: ce.Path,
 				Rule:       pk.rule,
+				PackPath:   packPath,
+				Kind:       placed.kind(),
 				SHA256:     ce.SHA256,
 				SourceSize: ce.Size,
 				OutPath:    out,
@@ -537,6 +581,8 @@ func BuildWith(ws *workspace.Workspace, v *view.View, opt Options) (*Plan, error
 			Location:    loc,
 			SourcePath:  ce.Path,
 			Rule:        pk.rule,
+			PackPath:    packPath,
+			Kind:        placed.kind(),
 			SHA256:      ce.SHA256,
 			SourceSize:  ce.Size,
 			OutPath:     wavExt(out),

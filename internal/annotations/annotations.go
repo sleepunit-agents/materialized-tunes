@@ -203,9 +203,23 @@ func Load(roots ...string) ([]Vendor, error) {
 	return merged, nil
 }
 
+// Overlay lays over onto base without touching either: the result is
+// what Load would give for the two as layers. A correction previews
+// itself this way — the entry it would write, laid over the loaded
+// annotations in memory (SPEC §19.3, blast radius before commit).
+func Overlay(base, over []Vendor) []Vendor {
+	cp := make([]Vendor, len(base))
+	for i, v := range base {
+		cp[i] = v
+		cp[i].Packs = append([]Pack(nil), v.Packs...)
+	}
+	return mergeLayer(cp, over)
+}
+
 // mergeLayer lays over onto base: over's entries come first wherever
 // the two describe the same vendor or pack; scalar facts about a vendor
-// or pack stay base's unless base never said.
+// or pack stay base's unless base never said. base's vendor structs and
+// pack slices are written to — callers own them (Load) or copy (Overlay).
 func mergeLayer(base, over []Vendor) []Vendor {
 	if len(base) == 0 {
 		return over

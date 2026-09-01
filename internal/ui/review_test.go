@@ -1,0 +1,159 @@
+package ui
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/sleepunit-agents/materialized-tunes/internal/audio"
+	"github.com/sleepunit-agents/materialized-tunes/internal/catalog"
+	"github.com/sleepunit-agents/materialized-tunes/internal/workspace"
+)
+
+// Queues group the plan's failures by source folder, the tree walks the
+// destination, a correction previews its radius, applies into the local
+// layer, and the next plan reads it; an ack leaves the queue.
+func TestReviewSurface(t *testing.T) {
+	dir := t.TempDir()
+	ws, err := workspace.Init(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws.Config.Locations = []workspace.LocationConfig{{Name: "src", Type: "local", Root: dir, Layout: "vendor-dirs"}}
+	ws.SaveConfig()
+	write := func(rel, body string) {
+		p := filepath.Join(dir, rel)
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		os.WriteFile(p, []byte(body), 0o644)
+	}
+	write("annotations/instruments.toml", "[[instrument]]\nid=\"kick\"\nfamily=\"drums\"\naliases=[\"kick\"]\n[[instrument]]\nid=\"drums\"\nfamily=\"drums\"\naliases=[\"drums\"]\n")
+	write("annotations/categories.toml", "[[category]]\nid=\"loops\"\naliases=[\"loop\"]\n[[category]]\nid=\"one-shots\"\naliases=[\"hit\"]\n")
+	mk := func(path, sha string) catalog.Entry {
+		return catalog.Entry{Path: path, SHA256: sha, Size: 1000, ScannedAt: time.Now(),
+			Audio: &audio.Meta{Format: "wav", Channels: 1, SampleRate: 44100, BitDepth: 16, Frames: 4410, DurationS: 0.1}}
+	}
+	cat := map[string]catalog.Entry{}
+	for _, e := range []catalog.Entry{
+		mk("A/P1/Noise/take 1.wav", "1"), mk("A/P1/Noise/take 2.wav", "2"), // nothing → unsorted
+		mk("A/P1/Kicks/Kick 01.wav", "3"),   // instrument, no kind → uncategorized
+		mk("A/P1/Loops/Kick Loop.wav", "4"), // placed
+	} {
+		cat[e.Path] = e
+	}
+	if err := catalog.Write(ws.CatalogPath("src"), cat); err != nil {
+		t.Fatal(err)
+	}
+	write("views/v.toml", "name=\"v\"\ndevice=\"octatrack\"\nstorage=\"octatrack-cf\"\nlayout=\"{family}/{instrument}/{category}/{pack}/{file}\"\n[[include]]\nlocation=\"src\"\nglob=\"**\"\n")
+	ws, _ = workspace.Load(dir)
+	s := &Server{ws: ws, plans: map[string]*planArtifact{}}
+
+	call := func(method, url, body string) map[string]any {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(method, url, strings.NewReader(body))
+		switch {
+		case strings.HasPrefix(url, "/api/plan/queues"):
+			s.queues(w, req)
+		case strings.HasPrefix(url, "/api/plan/tree"):
+			s.tree(w, req)
+		case strings.HasPrefix(url, "/api/plan/folder"):
+			s.folder(w, req)
+		case strings.HasPrefix(url, "/api/plan"):
+			s.planEndpoint(w, req)
+		case strings.HasPrefix(url, "/api/correct"):
+			s.correctEndpoint(w, req)
+		case strings.HasPrefix(url, "/api/ack"):
+			s.ackEndpoint(w, req)
+		}
+		var out map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+			t.Fatalf("%s %s: bad json: %s", method, url, w.Body.String())
+		}
+		if e, ok := out["error"]; ok {
+			t.Fatalf("%s %s: %v", method, url, e)
+		}
+		return out
+	}
+	settle := func() map[string]any {
+		for i := 0; i < 300; i++ {
+			out := call(http.MethodPost, "/api/plan", `{"view":"v","disabled":[]}`)
+			if out["status"] != "running" {
+				return out
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		t.Fatal("plan never settled")
+		return nil
+	}
+	settle()
+
+	q := call(http.MethodGet, "/api/plan/queues?view=v", "")
+	rows := q["rows"].([]any)
+	if len(rows) != 2 {
+		t.Fatalf("queue rows: %v", rows)
+	}
+	r0, r1 := rows[0].(map[string]any), rows[1].(map[string]any)
+	if r0["folder"] != "A/P1/Noise" || r0["kind"] != "unsorted" || r0["count"].(float64) != 2 || r0["pack_path"] != "A/P1" {
+		t.Errorf("row 0: %v", r0)
+	}
+	if r1["folder"] != "A/P1/Kicks" || r1["kind"] != "uncategorized" || r1["instrument"] != "kick" || r1["why"] == nil {
+		t.Errorf("row 1: %v", r1)
+	}
+	tr := call(http.MethodGet, "/api/plan/tree?view=v", "")
+	names := map[string]bool{}
+	for _, d := range tr["dirs"].([]any) {
+		names[d.(map[string]any)["name"].(string)] = true
+	}
+	if !names["Drums"] || !names["_Unsorted"] || tr["total"].(float64) != 4 {
+		t.Errorf("tree root: %v", tr)
+	}
+	tr = call(http.MethodGet, "/api/plan/tree?view=v&prefix=Drums/Kick/Loops/P1", "")
+	if fs := tr["files"].([]any); len(fs) != 1 || fs[0].(map[string]any)["source_path"] != "A/P1/Loops/Kick Loop.wav" || fs[0].(map[string]any)["why"] == nil {
+		t.Errorf("tree leaf: %v", tr)
+	}
+	fo := call(http.MethodGet, "/api/plan/folder?view=v&location=src&folder=A/P1/Noise", "")
+	if fs := fo["files"].([]any); len(fs) != 2 {
+		t.Errorf("folder: %v", fo)
+	}
+
+	// the correction: kind A on Kicks, seen before written
+	pv := call(http.MethodPost, "/api/correct", `{"location":"src","path":"A/P1/Kicks","facet":"category","value":"one-shots","preview":true}`)
+	rad := pv["radius"].(map[string]any)
+	if rad["covered"].(float64) != 1 || rad["changed"].(float64) != 1 || rad["filled"].(float64) != 1 {
+		t.Errorf("preview radius: %v", rad)
+	}
+	if _, err := os.Stat(ws.LocalAnnotations()); !os.IsNotExist(err) {
+		t.Error("preview wrote something")
+	}
+	call(http.MethodPost, "/api/correct", `{"location":"src","path":"A/P1/Kicks","facet":"category","value":"one-shots","note":"all hits"}`)
+	if _, err := os.Stat(filepath.Join(ws.LocalAnnotations(), "vendors", "a", "packs", "p1.toml")); err != nil {
+		t.Fatal("apply must write the local pack file")
+	}
+	after := settle()
+	if after["built"] == q["built"] {
+		t.Error("the plan must rebuild after a correction (inputs changed)")
+	}
+	q = call(http.MethodGet, "/api/plan/queues?view=v", "")
+	if rows := q["rows"].([]any); len(rows) != 1 || rows[0].(map[string]any)["folder"] != "A/P1/Noise" {
+		t.Errorf("Kicks must have left the queue: %v", rows)
+	}
+	tr = call(http.MethodGet, "/api/plan/tree?view=v&prefix=Drums/Kick/One-Shots/P1", "")
+	if tr["total"].(float64) != 1 {
+		t.Errorf("the corrected file lands in One-Shots: %v", tr)
+	}
+
+	// kind C: leave it — the ack takes the row out without inventing a label
+	call(http.MethodPost, "/api/ack", `{"location":"src","folder":"A/P1/Noise","note":"numbered takes"}`)
+	q = call(http.MethodGet, "/api/plan/queues?view=v", "")
+	if rows := q["rows"].([]any); len(rows) != 0 {
+		t.Errorf("acked folder must leave the queue: %v", rows)
+	}
+	q = call(http.MethodGet, "/api/plan/queues?view=v&acked=1", "")
+	if rows := q["rows"].([]any); len(rows) != 1 || rows[0].(map[string]any)["acked"] != true {
+		t.Errorf("acked=1 shows it flagged: %v", rows)
+	}
+}
