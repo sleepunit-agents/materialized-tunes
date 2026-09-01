@@ -27,6 +27,15 @@ type Instrument struct {
 	// Where it speaks it ranks as its instrument, like an alias would: the
 	// "909 CP 01" in a Drum Hits folder is still a clap.
 	Codes []string `toml:"codes" json:"codes,omitempty"`
+	// Category names the kind of recording this word describes when it
+	// describes one at all: a break is a loop by definition. A file whose
+	// category is already known to be something else can't be one, so
+	// there the word is a title ("Beat" is a kit's name, "Break Chop" is
+	// a hit cut from a break) — it speaks only for its family, through
+	// the family's catch-all entry, and every lower entry gets its turn.
+	// Empty means the word describes a sound whatever its length, which
+	// is nearly every entry. Shared-lexicon-only, like split and display.
+	Category string `toml:"category" json:"category,omitempty"`
 	// Split exempts one entry from its family's flat rendering: the family
 	// stays flat for everything else, this instrument keeps its own folder.
 	// For a real named instrument sitting in a family that is flat because
@@ -63,6 +72,7 @@ type Lexicon struct {
 	flat        map[string]bool   // family id → flat
 	split       map[string]bool   // instrument id → keeps its folder in a flat family
 	display     map[string]string // instrument id → folder name override
+	category    map[string]string // instrument id → the category its word implies, "" for most
 }
 
 // LoadInstruments reads <root>/instruments.toml. A missing file yields an
@@ -121,13 +131,16 @@ func (lx *Lexicon) compile() {
 			lx.flat[f.ID] = true
 		}
 	}
-	lx.split, lx.display = map[string]bool{}, map[string]string{}
+	lx.split, lx.display, lx.category = map[string]bool{}, map[string]string{}, map[string]string{}
 	for _, ins := range lx.Instruments {
 		if ins.Split {
 			lx.split[ins.ID] = true
 		}
 		if ins.Display != "" {
 			lx.display[ins.ID] = ins.Display
+		}
+		if ins.Category != "" {
+			lx.category[ins.ID] = ins.Category
 		}
 	}
 }
@@ -163,15 +176,24 @@ func wordAlternation(phrases []string) *regexp.Regexp {
 var (
 	orderPrefixRe = regexp.MustCompile(`^\d+\s*[.)-]\s*`)
 	nonWordRe     = regexp.MustCompile(`[^a-z0-9]+`)
+	letterDigitRe = regexp.MustCompile(`([a-z])([0-9])`)
+	digitLetterRe = regexp.MustCompile(`([0-9])([a-z])`)
 )
 
 // Normalize turns a path segment or filename stem into the form the lexicon
 // matches against: lowercase, vendor order prefixes ("01. ") dropped,
-// everything non-alphanumeric collapsed to single spaces.
+// everything non-alphanumeric collapsed to single spaces, and a boundary
+// opened wherever a letter meets a digit. Vendors glue take numbers onto
+// the word ("808_Kick02", "Snare01", "BD3"), and a whole-word match that
+// sees "kick02" sees no kick at all — the folder word then decides, and a
+// kit called "Beat" filed its kicks as breaks. Aliases pass through the
+// same function, so "80s", "8bit" and "TR808" still meet themselves.
 func Normalize(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
 	s = orderPrefixRe.ReplaceAllString(s, "")
 	s = nonWordRe.ReplaceAllString(s, " ")
+	s = letterDigitRe.ReplaceAllString(s, "$1 $2")
+	s = digitLetterRe.ReplaceAllString(s, "$1 $2")
 	return strings.TrimSpace(s)
 }
 
@@ -179,7 +201,7 @@ func Normalize(s string) string {
 // vendorFirst, when non-nil, is consulted before the shared lexicon so a
 // vendor can fix its own oddities ("CH" = closed hat on SFM).
 func (lx *Lexicon) Match(segment string, vendorFirst []Instrument) (id, family string) {
-	id, family, _ = lx.match(segment, vendorFirst)
+	id, family, _ = lx.match(segment, vendorFirst, "")
 	return id, family
 }
 
@@ -194,14 +216,31 @@ func (lx *Lexicon) Match(segment string, vendorFirst []Instrument) (id, family s
 // naming the sound twice. Across segments a code that did speak ranks as
 // its instrument, so Resolve treats "909 CP 01" under Drum Hits exactly
 // as it would "909 Clap 01".
-func (lx *Lexicon) match(segment string, vendorFirst []Instrument) (id, family string, rank int) {
+//
+// category is what the file is already known to be ("" when nothing said).
+// An entry whose word implies a different category (break implies loops)
+// is a title on such a file, not a label: it is passed over so lower
+// entries get their turn, and if none of them speak it stands in for its
+// family alone — the catch-all entry, ranked where catch-alls rank, so a
+// real label anywhere else on the path still wins.
+func (lx *Lexicon) match(segment string, vendorFirst []Instrument, category string) (id, family string, rank int) {
 	norm := Normalize(segment)
 	if norm == "" {
 		return "", "", 0
 	}
 	pad := " " + norm + " "
+	demoted := "" // family of the first word the category ruled out
+	note := func(fam string) {
+		if demoted == "" {
+			demoted = fam
+		}
+	}
 	for _, ins := range vendorFirst {
 		if hit(pad, wordAlternation(ins.Aliases), wordAlternation(ins.Avoid)) {
+			if lx.gated(ins.ID, category) {
+				note(lx.familyOf(ins.ID, ins.Family))
+				continue
+			}
 			return ins.ID, lx.familyOf(ins.ID, ins.Family), lx.rankOf(ins.ID)
 		}
 	}
@@ -212,20 +251,49 @@ func (lx *Lexicon) match(segment string, vendorFirst []Instrument) (id, family s
 	}
 	for i, ins := range lx.Instruments {
 		if hit(pad, lx.patterns[i], lx.avoids[i]) {
+			if lx.gated(ins.ID, category) {
+				note(ins.Family)
+				continue
+			}
 			return ins.ID, ins.Family, i
 		}
 	}
 	for _, ins := range vendorFirst {
 		if hit(pad, wordAlternation(ins.Codes), wordAlternation(ins.Avoid)) {
+			if lx.gated(ins.ID, category) {
+				note(lx.familyOf(ins.ID, ins.Family))
+				continue
+			}
 			return ins.ID, lx.familyOf(ins.ID, ins.Family), lx.rankOf(ins.ID)
 		}
 	}
 	for i, ins := range lx.Instruments {
 		if hit(pad, lx.codes[i], lx.avoids[i]) {
+			if lx.gated(ins.ID, category) {
+				note(ins.Family)
+				continue
+			}
 			return ins.ID, ins.Family, i
 		}
 	}
+	if demoted != "" {
+		if r := lx.rankOf(demoted); r < len(lx.Instruments) {
+			return demoted, demoted, r
+		}
+	}
 	return "", "", 0
+}
+
+// gated reports whether an instrument's word is ruled out on a file of the
+// given category: the shared entry names a category of its own and the
+// file is known to be a different one. Vendor and pack overrides carry no
+// category; they inherit the shared entry's by id.
+func (lx *Lexicon) gated(id, category string) bool {
+	if category == "" {
+		return false
+	}
+	want := lx.category[id]
+	return want != "" && want != category
 }
 
 // conjunctionRe spots a segment that may be naming more than one thing —
@@ -348,9 +416,17 @@ func (lx *Lexicon) familyOf(id, given string) string {
 // has to read as a rimshot, while "Drums/Kick 01" still reads as a kick.
 // dirs are the path segments within the pack; stem drops the extension.
 func (lx *Lexicon) Resolve(stem string, dirs []string, vendorFirst []Instrument) (id, family string) {
+	return lx.ResolveIn("", stem, dirs, vendorFirst)
+}
+
+// ResolveIn is Resolve for a file whose category is already known: a word
+// that implies a different category (see Instrument.Category) is a title
+// there, not a label, and speaks only for its family. "" means unknown and
+// every word stands.
+func (lx *Lexicon) ResolveIn(category, stem string, dirs []string, vendorFirst []Instrument) (id, family string) {
 	best := -1
 	for _, seg := range append([]string{stem}, dirs...) {
-		gotID, gotFamily, rank := lx.match(seg, vendorFirst)
+		gotID, gotFamily, rank := lx.match(seg, vendorFirst, category)
 		if gotID == "" {
 			continue
 		}

@@ -312,3 +312,76 @@ func TestHarvestPackEchoIsNoLabel(t *testing.T) {
 		}
 	}
 }
+
+// A kit called "Beat" holds 808/909 kicks. Two things had to be true for
+// them to file as breaks: the take number glued to the word hid the kick
+// ("Kick02" is no whole word), and the break word had no idea the file was
+// a one-shot. Both are fixed; a break is a loop by definition, and a
+// one-shot the break word alone describes is a drum hit of unknown piece.
+func TestHarvestBreakIsALoop(t *testing.T) {
+	dir := t.TempDir()
+	ws, _ := workspace.Init(dir)
+	ws.Config.Locations = []workspace.LocationConfig{{Name: "src", Type: "local", Root: dir, Layout: "vendor-dirs"}}
+	ws.SaveConfig()
+	write := func(rel, body string) {
+		p := filepath.Join(dir, rel)
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		os.WriteFile(p, []byte(body), 0o644)
+	}
+	write("annotations/instruments.toml", "[[instrument]]\nid=\"kick\"\nfamily=\"drums\"\naliases=[\"kick\"]\n"+
+		"[[instrument]]\nid=\"break\"\nfamily=\"drums\"\naliases=[\"break\",\"beat\"]\ncategory=\"loops\"\n"+
+		"[[instrument]]\nid=\"drums\"\nfamily=\"drums\"\naliases=[\"drum\",\"drums\"]\n")
+	write("annotations/categories.toml", "[[category]]\nid=\"loops\"\naliases=[\"loop\",\"loops\"]\n"+
+		"[[category]]\nid=\"one-shots\"\naliases=[\"chop\"]\n"+
+		"[[category]]\nid=\"loops\"\naliases=[\"break\",\"breaks\"]\n"+
+		"[[category]]\nid=\"one-shots\"\naliases=[\"one shot\",\"one shots\",\"kit\",\"kits\"]\n")
+	write("annotations/vendors/house/vendor.toml", "[vendor]\nname=\"House\"\nslug=\"house\"\n")
+
+	mk := func(path, sha string) catalog.Entry {
+		return catalog.Entry{Path: path, SHA256: sha, Size: 1, ScannedAt: time.Now(),
+			Audio: &audio.Meta{Format: "wav", Channels: 1, SampleRate: 44100, BitDepth: 16, Frames: 10}}
+	}
+	cat := map[string]catalog.Entry{}
+	for _, e := range []catalog.Entry{
+		mk("House/Drum Machines/Kits/Beat/808_Kick02.wav", "k1"),
+		mk("House/Drum Machines/Kits/Beat/909_Kick04.wav", "k2"),
+		mk("House/Drum Machines/Kits/Beat/Perc07.wav", "k3"),
+		mk("House/Dr Sample From Mars/WAV/Break Chop Dr Sample 01.wav", "c1"),
+		mk("House/Vinyl Breaks/Loops/Amen Break 01.wav", "b1"),
+		mk("House/Vinyl Breaks/Break 04.wav", "b2"),
+	} {
+		cat[e.Path] = e
+	}
+	if err := catalog.Write(ws.CatalogPath("src"), cat); err != nil {
+		t.Fatal(err)
+	}
+	ws, _ = workspace.Load(dir)
+	if _, err := Run(ws, ws.Config.Locations[0]); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]Meta{}
+	f, _ := os.Open(filepath.Join(dir, "annotations-cache", "meta", "src.jsonl"))
+	defer f.Close()
+	dec := jsonDecoder(f)
+	for {
+		var m Meta
+		if dec.Decode(&m) != nil {
+			break
+		}
+		got[m.SHA] = m
+	}
+	want := map[string][2]string{
+		"k1": {"kick", "one-shots"},  // the glued take number no longer hides the kick
+		"k2": {"kick", "one-shots"},  // same
+		"k3": {"drums", "one-shots"}, // nothing but the kit's title word: a drum hit, not a break
+		"c1": {"drums", "one-shots"}, // a hit cut from a break is a drum hit
+		"b1": {"break", "loops"},     // a break on a loop is a break
+		"b2": {"break", "loops"},     // the word itself says loop when nothing else did
+	}
+	for sha, w := range want {
+		m := got[sha]
+		if m.Instrument != w[0] || m.Category != w[1] {
+			t.Errorf("%s: got %q/%q, want %q/%q", sha, m.Instrument, m.Category, w[0], w[1])
+		}
+	}
+}

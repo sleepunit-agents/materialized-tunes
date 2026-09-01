@@ -970,8 +970,14 @@ trust order:
    consulted before the vendor's, both before the lexicon. Every label on a
    path is collected and the most specific wins (earliest in the lexicon),
    so `04. Rimshot/Rimshot TOM 31.wav` reads as a rimshot while
-   `Drums/Kick 01.wav` stays a kick. 86% of the house archive and 97% of
-   Splice carry one.
+   `Drums/Kick 01.wav` stays a kick. Normalizing opens a boundary where a
+   letter meets a digit, so the take number vendors glue on (`808_Kick02`,
+   `BD3`) doesn't hide the word. An entry may carry `category` (break =
+   loops): on a file already known to be something else that word is a
+   title, not a label — a kit called "Beat" holds kicks — and it speaks
+   only for its family through the catch-all (`Drums/_General`), after
+   every lower entry has had its turn. 86% of the house archive and 97%
+   of Splice carry one.
 2. **Vendor APIs**, pack-level only (§11.3).
 3. **Never** audio analysis, and never asking the user to tag a 160k-file
    library. Unlabelled samples stay unlabelled and simply don't match.

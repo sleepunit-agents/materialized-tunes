@@ -7,6 +7,33 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.14 — 2026-09-01 (breaks have no one-shots)
+
+A kit called "Beat" filed its 808/909 kicks under Drums/Break/One-Shots.
+Two faults, both fixed. First, `808_Kick02` normalized to `808 kick02`,
+and a whole-word match sees no kick in `kick02` — the folder word was
+the only label left, and `beat` is a break alias. `annotations.Normalize`
+now opens a boundary wherever a letter meets a digit (`kick 02`, `bd 3`,
+`tr 909`); aliases pass through the same function, so "80s", "8bit" and
+"808" still meet themselves. Expect movers: every one-shot whose only
+label was a glued take-number word ("Snare01", "Hat03", "BD3") and
+whose folder said something vaguer.
+
+Second, the previous version routed Dr Sample's "Break Chop" hits to
+Drums/Break/One-Shots, and Jonathan's read is right: a break is a loop
+by definition, so a one-shot under Break is a filing error by
+construction. `[[instrument]]` entries in the shared lexicon may now
+carry `category` (annotations `next`: break = loops). Harvest resolves
+the category first and passes it to the instrument lexicon
+(`Lexicon.ResolveIn`); a word whose category disagrees with the file's
+is a title there, not a label — passed over so every lower entry gets
+its turn (a "Shaker Hit" under Breaks is a shaker), and if nothing else
+speaks it stands in for its family through the catch-all, ranked where
+catch-alls rank. So "Beat/Perc07" and "Break Chop Dr Sample 01" land in
+Drums/_General/One-Shots; "Amen Break 01" is still a break. Vendor and
+pack blocks naming the id inherit the gate. Drums/Break/One-Shots can no
+longer exist.
+
 ## v0.9.13 — 2026-09-01 (a dir that names the pack is not a label)
 
 Four more strays from Jonathan, all under Drums/Break. Three were the

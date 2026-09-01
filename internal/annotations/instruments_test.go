@@ -31,6 +31,12 @@ family = "drums"
 aliases = ["tom", "toms"]
 
 [[instrument]]
+id = "break"
+family = "drums"
+aliases = ["break", "breaks", "beat", "beats"]
+category = "loops"
+
+[[instrument]]
 id = "shaker"
 family = "percussion"
 aliases = ["shaker", "shakers"]
@@ -191,6 +197,49 @@ func TestInstrumentVendorOverride(t *testing.T) {
 	}
 }
 
+// A word that implies a category (break = loops) is a title on a file
+// already known to be something else: "Beat" is a kit's name, and its kicks
+// are kicks. Ruled out, it speaks for its family alone — through the
+// catch-all, ranked where catch-alls rank — so lower entries still get
+// their turn and any real label on the path wins.
+func TestInstrumentCategoryGate(t *testing.T) {
+	lx := testLex(t)
+	cases := []struct {
+		name, category, stem string
+		dirs                 []string
+		want                 string
+	}{
+		// the file's own word, once the glued take number is split off
+		{"kick in a kit called Beat", "one-shots", "808_Kick02", []string{"Kits", "Beat"}, "kick"},
+		// nothing but the ruled-out word: the family stands in
+		{"only the title word", "one-shots", "Beat 03", []string{"Misc"}, "drums"},
+		{"a hit cut from a break", "one-shots", "Break Chop Dr Sample 01", nil, "drums"},
+		// a lower-ranked real label beats the ruled-out folder word
+		{"shaker under Breaks", "one-shots", "Shaker Hit 02", []string{"Breaks"}, "shaker"},
+		// on a loop, or when nothing said what the file is, the word stands
+		{"a break is a break on a loop", "loops", "Amen Break 01", nil, "break"},
+		{"unknown category leaves it alone", "", "Beat 03", []string{"Misc"}, "break"},
+		// a multisample can't be a break either
+		{"multisample", "multisamples", "Beat C3", nil, "drums"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, _ := lx.ResolveIn(c.category, c.stem, c.dirs, nil)
+			if got != c.want {
+				t.Errorf("ResolveIn(%q, %q, %v) = %q, want %q", c.category, c.stem, c.dirs, got, c.want)
+			}
+		})
+	}
+	// a vendor block naming the gated id inherits the gate
+	vendor := []Instrument{{ID: "break", Aliases: []string{"brk"}}}
+	if got, _ := lx.ResolveIn("one-shots", "BRK 01", []string{"Misc"}, vendor); got != "drums" {
+		t.Errorf("vendor alias of a gated id on a one-shot: got %q, want drums", got)
+	}
+	if got, _ := lx.ResolveIn("loops", "BRK 01", []string{"Misc"}, vendor); got != "break" {
+		t.Errorf("vendor alias of a gated id on a loop: got %q, want break", got)
+	}
+}
+
 func TestNormalize(t *testing.T) {
 	for in, want := range map[string]string{
 		"01. Bass Drum": "bass drum",
@@ -199,6 +248,13 @@ func TestNormalize(t *testing.T) {
 		"05. HH":        "hh",
 		"C#min":         "c min",
 		"2) Snare":      "snare",
+		// a take number glued to the word is not part of the word
+		"808_Kick02":  "808 kick 02",
+		"Snare01":     "snare 01",
+		"BD3 Long":    "bd 3 long",
+		"TR909 Hat":   "tr 909 hat",
+		"80s Toms":    "80 s toms",
+		"12bit Kit A": "12 bit kit a",
 	} {
 		if got := Normalize(in); got != want {
 			t.Errorf("Normalize(%q) = %q, want %q", in, got, want)

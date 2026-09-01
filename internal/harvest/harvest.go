@@ -169,9 +169,12 @@ func Run(ws *workspace.Workspace, lc workspace.LocationConfig) (*Result, error) 
 			// beats whatever the filenames appear to say
 			m.Instrument, m.Family = pinned, lex.FamilyOf(pinned, overrides)
 		} else {
-			m.Instrument, m.Family = lex.Resolve(base, labels, overrides)
+			// the category is known by now, and a word that implies a
+			// different one (break = loops) is a title on this file, not
+			// a label — a kit called "Beat" holds kicks, not breaks
+			m.Instrument, m.Family = lex.ResolveIn(m.Category, base, labels, overrides)
 			if m.Instrument == "" && len(echoes) > 0 {
-				m.Instrument, m.Family = lex.Resolve("", echoes, overrides)
+				m.Instrument, m.Family = lex.ResolveIn(m.Category, "", echoes, overrides)
 			}
 		}
 
