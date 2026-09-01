@@ -961,7 +961,10 @@ trust order:
    are also a Splice pack code or a genre tag
    (`FF_CP_124_drum_loop_venice_shaker` is a shaker loop) — applied to every
    vendor; per-vendor `[[instrument]]` blocks carry abbreviations only
-   unambiguous inside one library (SFM's `CH`/`HH`/`BD`). Every label on a
+   unambiguous inside one library (SFM's `CH`/`HH`/`BD`), and a pack file
+   may carry its own for a word that means something else inside that
+   one pack (Drumtrax From Mars' "Bass" is its kick) — pack blocks are
+   consulted before the vendor's, both before the lexicon. Every label on a
    path is collected and the most specific wins (earliest in the lexicon),
    so `04. Rimshot/Rimshot TOM 31.wav` reads as a rimshot while
    `Drums/Kick 01.wav` stays a kick. 86% of the house archive and 97% of

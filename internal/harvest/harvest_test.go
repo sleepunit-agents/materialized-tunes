@@ -44,11 +44,11 @@ func TestHarvest(t *testing.T) {
 		mk("Zero-G/Jungle Warfare Vol 2/Bass Lines 166.5/808 Standard 1 (JW2).wav", "s3"),
 		mk("Samples From Mars/2600 From Mars/WAV/Synths/37_ItsASurprise_2600_C#1.wav", "s4"),
 		mk("Samples From Mars/808 From Mars/WAV/01. Individual Hits/BD 01.wav", "s5"),
-		mk("Elektron/OT/Loops/Hat Loop 03 124 Bpm.wav", "s6"), // unknown vendor: generic bpm still works
-		mk("Nobody/Pack/x.wav", "s7"),                         // nothing to say
-		mk("Nobody/Vinyl Breaks Vol 4/Full Breaks/VB 01.wav", "s8"), // shared lexicon, no vendor annotation
-		mk("Nobody/Pack/Snare Hit 03.wav", "s9"),                    // shared lexicon from the stem
-		mk("Nobody/Pack/Loops/Snare Hit 03.wav", "s10"),             // dir label beats the stem
+		mk("Elektron/OT/Loops/Hat Loop 03 124 Bpm.wav", "s6"),                         // unknown vendor: generic bpm still works
+		mk("Nobody/Pack/x.wav", "s7"),                                                 // nothing to say
+		mk("Nobody/Vinyl Breaks Vol 4/Full Breaks/VB 01.wav", "s8"),                   // shared lexicon, no vendor annotation
+		mk("Nobody/Pack/Snare Hit 03.wav", "s9"),                                      // shared lexicon from the stem
+		mk("Nobody/Pack/Loops/Snare Hit 03.wav", "s10"),                               // dir label beats the stem
 		mk("Zero-G/Jungle Warfare Vol 1/Programmed Loops/Sub-Urban 155 1.wav", "s11"), // [[dir]] instrument pin beats the lexicon's "sub"
 		// a multisample dir with no category word anywhere: chromatic
 		// note-suffixed siblings (SFM 101-style naming, random suffixes)
@@ -120,6 +120,80 @@ func TestHarvest(t *testing.T) {
 }
 
 func jsonDecoder(f *os.File) interface{ Decode(any) error } { return json.NewDecoder(f) }
+
+// A pack can say what a word means inside it. Drumtrax From Mars labels
+// its kick "Bass" — in the hits folder, in the filename, and again in
+// the Kits copies — and the shared lexicon reads "bass" as bass. A [[dir]]
+// pin can't reach a filename, so the pack carries its own [[instrument]]
+// block, consulted before the vendor's and before the shared lexicon;
+// the vendor's other packs keep reading "Bass" as bass.
+func TestHarvestPackInstrumentOverride(t *testing.T) {
+	dir := t.TempDir()
+	ws, err := workspace.Init(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws.Config.Locations = []workspace.LocationConfig{{Name: "src", Type: "local", Root: dir, Layout: "vendor-dirs"}}
+	ws.SaveConfig()
+	write := func(rel, body string) {
+		p := filepath.Join(dir, rel)
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		os.WriteFile(p, []byte(body), 0o644)
+	}
+	write("annotations/instruments.toml", "[[instrument]]\nid=\"kick\"\nfamily=\"drums\"\naliases=[\"kick\",\"bass drum\"]\n"+
+		"[[instrument]]\nid=\"bass\"\nfamily=\"bass\"\naliases=[\"bass\"]\n")
+	write("annotations/vendors/sfm/vendor.toml", "[vendor]\nname=\"Samples From Mars\"\nslug=\"samples-from-mars\"\n"+
+		"[[instrument]]\nid=\"kick\"\naliases=[\"bd\"]\n")
+	write("annotations/vendors/sfm/packs/drumtrax.toml", "[pack]\nname=\"Drumtrax From Mars\"\nslug=\"drumtrax-from-mars\"\ndir=\"Drumtrax From Mars\"\n"+
+		"[[instrument]]\nid=\"kick\"\naliases=[\"bass\"]\n")
+	write("annotations/vendors/sfm/packs/ob.toml", "[pack]\nname=\"OB From Mars\"\nslug=\"ob-from-mars\"\ndir=\"OB From Mars\"\n")
+
+	mk := func(path, sha string) catalog.Entry {
+		return catalog.Entry{Path: path, SHA256: sha, Size: 1, ScannedAt: time.Now(),
+			Audio: &audio.Meta{Format: "wav", Channels: 1, SampleRate: 44100, BitDepth: 16, Frames: 10}}
+	}
+	cat := map[string]catalog.Entry{}
+	for _, e := range []catalog.Entry{
+		mk("Samples From Mars/Drumtrax From Mars/WAV/01. Individual Hits/01. Bass/Bass Drumtrax 08.wav", "d1"),
+		mk("Samples From Mars/Drumtrax From Mars/WAV/02. Kits/Kit 1/Bass Drumtrax 05.wav", "d2"),
+		mk("Samples From Mars/Drumtrax From Mars/WAV/01. Individual Hits/04. Snare/Snare Drumtrax 05.wav", "d3"),
+		mk("Samples From Mars/OB From Mars/WAV/Bass/Bass Growl OB 01.wav", "o1"),
+		mk("Samples From Mars/OB From Mars/WAV/Drums/BD OB 01.wav", "o2"),
+	} {
+		cat[e.Path] = e
+	}
+	if err := catalog.Write(ws.CatalogPath("src"), cat); err != nil {
+		t.Fatal(err)
+	}
+	ws, _ = workspace.Load(dir)
+	if _, err := Run(ws, ws.Config.Locations[0]); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]Meta{}
+	f, _ := os.Open(filepath.Join(dir, "annotations-cache", "meta", "src.jsonl"))
+	defer f.Close()
+	dec := jsonDecoder(f)
+	for {
+		var m Meta
+		if dec.Decode(&m) != nil {
+			break
+		}
+		got[m.SHA] = m
+	}
+	want := map[string][2]string{
+		"d1": {"kick", "drums"}, // the pack's word, in folder and stem
+		"d2": {"kick", "drums"}, // the kit copy carries the same name — no dir pin reaches it
+		"d3": {"", ""},          // the pack block adds a meaning, it doesn't invent labels
+		"o1": {"bass", "bass"},  // a sibling pack still reads "Bass" as bass
+		"o2": {"kick", "drums"}, // the vendor block still applies beneath the pack's
+	}
+	for sha, w := range want {
+		m := got[sha]
+		if m.Instrument != w[0] || m.Family != w[1] {
+			t.Errorf("%s: got %q/%q, want %q/%q", sha, m.Instrument, m.Family, w[0], w[1])
+		}
+	}
+}
 
 // A vendor ships the same bytes at two paths — a Step Kit folder holds
 // copies of the pack's own hits. Each path's labels come from that path;

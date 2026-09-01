@@ -7,6 +7,32 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.12 — 2026-09-01 (a pack can say what its own words mean)
+
+Drumtrax From Mars files its kicks under Bass. The pack calls them
+"Bass" — the hits folder, the filename (`Bass Drumtrax 08.wav`), the
+Kits copies — and the product page says "Linn-esc bass drum", but
+"bass" is an honest bass in every other Samples From Mars pack, so the
+vendor's `[[instrument]]` block can't say otherwise. A `[[dir]]`
+instrument pin can't either: it claims a folder, and the same names
+recur inside `02. Kits`, so pinning the hits folder would split one
+recording across Drums/Kick and Bass and hand the kit copy to the wrong
+cut. Jonathan's framing was the design: "the pack annotations need to
+override rather than us doing some complex math to figure out what bass
+means in this instance."
+
+So a pack file may carry `[[instrument]]` blocks of its own, the same
+shape as the vendor's. Harvest consults them first, then the vendor's,
+then the shared lexicon; the block adds a meaning without inventing
+labels, so a file the pack's words don't describe still reads through
+the tiers below. Annotations: Drumtrax and SDS800 (the Simmons has a
+Bass module — its "Bass SDS800 01" is the bass drum) each teach
+`kick = ["bass"]`; the lint checks a pack block's id against the lexicon
+like a `[[dir]]` pin. Left alone on purpose: Pulsar-23's "Bass Deep
+Short" (its BASS voice is tonal) and Perkons' "Bass Guit" (a bass).
+Older builds ignore a pack's `[[instrument]]` table; they keep reading
+Drumtrax as bass rather than misreading anything else.
+
 ## v0.9.11 — 2026-09-01 (a code speaks only when no word does)
 
 Two Splice files under Drums/Clap: `FF_CP_124_drum_loop_venice_shaker`

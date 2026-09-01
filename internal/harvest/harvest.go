@@ -141,16 +141,22 @@ func Run(ws *workspace.Workspace, lc workspace.LocationConfig) (*Result, error) 
 			// multisample shape — chromatic note-suffixed siblings
 			m.Category = "multisamples"
 		}
-		var vendorInst []annotations.Instrument
+		// overrides, most local first: the pack's own [[instrument]] blocks
+		// (Drumtrax's "Bass" is its kick), then the vendor's (SFM's "CH"),
+		// then the shared lexicon inside Resolve
+		var overrides []annotations.Instrument
+		if pack != nil {
+			overrides = append(overrides, pack.Instruments...)
+		}
 		if vendor != nil {
-			vendorInst = vendor.Instruments
+			overrides = append(overrides, vendor.Instruments...)
 		}
 		if pinned != "" {
 			// the pack's [[dir]] map pinned the instrument — curated truth
 			// beats whatever the filenames appear to say
-			m.Instrument, m.Family = pinned, lex.FamilyOf(pinned, vendorInst)
+			m.Instrument, m.Family = pinned, lex.FamilyOf(pinned, overrides)
 		} else {
-			m.Instrument, m.Family = lex.Resolve(base, dirs, vendorInst)
+			m.Instrument, m.Family = lex.Resolve(base, dirs, overrides)
 		}
 
 		if m.BPM == 0 && m.Key == "" && m.Category == "" && m.Instrument == "" && len(m.Tags) == 0 {

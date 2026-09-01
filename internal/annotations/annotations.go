@@ -96,6 +96,14 @@ type Pack struct {
 	Acquisition *Acquisition `json:"acquisition,omitempty"`
 	Relations   []Relation   `json:"relations,omitempty"`
 	Dirs        []Dir        `json:"dirs,omitempty"`
+
+	// Instruments are the pack's own [[instrument]] blocks — what a word
+	// means inside THIS pack when it means something else everywhere
+	// else. Drumtrax From Mars calls its kick "Bass" ("Bass Drumtrax 08",
+	// under a Bass folder, and again inside the Kits copies), and no dir
+	// pin reaches a filename. Consulted before the vendor's blocks, which
+	// are consulted before the shared lexicon.
+	Instruments []Instrument `json:"instruments,omitempty"`
 }
 
 // Acquisition mirrors SCHEMA [acquisition] — where someone who doesn't own
@@ -280,6 +288,7 @@ func loadVendor(dir string) (*Vendor, error) {
 			Acquisition *Acquisition `toml:"acquisition"`
 			Relation    []Relation   `toml:"relation"`
 			Dir         []Dir        `toml:"dir"`
+			Instrument  []Instrument `toml:"instrument"`
 		}
 		data, err := os.ReadFile(pf)
 		if err != nil {
@@ -294,6 +303,7 @@ func loadVendor(dir string) (*Vendor, error) {
 			Tags: f.Pack.Tags, Archives: f.Pack.Archives, Discontinued: f.Pack.Discontinued,
 			Meta: f.Meta, Identity: f.Identity,
 			Acquisition: f.Acquisition, Relations: f.Relation, Dirs: f.Dir,
+			Instruments: f.Instrument,
 		})
 	}
 	return v, nil
