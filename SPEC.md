@@ -1342,10 +1342,10 @@ Library ──"materialize…"──▶ Recipe ──▶ Plan ──▶ Material
   recipe or make one). Materialize is never reachable without a recipe.
 - **Recipe** is the picker (§15.1). Its exit is *plan*.
 - **Plan** replaces preflight-as-a-blocking-call. Building it is a *run*
-  like materialize (`/api/run` shape: progress, cancellable), because on a
-  190k-file library the current `/api/preflight` hangs the screen. The
-  result is browsable (§19.2) and cached (§19.4). Its exit is *materialize*
-  (or *migrate* when the lock says files would just move).
+  like materialize (progress by stage; `POST /api/plan` since v0.9.17),
+  because on a 190k-file library the old `/api/preflight` hung the screen.
+  The result is browsable (§19.2) and cached (§19.4). Its exit is
+  *materialize* (or *migrate* when the lock says files would just move).
 - **Materialize** shows the run, then returns to Plan with the lock diff.
 
 The API is already step-shaped (`/api/views`, `/api/preflight`,
@@ -1422,15 +1422,29 @@ globs.
 
 ### 19.4 Plan as an artifact
 
-The plan is rebuilt from scratch on every preflight, and `/api/preflight`
-throws its entries away (`p.Entries = nil`) because the UI wanted a
-verdict. §19.2 needs the entries, and needs them without a rebuild per
-click. So the plan becomes a cached artifact keyed by (recipe hash,
-catalog hashes, annotations checkout SHA, local-layer hash), built as a
-run, read by Plan / queues / tree / materialize alike. A correction
-invalidates only the files under its path: harvest is per-path and pure,
+The plan used to be rebuilt from scratch on every preflight — once per
+rule for the per-rule counts and once more for the set, each build
+reloading the library — and `/api/preflight` threw its entries away
+because the UI wanted a verdict. §19.2 needs the entries, and needs them
+without a rebuild per click. So the plan is a cached artifact keyed by
+(recipe as it is now, rules toggled off, a stamp of every file the plan
+reads: catalogs, meta cache, both annotation layers), built as a run,
+read by Plan / queues / tree / materialize alike.
+
+*Shipped 2026-09-01 (v0.9.17):* `POST /api/plan {view, disabled}`
+answers from the artifact, reports the build in progress (stage, count,
+total: loading → selecting → placing → cuts → checks), or starts one;
+`/api/preflight` is gone. One build per ask: every entry carries the
+rule that picked it (`Entry.Rule`), so per-rule counts are attribution,
+and a toggled-off rule reports its matches less excludes. `plan.Inputs`
+holds catalogs, meta and annotation layers across builds (`plan.BuildWith`
++ `Options{Inputs, Progress}`); materialize and migrate start from the
+artifact when it is current. On the 167k-file probe: cold 4 s with
+progress, cached instant, a rule toggle 2 s — where the old preflight was
+five silent builds. Still to come: a correction invalidates only the
+files under its path — harvest is per-path and pure (`harvester.one`),
 so a partial re-harvest of one prefix followed by a re-place of those
-entries is the whole cost — seconds, not the 70 s full pass.
+entries is the whole cost, seconds rather than the full pass.
 
 ### 19.5 The local annotation layer — cascade, diff, and submission
 
@@ -1508,8 +1522,8 @@ yet: anything that *writes* the local layer (§19.6 step 4).
 2. ~~N-root `annotations.Load` + `default_*` + `observed`/`note` in the
    schema~~ — shipped 2026-09-01 (v0.9.16; annotations schema + lint L7).
    The cascade exists before any UI writes to it.
-3. Plan as a run + cached artifact (§19.4). Fixes the preflight hang by
-   itself.
+3. ~~Plan as a run + cached artifact (§19.4)~~ — shipped 2026-09-01
+   (v0.9.17); the partial re-harvest on correction rides with step 4.
 4. Queues + tree + why panel on the Plan step, writing `[[dir]]` and pack
    `[[instrument]]` entries to `annotations.local/` with blast-radius
    preview, ack list, corrections log, export zip.

@@ -49,6 +49,10 @@ type Server struct {
 	run   *runState // at most one materialization at a time
 	meta  map[string]map[string]fileMeta
 	scans map[string]*scanState // per-location scan progress
+
+	inputs  *plan.Inputs             // what plans read, shared across builds (SPEC §19.4)
+	plans   map[string]*planArtifact // per view: the last plan built, entries and all
+	planRun *planRun                 // at most one plan build at a time
 }
 
 type runState struct {
@@ -66,7 +70,7 @@ type runState struct {
 }
 
 func Handler(ws *workspace.Workspace) http.Handler {
-	s := &Server{ws: ws, scans: map[string]*scanState{}}
+	s := &Server{ws: ws, scans: map[string]*scanState{}, plans: map[string]*planArtifact{}}
 	selfupdate.CleanupOld() // sweep the exe a past self-update renamed aside
 	// Freshen annotations as soon as the app opens — the rules card should
 	// show today's grammar without waiting for a scan to trigger the pull —
@@ -87,7 +91,7 @@ func Handler(ws *workspace.Workspace) http.Handler {
 	mux.HandleFunc("/api/packs", s.packs)
 	mux.HandleFunc("/api/discover", s.discover)
 	mux.HandleFunc("/api/views", s.views)
-	mux.HandleFunc("/api/preflight", s.preflight)
+	mux.HandleFunc("/api/plan", s.planEndpoint)
 	mux.HandleFunc("/api/materialize", s.materialize)
 	mux.HandleFunc("/api/migrate", s.migrateRun)
 	mux.HandleFunc("/api/run", s.runStatus)
@@ -234,99 +238,6 @@ func (s *Server) views(w http.ResponseWriter, _ *http.Request) {
 	jsonOut(w, out)
 }
 
-// preflight runs the plan for a view with an optional subset of include
-// rules disabled — a preview; the recipe file is never touched.
-func (s *Server) preflight(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		View     string `json:"view"`
-		Disabled []int  `json:"disabled"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonErr(w, 400, err)
-		return
-	}
-	// LoadRaw: an empty recipe pre-flights to "nothing selected", not to a
-	// 404 — the Recipe screen is the picker you use to put something in it.
-	v, err := view.LoadRaw(s.ws.Root, req.View)
-	if err != nil {
-		jsonErr(w, 404, err)
-		return
-	}
-	off := map[int]bool{}
-	for _, i := range req.Disabled {
-		off[i] = true
-	}
-
-	type rule struct {
-		Location string `json:"location"`
-		Glob     string `json:"glob"`
-		As       string `json:"as,omitempty"`
-		Enabled  bool   `json:"enabled"`
-		Files    int    `json:"files"`
-		Bytes    int64  `json:"converted_bytes"`
-	}
-	rules := make([]rule, len(v.Include))
-
-	// Per-rule stats: each include planned alone (cheap relative to the
-	// full plan, honest about overlap being possible between rules).
-	for i, inc := range v.Include {
-		rules[i] = rule{Location: inc.Location, Glob: inc.Glob, As: inc.As, Enabled: !off[i]}
-		single := *v
-		single.Include = []view.Include{inc}
-		single.Exclude = v.Exclude
-		p, err := plan.BuildView(s.ws, &single)
-		if err != nil {
-			continue
-		}
-		rules[i].Files = len(p.Entries)
-		rules[i].Bytes = p.TotalBytes
-	}
-
-	enabled := *v
-	enabled.Include = nil
-	var origIdx []int // enabled position → index in the recipe
-	for i, inc := range v.Include {
-		if !off[i] {
-			enabled.Include = append(enabled.Include, inc)
-			origIdx = append(origIdx, i)
-		}
-	}
-	var p *plan.Plan
-	if len(enabled.Include) > 0 {
-		if p, err = plan.BuildView(s.ws, &enabled); err != nil {
-			jsonErr(w, 500, err)
-			return
-		}
-		lock.WarnMoved(s.ws.Root, p)
-	}
-
-	excludes := make([]string, 0, len(v.Exclude))
-	for _, e := range v.Exclude {
-		excludes = append(excludes, e.Glob)
-	}
-	out := map[string]any{"view": req.View, "device": v.Device, "storage": v.Storage, "layout": v.Layout,
-		"layouts": view.LayoutPresets, "rules": rules, "excludes": excludes}
-	if p != nil {
-		// migrate hint: when the newest lock's files would just move, the
-		// UI offers the rename path instead of duplicate-and-delete
-		if lp, err := lock.Resolve(s.ws.Root, req.View); err == nil {
-			if l, err := lock.Read(lp); err == nil {
-				if mg := lock.PlanMigration(l, p); mg.Work() > 0 {
-					out["migrate"] = map[string]int{"moves": len(mg.Moves), "companions": len(mg.Companions)}
-				}
-			}
-		}
-		out["files"] = len(p.Entries)
-		p.Entries = nil             // the UI wants the verdict, not 84k rows
-		for i := range p.Overlaps { // plan indexes enabled rules; the UI shows all of them
-			p.Overlaps[i].RuleA = origIdx[p.Overlaps[i].RuleA]
-			p.Overlaps[i].RuleB = origIdx[p.Overlaps[i].RuleB]
-		}
-		out["plan"] = p
-	}
-	jsonOut(w, out)
-}
-
 func (s *Server) materialize(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		View string `json:"view"`
@@ -342,7 +253,7 @@ func (s *Server) materialize(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, 409, fmt.Errorf("a run is already in progress (%s)", s.run.View))
 		return
 	}
-	p, err := plan.Build(s.ws, req.View)
+	p, err := s.planFor(req.View)
 	if err != nil {
 		s.mu.Unlock()
 		jsonErr(w, 500, err)
@@ -405,7 +316,7 @@ func (s *Server) migrateRun(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, 409, fmt.Errorf("a run is already in progress (%s)", s.run.View))
 		return
 	}
-	p, err := plan.Build(s.ws, req.View)
+	p, err := s.planFor(req.View)
 	if err != nil {
 		s.mu.Unlock()
 		jsonErr(w, 500, err)

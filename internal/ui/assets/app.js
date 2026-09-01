@@ -24,7 +24,7 @@ const S = {
   // session — both deliberate (SPEC §11.6).
   discover: false, obtainable: true, disc: null, discBusy: false,
   view: null,                      // selected recipe name
-  pf: null, pfBusy: false, disabled: new Set(),
+  pf: null, pfBusy: false, pfProgress: null, disabled: new Set(),
   rOpen: new Set(), rFilter: '', rModel: null,  // Recipe screen: expanded vendor rows, filter, the group model clicks act on
   run: { status: 'idle' }, runLog: ['[idle] no run started this session'],
   selCard: 0, locks: [], diff: null, diffBusy: false,
@@ -126,12 +126,34 @@ async function loadDiscover() {
   S.discBusy = false; render();
 }
 
+// The plan is a run: POST /api/plan answers from the cached artifact when
+// the recipe, toggles and library are unchanged, else reports the build's
+// stage until it lands. A newer request supersedes an older poll.
+let pfSeq = 0;
 async function loadPreflight() {
   if (!S.view) return;
-  S.pfBusy = true; render();
-  S.pf = await api('/api/preflight', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ view: S.view, disabled: [...S.disabled] }) });
+  const seq = ++pfSeq;
+  S.pfBusy = true; S.pfProgress = null; render();
+  for (;;) {
+    const r = await api('/api/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ view: S.view, disabled: [...S.disabled] }) });
+    if (seq !== pfSeq) return;
+    if (r && r.status === 'running') {
+      S.pfProgress = r; render();
+      await new Promise(res => setTimeout(res, 400));
+      continue;
+    }
+    S.pf = r; S.pfProgress = null;
+    break;
+  }
   S.pfBusy = false; render();
+}
+
+function pfProgressLabel() {
+  const p = S.pfProgress;
+  if (!p) return 'planning…';
+  const stage = p.stage || 'planning';
+  return p.total > 1 ? `${stage} · ${n(p.count)} / ${n(p.total)}` : stage + '…';
 }
 
 async function openPack(p) {
@@ -1242,7 +1264,7 @@ function renderRecipe() {
     ${nrForm}`;
 
   if (!pf || pf.error || !pf.rules) return `<div class="recipe-grid"><div class="recipe-left">${head}
-    <div style="font:400 11px var(--mono);color:${pf && pf.error ? 'var(--warn)' : 'var(--fg-faint)'};padding:24px 4px">${pf && pf.error ? 'pre-flight failed: ' + esc(pf.error) : 'running pre-flight…'}</div></div>
+    <div style="font:400 11px var(--mono);color:${pf && pf.error ? 'var(--warn)' : 'var(--fg-faint)'};padding:24px 4px">${pf && pf.error ? 'plan failed: ' + esc(pf.error) : esc(pfProgressLabel())}</div></div>
     <div class="preflight"></div></div>`;
 
   // The recipe as vendors, not as [[include]] blocks. S.rModel is what the
@@ -1319,7 +1341,8 @@ function renderRecipe() {
         <span style="font:600 12.5px var(--sans)">Pre-flight</span>
         <span style="font:400 11px var(--mono);color:var(--fg-faint)">${esc(pf.storage)} · ${fmtB(cap)}</span>
         <div style="flex:1"></div>
-        <span style="font:700 12px var(--mono);color:${fitColor}">${fitLabel}${S.pfBusy ? ' ·…' : ''}</span>
+        <span style="font:700 12px var(--mono);color:${fitColor}">${fitLabel}</span>
+        ${S.pfBusy ? `<span style="font:400 11px var(--mono);color:var(--fg-faint)">${esc(pfProgressLabel())}</span>` : ''}
       </div>
       <div class="meter">
         <div class="fill" style="width:${fillPct}%"></div>

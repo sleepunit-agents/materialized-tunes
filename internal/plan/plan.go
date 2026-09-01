@@ -43,6 +43,7 @@ func wavHeaderBytes(bitDepth int) int64 {
 type Entry struct {
 	Location   string `json:"location"`
 	SourcePath string `json:"source_path"`
+	Rule       int    `json:"rule"` // index of the include that picked it, in the view the plan was built from
 	SHA256     string `json:"sha256"`
 	SourceSize int64  `json:"source_size"`
 
@@ -268,10 +269,39 @@ func Build(ws *workspace.Workspace, viewName string) (*Plan, error) {
 	return BuildView(ws, v)
 }
 
-// BuildView computes the plan for an in-memory view — the UI's preflight
-// preview builds these with rules toggled off, without touching the recipe
-// file on disk.
+// BuildView computes the plan for an in-memory view — the UI's Plan step
+// builds these with rules toggled off, without touching the recipe file
+// on disk.
 func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
+	return BuildWith(ws, v, Options{})
+}
+
+// Options tune a build: Inputs shares loaded sources across builds (nil
+// loads fresh), Progress hears each stage as it advances (nil is silent).
+type Options struct {
+	Inputs   *Inputs
+	Progress func(stage string, done, total int)
+}
+
+// Build stages, in order, as Progress reports them.
+const (
+	StageLoad   = "loading catalogs"
+	StageSelect = "selecting"
+	StagePlace  = "placing"
+	StageCuts   = "resolving cuts and duplicates"
+	StageCheck  = "checking names and fit"
+)
+
+// BuildWith is BuildView with shared inputs and progress.
+func BuildWith(ws *workspace.Workspace, v *view.View, opt Options) (*Plan, error) {
+	in := opt.Inputs
+	if in == nil {
+		in = NewInputs(ws)
+	}
+	progress := opt.Progress
+	if progress == nil {
+		progress = func(string, int, int) {}
+	}
 	dev, err := profile.LoadDevice(ws.Root, v.Device)
 	if err != nil {
 		return nil, err
@@ -293,7 +323,7 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 	// view keeps trees or the location's vendors are unknown).
 	var vendors []annotations.Vendor
 	if v.FormatTree != "keep" || lay != nil {
-		if vendors, err = annotations.Load(ws.AnnotationRoots()...); err != nil {
+		if vendors, err = in.Vendors(); err != nil {
 			return nil, err
 		}
 	}
@@ -310,14 +340,15 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 	}
 
 	catalogs := map[string]map[string]catalog.Entry{}
-	for _, inc := range v.Include {
+	for i, inc := range v.Include {
 		if _, done := catalogs[inc.Location]; done {
 			continue
 		}
 		if _, ok := ws.Location(inc.Location); !ok {
 			return nil, fmt.Errorf("view %s: unknown location %q", v.Name, inc.Location)
 		}
-		entries, err := catalog.Load(ws.CatalogPath(inc.Location))
+		progress(StageLoad, i, len(v.Include))
+		entries, err := in.Catalog(inc.Location)
 		if err != nil {
 			return nil, err
 		}
@@ -337,8 +368,9 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 					harvest.Run(ws, lc)
 				}
 			}
+			in.Reset()
 		}
-		if ly, err = newLayouter(ws, v, lay, vendors); err != nil {
+		if ly, err = newLayouter(in, v, lay, vendors); err != nil {
 			return nil, err
 		}
 		asRules := 0
@@ -354,21 +386,28 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 	}
 
 	type picked struct {
-		inc view.Include
-		ce  catalog.Entry
+		inc  view.Include
+		rule int
+		ce   catalog.Entry
 	}
 	var selection []picked
 	seen := map[string]bool{} // location:path:as — the same source through two
 	// includes with the same prefix is one output, not a collision
 	first := map[string]int{}   // location:path → index of the include that picked it first
 	overlap := map[[2]int]int{} // {first include, later include with a different As} → shared sources
+	sortedPaths := map[string][]string{}
 	for ii, inc := range v.Include {
+		progress(StageSelect, ii, len(v.Include))
 		cat := catalogs[inc.Location]
-		paths := make([]string, 0, len(cat))
-		for p := range cat {
-			paths = append(paths, p)
+		paths, ok := sortedPaths[inc.Location]
+		if !ok {
+			paths = make([]string, 0, len(cat))
+			for p := range cat {
+				paths = append(paths, p)
+			}
+			sort.Strings(paths)
+			sortedPaths[inc.Location] = paths
 		}
-		sort.Strings(paths)
 		for _, sp := range paths {
 			ok, _ := doublestar.Match(inc.Glob, sp)
 			if !ok {
@@ -400,7 +439,7 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 			} else {
 				first[inc.Location+"\x00"+sp] = ii
 			}
-			selection = append(selection, picked{inc, cat[sp]})
+			selection = append(selection, picked{inc, ii, cat[sp]})
 		}
 	}
 
@@ -419,7 +458,10 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 			o.Files, o.Location, o.RuleA+1, o.GlobA, prefixLabel(o.AsA), o.RuleB+1, o.GlobB, prefixLabel(o.AsB)))
 	}
 
-	for _, pk := range selection {
+	for si, pk := range selection {
+		if si%2000 == 0 {
+			progress(StagePlace, si, len(selection))
+		}
 		ce := pk.ce
 		loc := pk.inc.Location
 		if reason := Eligibility(dev, ce); reason != "" {
@@ -468,6 +510,7 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 			p.Entries = append(p.Entries, Entry{
 				Location:   loc,
 				SourcePath: ce.Path,
+				Rule:       pk.rule,
 				SHA256:     ce.SHA256,
 				SourceSize: ce.Size,
 				OutPath:    out,
@@ -493,6 +536,7 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 		p.Entries = append(p.Entries, Entry{
 			Location:    loc,
 			SourcePath:  ce.Path,
+			Rule:        pk.rule,
 			SHA256:      ce.SHA256,
 			SourceSize:  ce.Size,
 			OutPath:     wavExt(out),
@@ -516,7 +560,9 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 			placed:      placed,
 		})
 	}
+	progress(StagePlace, len(selection), len(selection))
 	sort.Slice(p.Entries, func(i, j int) bool { return p.Entries[i].OutPath < p.Entries[j].OutPath })
+	progress(StageCuts, 0, 1)
 
 	// A re-export vendor's sampler trees leave first: they are not cuts to
 	// choose between, they are the vendor's own device prep, and dropping
@@ -563,6 +609,7 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 	}
 
 	p.recount()
+	progress(StageCheck, 0, 1)
 
 	if dev.Delivery.Layout == "flatten" {
 		flatten(p.Entries, dev.Naming.CaseSensitive)

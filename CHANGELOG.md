@@ -7,6 +7,28 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.17 — 2026-09-01 (the plan is a run, and it is kept)
+
+SPEC §19.6 step 3, and the fix for the preflight hang on Jonathan's
+190k-file library. The old `/api/preflight` built the plan once per
+rule (for the per-rule counts) and once more for the set — five silent
+builds on a four-rule recipe, each reloading the catalog and the meta
+cache — and then threw the entries away. Now `POST /api/plan {view,
+disabled}` is a run: it answers from the cached artifact when the
+recipe, the toggles and the library are unchanged, reports the build's
+stage while it runs (loading catalogs → selecting → placing → resolving
+cuts → checking), or starts one. One build per ask: every entry records
+the rule that picked it (`Entry.Rule`), per-rule counts are attribution
+over that one plan, and a rule toggled off reports its matches less the
+excludes instead of being planned alone. `plan.Inputs` keeps catalogs,
+harvested metadata and the merged annotation layers across builds,
+stamped by the files they came from, so a re-plan pays for placement
+only; `plan.BuildWith` takes them plus a progress callback. Materialize
+and migrate start from the artifact when it is current. Measured on the
+167k-file probe: cold 4.1 s with progress, cached 0 s, a rule toggle
+2 s. The artifact keeps its entries — the review surface §19.2 will read
+them.
+
 ## v0.9.16 — 2026-09-01 (the cascade exists)
 
 SPEC §19.6 step 2. `annotations.Load` takes N roots and merges them in

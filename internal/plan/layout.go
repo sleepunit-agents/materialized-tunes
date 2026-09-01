@@ -3,7 +3,6 @@ package plan
 import (
 	"fmt"
 	"path"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -41,7 +40,8 @@ type layouter struct {
 	lex      *annotations.Lexicon // flat-family knowledge; nil when the template reads no metadata
 }
 
-func newLayouter(ws *workspace.Workspace, v *view.View, lay *view.Layout, vendors []annotations.Vendor) (*layouter, error) {
+func newLayouter(in *Inputs, v *view.View, lay *view.Layout, vendors []annotations.Vendor) (*layouter, error) {
+	ws := in.ws
 	fb, _ := view.ParseLayout(UnsortedDir + "/{vendor}/{pack}/{path}")
 	ly := &layouter{
 		lay: lay, fallback: fb,
@@ -51,7 +51,7 @@ func newLayouter(ws *workspace.Workspace, v *view.View, lay *view.Layout, vendor
 		meta:  map[string]map[string]harvest.Meta{},
 	}
 	if lay.NeedsMeta() {
-		ly.lex = annotations.LoadInstruments(filepath.Join(ws.Root, "annotations"))
+		ly.lex = in.Lexicon()
 	}
 	for _, inc := range v.Include {
 		if _, done := ly.locs[inc.Location]; done {
@@ -62,7 +62,7 @@ func newLayouter(ws *workspace.Workspace, v *view.View, lay *view.Layout, vendor
 		if !lay.NeedsMeta() {
 			continue
 		}
-		m := harvest.LoadMeta(ws, inc.Location)
+		m := in.Meta(inc.Location)
 		if len(m) == 0 {
 			return nil, fmt.Errorf("layout %q needs harvested metadata, and location %q has none — run `mtunes catalog harvest %s` (a scan does it too)",
 				lay.Template, inc.Location, inc.Location)
