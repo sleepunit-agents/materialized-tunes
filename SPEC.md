@@ -1318,3 +1318,185 @@ CHANGELOG.md.
 | 9 | `catalog loudness`, `verify --location` | The catalog is already a manifest; give it the verb. |
 | 11.6 | Acquisition pointers + discovery: pack classes (vendor-free / vendor-paid / distributor / orphan), vendor `domains`, `[acquisition]`, `[[relation]]`, six lint rules, no-fetch refusal | The registry is a discovery surface whether we like it or not; drawing the management-vs-sourcing line as lintable data keeps it a tool and not a piracy index, and link-out sends vendors their customer. |
 | 12 | Optional analysis sidecar, explicitly *not now* | Keeps the door open without bending the design toward it. |
+| 19 | `[proposed 2026-09-01]` Plan as the review surface, kinds of _Unsorted, local annotation layer as cascade + diff + submission | See where files land before they do, and let the user correct facts in a shape the repo can take back. |
+
+## 19. Seeing before doing; correcting what you saw `[proposed 2026-09-01]`
+
+Design only — nothing here is built. Jonathan's ask (2026-09-01): *see
+where things are going to go before they go there, and correct mistakes*
+— and shape the correction so the user makes it, not the annotator. Three
+parts: the flow the screens become, the corrections tool and its kinds,
+and the local annotation layer that carries corrections out of the app.
+
+### 19.1 The screens are steps, not tabs
+
+Materializing is a sequence, and the UI should stop pretending otherwise:
+
+```
+Library ──"materialize…"──▶ Recipe ──▶ Plan ──▶ Materialize ──▶ (back to Plan/Recipe)
+```
+
+- **Library** keeps browsing, discovery, pack detail. Its one exit into
+  the pipeline is *materialize…*, which lands on Recipe (pick an existing
+  recipe or make one). Materialize is never reachable without a recipe.
+- **Recipe** is the picker (§15.1). Its exit is *plan*.
+- **Plan** replaces preflight-as-a-blocking-call. Building it is a *run*
+  like materialize (`/api/run` shape: progress, cancellable), because on a
+  190k-file library the current `/api/preflight` hangs the screen. The
+  result is browsable (§19.2) and cached (§19.4). Its exit is *materialize*
+  (or *migrate* when the lock says files would just move).
+- **Materialize** shows the run, then returns to Plan with the lock diff.
+
+The API is already step-shaped (`/api/views`, `/api/preflight`,
+`/api/materialize`, `/api/run`); this is mostly a frontend re-cut plus
+turning preflight into a run. Nothing built under §19.2–19.5 may assume
+the tab model.
+
+### 19.2 The plan is the review surface
+
+Everything the user wants to see or fix is visible in one artifact: the
+plan's entries, each with a source path, a destination path, the harvested
+facets, and (new) *why* each facet resolved the way it did. Two ways in,
+one action vocabulary:
+
+- **Queues** — the plan's placement failures, grouped by **source folder**
+  and sorted by count. 7,792 uncategorized files are a few hundred folders;
+  one decision per folder, never per file. Each row shows the folder, the
+  file count, a few filenames, the facets that did resolve, and an audition
+  button (`/api/preview` already streams audio; playing a file to a human
+  is not the audio analysis §11.4 refused).
+- **Tree** — the destination tree as it will be written, walkable, with
+  every file's *why* one click away. This is where misfiles are found
+  ("Groove Therapy Pad in Drums/Break") — they are confident, so no queue
+  holds them.
+
+The **why** panel is the primitive both share: per facet, which tier
+answered (pack `[[dir]]` pin / pack `[[instrument]]` / vendor block /
+`categories.toml` entry / pack-name echo / multisample shape / nothing) and
+the exact word and path segment it fired on. Harvest records this today in
+neither the meta cache nor the plan; adding a per-facet source to
+`harvest.Meta` is the enabling change for everything below, and it costs a
+few bytes per file.
+
+### 19.3 The kinds of "unsorted" — different questions, different tools
+
+"_Unsorted" is one folder name for at least five situations. The tool
+asks a different question for each, and the answer lands in a different
+annotation shape:
+
+| # | Situation (plan flag) | What the user is asked | Answer lands as |
+|---|---|---|---|
+| A | **No kind** — instrument known, loop/one-shot unknown (`uncategorized`, `Drums/Hat/_Unsorted/`) | "Loops or one-shots?" per folder. The fastest queue; almost always a whole folder. A mixed folder ("One Shots/Fill 07") is answered by *word*, not by descending to files. | `[[dir]] category` — or `default_category` (§19.5) when the folder's own words should still win |
+| B | **Nothing** — no instrument, so a templated layout can't open a top-level folder (`unsorted`, mirror tree under `_Unsorted/`) | "What is this folder, at whatever depth you honestly know — family, instrument, or leave it?" Most of the 32k here are SFM patches named *David Lynch*: category is known (multisamples), family is obvious from the pack, no word says it. | `[[dir]] default_instrument = "synth"` (family catch-all as a fallback, *not* a pin); a real pin only when the folder is uniform |
+| C | **Family only** (`general`, `Drums/_General/`) | "Which instrument?" — often unanswerable (numbered takes) and *leave it* is the honest answer. | `[[dir]] instrument` when there is one; otherwise a local **ack** (§19.5) so the row leaves the queue without inventing a label |
+| D | **Wrong** — placed confidently, misfiled | "What is it actually?" — with the *why* shown, so the fix targets the level that lied: a word that means something else in this pack (Drumtrax's *Bass*), a folder, or a lexicon bug. | pack `[[instrument]] aliases` / `avoid`; `[[dir]]` pin; or a **report** (evidence only, no TOML) when the user says "this is your parser, not my pack" |
+| E | **Not content / wrong boundary** — a nested format tree (`Modular Creations/4. Modular Instruments/Kontakt 5.5`), docs, a dir that is really a pack | "Skip this subtree" / "this is a pack". | `[[dir]] role = "format-tree" \| "docs"`; pack-boundary edits stay out of v1 (grammar is vendor-level and rarely wrong) — and the nested-format-tree case is a consumer bug (roles honoured only at pack root) to fix regardless |
+
+Three rules the tool enforces so corrections stay facts:
+
+1. **Scoped, not global.** Users write `[[dir]]` entries and pack/vendor
+   `[[instrument]]` blocks — things scoped to a folder or a pack they own.
+   The shared lexicons (`instruments.toml`, `categories.toml`) stay curated:
+   "tops" as a hat word broke *Clave Slider* across the whole archive
+   (2026-09-01). A user's scoped fix is the *evidence* for a global one.
+2. **Blast radius before commit.** Every correction re-plans the files it
+   covers and shows the diff before it is written: "pins 143 files; 12
+   currently resolve to something else: …". Seeing before doing applies to
+   the fix, not only the materialize.
+3. **Taste goes in the layout.** "I want all bass under Synth" is not an
+   annotation — the recipe's layout template is where that belongs, and it
+   already is. The tool offers no facet the annotations schema cannot
+   express as a fact.
+
+Granularity: folder is the default; *files matching a word* generates a
+glob (`path = "WAV/Textures/Chop *.wav"`); a single file is allowed and
+discouraged. All three are `[[dir]]` entries — the schema already takes
+globs.
+
+### 19.4 Plan as an artifact
+
+The plan is rebuilt from scratch on every preflight, and `/api/preflight`
+throws its entries away (`p.Entries = nil`) because the UI wanted a
+verdict. §19.2 needs the entries, and needs them without a rebuild per
+click. So the plan becomes a cached artifact keyed by (recipe hash,
+catalog hashes, annotations checkout SHA, local-layer hash), built as a
+run, read by Plan / queues / tree / materialize alike. A correction
+invalidates only the files under its path: harvest is per-path and pure,
+so a partial re-harvest of one prefix followed by a re-place of those
+entries is the whole cost — seconds, not the 70 s full pass.
+
+### 19.5 The local annotation layer — cascade, diff, and submission
+
+§12 already lists a local layer "at the bottom of the cascade, always
+winning, taste lives here". Jonathan's refinement (2026-09-01): the local
+layer is *also the diff* — the format in which a user hands corrections
+back to the repo. That changes what it holds: facts by default, taste by
+exception, and never a private format.
+
+**Shape.** `<workspace>/annotations.local/` is a partial annotations tree
+in exactly the repo's layout — `vendors/<slug>/vendor.toml`,
+`vendors/<slug>/packs/<pack>.toml` — containing only what the user
+asserted. `annotations.Load` takes N roots (repo checkout, then local) and
+merges by slug: packs union; `[[dir]]` and `[[instrument]]` entries
+append. No new precedence rule is needed: `[[dir]]` is already the first
+category/instrument tier and deepest-match, and pack `[[instrument]]`
+blocks are already consulted first, so a local entry at the same or deeper
+path simply wins. A vendor or pack with no upstream annotation (his own
+loose drums source; Emulator before its stub) gets a minimal file created
+locally — slug and dir come from the catalog.
+
+**Two schema additions the corrections need**, proposed for
+`sample-vendor-annotations` SCHEMA.md:
+
+- `default_category` / `default_instrument` on `[[dir]]` — *speaks last*:
+  used only when no word on the path said anything. Today's `category` /
+  `instrument` on `[[dir]]` are **pins** (first tier, beat the filenames),
+  which is right for *Sub-Urban*-style breaks and wrong for a synth pack
+  whose Leads folder holds a labelled kick loop. Kind B above is mostly
+  defaults, and a tool that can only pin would force mixed folders.
+- `observed = <date>` and `note = "…"` on `[[dir]]` and `[[instrument]]`
+  entries — provenance, same as `[vendor] observed`. A user's assertion
+  from their own copy *is* the repo's "verified against a real copy" bar.
+
+**Two markers that are local-only:**
+
+- `local = true` on an entry — "keep this out of the export" (the
+  user's weirdo opinion). Lint upstream rejects it, so it can't leak.
+- The **ack list** (`annotations.local/acks.jsonl`): folders the user
+  reviewed and left as-is (kind C). Not annotations — nothing to submit.
+
+**Evidence rides with the diff.** `annotations.local/corrections.jsonl`
+logs each correction: the path/glob, what the app had resolved and *via
+which tier* (the §19.2 why), what the user asserted, the note, app
+version, annotations SHA, timestamp. Reports (kind D, "your parser is
+wrong") are log entries with no TOML. This is what lets the annotator
+triage a submission into annotation-gap vs lexicon-bug vs parser-bug
+without re-deriving it.
+
+**Submission.** v1: *export corrections* writes a zip of
+`annotations.local/` (minus `local = true` entries and acks) + the log;
+the user drops it in the channel; the annotator lands it. v2: open a PR
+from the app through the GitHub API the sync already speaks (§11.1) —
+gated on wanting a token in the app at all.
+
+**Reconciliation.** After a sync, the app checks each local entry: if
+removing it changes no file's placement (upstream now says the same), it
+offers to drop it. Without this the local layer becomes a permanent
+shadow of the repo and the cascade rots into two sources of truth.
+
+### 19.6 Order of work (when Jonathan says go)
+
+1. Per-facet provenance in `harvest.Meta` + a `why` endpoint. Small; the
+   evidence everything else stands on; useful on its own (`catalog
+   harvest --explain <path>`).
+2. N-root `annotations.Load` + `default_*` + `observed`/`note` in the
+   schema (one annotations PR, one mtunes change). The cascade exists
+   before any UI writes to it.
+3. Plan as a run + cached artifact (§19.4). Fixes the preflight hang by
+   itself.
+4. Queues + tree + why panel on the Plan step, writing `[[dir]]` and pack
+   `[[instrument]]` entries to `annotations.local/` with blast-radius
+   preview, ack list, corrections log, export zip.
+5. Reconciliation after sync.
+6. The Library → Recipe → Plan → Materialize re-cut of the UI (§19.1) —
+   last, because it touches the most and unblocks the least.
