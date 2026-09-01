@@ -630,10 +630,17 @@ glob = "**/*.asd"
   level from output paths using annotations (`[formats] canonical_dir` /
   `parallel_dirs`, or a pack `[[dir]]` with `role = "format-tree"`): `808
   From Mars/WAV/Kicks/x` → `808 From Mars/Kicks/x`, `ASMR/ASMR 24 bit
-  stereo/y` → `ASMR/y`. Category dirs at pack root are never trees (Rhythm
-  Lab, BMT, Polyend Heights); unknown vendors mirror; an include whose glob
-  root already reaches into the tree is left to its `as` (`"keep"` to
-  disable).
+  stereo/y` → `ASMR/y`. Where annotations are silent, a structural rule
+  reads the dir's own name: a dir directly under a pack named like the
+  pack plus nothing but format words — `Thump/Thump 16 bit mono`,
+  `Kit/Kit 16-Bit WAV` — is a tree with no annotation at all, so vendors
+  nobody has written up still shed their format level. The rule is
+  narrow (every word after the pack's name must be format vocabulary,
+  anchored by a channel word or bit depth; `Kicks mono`, a bare `WAV`, a
+  BPM-suffixed loop dir are all refused) and a pack's own `[[dir]]` map
+  always wins over it. Category dirs at pack root are never trees (Rhythm
+  Lab, BMT, Polyend Heights); an include whose glob root already reaches
+  into the tree is left to its `as` (`"keep"` to disable).
 - `vendor_prep = "skip"` (default) drops a re-export vendor's per-sampler
   trees outright, before cuts are scored. Samples From Mars does not ship
   one library — it ships it again under `Battery/`, `Maschine/`, `MPC Live
@@ -665,21 +672,23 @@ glob = "**/*.asd"
   ties go to the cut needing no transcode, then to the vendor's own tree
   order. So a 24-bit stereo DAW library keeps the master, and a 16-bit
   mono tracker keeps the cut the vendor made for it, byte-for-byte. A
-  group is only treated as cuts of one sample when its members come from
-  *different* trees of one pack and share a duration — anything else is a
-  real collision and still errors (§7). `cuts = "all"` renders every cut.
-- The duration half of that proof stands down for a vendor whose
-  annotation declares `[formats] parallel_role = "reexport"`: Samples From
-  Mars re-renders its whole library per host (`Battery`, `Maschine`,
-  `Kontakt`, `MPC…` beside `WAV`) rather than cutting one render several
-  ways, so the same hit is trimmed a few frames apart in each tree and
-  equal length can neither prove nor disprove redundancy. There the tree
-  structure carries the whole proof — same pack, same relative path, two
-  trees the vendor itself declared parallel — and *length leads the
-  scoring*, so the longest render wins and nothing keeps a truncated copy
-  over a whole one. Length is inert for `parallel_role = "cut"` vendors
-  (the default), whose cuts are equal by construction. The plan's warning
-  names how many dropped cuts disagreed on length.
+  group is only treated as cuts of one sample on a structural proof in
+  two halves: its members come from *different* trees of one pack, and
+  each sits at the *same relative path* inside its tree (case and
+  extension aside — a re-render into another container is the same
+  recording). Anything else is a real collision and still errors (§7).
+  `cuts = "all"` renders every cut.
+- Duration is deliberately not part of that proof — it *picks*, it never
+  blocks. It used to gate cut vendors, on the theory that one render
+  delivered at several bit depths is the same length in every tree;
+  Polyend's Thump falsified it (its three trees ship as three separately
+  produced zips whose trims drift), and Samples From Mars re-renders its
+  whole library per host (`Battery`, `Maschine`, `Kontakt`, `MPC…` beside
+  `WAV`) with independent trims. Where the structure says one sample,
+  *length leads the scoring*: the longest render wins, so nothing keeps a
+  truncated copy over a whole one, and the plan's warning names how many
+  dropped cuts disagreed on length. (`parallel_role = "reexport"` still
+  matters — it is what scopes `vendor_prep`, above.)
 - `dedup = "content"` renders byte-identical sources once (first output
   path in sort order; deterministic, pinned). Opt-in, because a DAW kit
   folder wants its members even when they duplicate the one-shots folder.

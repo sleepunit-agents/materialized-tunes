@@ -2,6 +2,7 @@ package plan
 
 import (
 	"fmt"
+	"path"
 	"sort"
 	"strings"
 )
@@ -34,10 +35,11 @@ func cutDelivered(e Entry) (channels, rate, depth int, passthrough bool) {
 // delivers the same for less work. Total and deterministic — the final
 // tiebreak is the source path, so the choice pins in a lockfile.
 //
-// Length comes first, and only ever separates re-export sets (a vendor's
-// cuts of one render are the same length, so the test is inert there).
-// Between two re-exports of one hit the longer one is the safe keep: it
-// is the one that cannot be missing a tail the other has.
+// Length comes first: when a vendor's renders of one hit disagree —
+// re-export trees trimmed independently, or cuts the vendor rendered in
+// separate passes (Polyend Thump) — the longer one is the safe keep: it
+// is the one that cannot be missing a tail the other has. Cuts of a
+// single render are the same length and fall through to quality.
 func betterCut(a, b Entry) bool {
 	ach, art, adp, acp := cutDelivered(a)
 	bch, brt, bdp, bcp := cutDelivered(b)
@@ -60,38 +62,36 @@ func betterCut(a, b Entry) bool {
 
 // isCutSet reports whether entries at idx are the same sample in different
 // cuts rather than genuinely different files that happen to collide. The
-// first half of the proof is always the same: each comes out of a
-// different format tree of the same pack.
+// proof is structural, in two halves: each member comes out of a different
+// format tree of the same pack — trees the vendor itself declared parallel,
+// or that the pack's own dir naming does (see treeWords) — and each sits at
+// the same relative path inside its tree. The relpath is the sample's
+// coordinate; case and extension are not part of it (a re-render into
+// another container is still the same recording). Two different files that
+// merely land on one output path share neither, and stay a collision.
 //
-// The second half depends on what the vendor's parallel trees hold. For a
-// cut set — one render delivered at several bit depths — every cut is the
-// same length, and a length that disagrees means the two files are not
-// the same recording: the collision stands and pickCuts refuses to drop
-// audio it cannot show is redundant.
-//
-// A vendor that declares [formats] parallel_role = "reexport" re-renders
-// its library once per sampler instead, and those renders are trimmed
-// independently — Samples From Mars' Battery and Maschine copies of one
-// 727 hit differ by frames and by bytes. Length there proves nothing
-// either way, so the tree structure carries the whole proof: same pack,
-// same relative path, two trees the vendor itself declared parallel.
-// betterCut then keeps the longest, which cannot be the truncated one.
+// Length is deliberately not part of the proof. It used to be, for cut
+// vendors — one render delivered at several bit depths is the same length
+// in every tree — but Polyend's Thump ships its three trees as three
+// separately rendered zips whose durations drift, and Samples From Mars
+// re-renders per sampler with independent trims. Where the structure says
+// "same sample", a length that disagrees means the vendor trimmed or
+// re-rendered, not that the files are strangers: betterCut leads with
+// length, so the longest render is kept and pickCuts says out loud how
+// many dropped cuts disagreed.
 func isCutSet(entries []Entry, idx []int) bool {
+	rel := func(e Entry) string {
+		r := strings.TrimPrefix(e.SourcePath, e.pack+"/"+e.tree+"/")
+		return strings.ToLower(strings.TrimSuffix(r, path.Ext(r)))
+	}
 	trees := make(map[string]bool, len(idx))
-	d0 := entries[idx[0]].DurationS
-	reexport := entries[idx[0]].reexport
+	r0 := rel(entries[idx[0]])
 	for _, i := range idx {
 		e := entries[i]
-		if e.tree == "" || trees[e.tree] {
+		if e.tree == "" || trees[e.tree] || rel(e) != r0 {
 			return false
 		}
 		trees[e.tree] = true
-		if reexport {
-			continue
-		}
-		if diff := e.DurationS - d0; diff > 1e-3 || diff < -1e-3 {
-			return false
-		}
 	}
 	return true
 }
@@ -162,7 +162,7 @@ func (p *Plan) pickCuts(caseSensitive bool) {
 
 	trim := ""
 	if trimmed > 0 {
-		trim = fmt.Sprintf(" %d dropped %s a re-export the vendor trimmed to a different length; the longest render was kept.",
+		trim = fmt.Sprintf(" %d dropped %s trimmed to a different length than its siblings; the longest render was kept.",
 			trimmed, plural(trimmed, "cut was", "cuts were"))
 	}
 	p.Warnings = append(p.Warnings, fmt.Sprintf(

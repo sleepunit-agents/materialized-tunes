@@ -7,6 +7,45 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.10 — 2026-08-31 (the proof is the structure — length picks, it never blocks)
+
+Same night, third Polyend collision, and the one that killed the length
+gate: Thump. `kick_thick.wav` erroring from all three trees — `Thump 24
+bit stereo`, `Thump 16 bit stereo`, `Thump 16 bit mono` — with every
+piece of the machinery working: vendor globs matched, `thump.toml`'s own
+`[[dir]]` map matched, the trees stripped, `cuts = "best"` on. The only
+branch left was v0.9.8's equal-duration proof, and Thump fails it by
+construction: alone among the 23 Palette packs it ships as three inner
+zips, one per format tree (`[packs] zip_name_grammar` had recorded this
+all along), and separately produced renders drift by more than the
+millisecond the gate allowed. The premise "a cut vendor's trees are the
+same length by construction" was a fact about 22 packs, not about the
+vendor.
+
+So the length gate is gone — for everyone, not patched for one pack.
+What remains is the structural proof, now with both halves stated:
+members from *different* declared trees of one pack, at the *same
+relative path* inside each tree (case- and extension-insensitive; the
+relpath is the sample's coordinate). The second half is new, and it is
+what made removing the gate safe: without it, two genuinely different
+files landing on one templated output path from two trees would have
+merged silently. Duration still leads the scoring — the longest render
+wins, a truncated copy can never displace a whole one, and the plan
+warns how many dropped cuts disagreed. `parallel_role = "reexport"`
+keeps its job scoping `vendor_prep`; it no longer changes the resolver.
+
+And the across-the-board half of Jonathan's ask ("can we hit this
+without looking at each kit manually?"): format trees are now also
+recognized *structurally*, with no annotation at all. A dir directly
+under a pack named like the pack plus nothing but format words —
+`Thump/Thump 16 bit mono`, `Kit/Kit 16-Bit WAV`, Polyend's literal
+`Pack 24 bit stereo` — reads as a tree by naming alone. The rule is
+deliberately narrow: every word after the pack's name must be format
+vocabulary, anchored by a channel word or bit depth; `Kicks mono`, a
+bare `WAV`, and BPM-suffixed loop dirs are refused, and a pack's own
+`[[dir]]` map always wins over it. Annotations still speak first —
+the heuristic is the floor, not the replacement.
+
 ## v0.9.9 — 2026-08-31 (the vendor's device prep is not content)
 
 Follow-on the same night, and the wider call: "in sfm packs we need to

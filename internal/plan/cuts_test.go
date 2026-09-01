@@ -124,13 +124,18 @@ func TestPickCutsOptOut(t *testing.T) {
 	}
 }
 
-// TestPickCutsRefusesUnequalLength: two files of different durations
-// under one name are different recordings, whatever tree they sit in.
-// Dropping one would lose audio, so the collision stands.
-func TestPickCutsRefusesUnequalLength(t *testing.T) {
+// TestPickCutsKeepsLongestUnequalLength: the collision Jonathan hit on
+// Thump. Its three format trees ship as separately produced zips, so the
+// trims drift by more than a millisecond — a fact about the vendor's
+// render pipeline, not about the content. The vendor's own structure
+// (three declared trees, one relative path) says these are one sample,
+// so length picks instead of blocking: the longest render is kept, and
+// the trim is reported.
+func TestPickCutsKeepsLongestUnequalLength(t *testing.T) {
 	entries := []catalog.Entry{
-		wavEntry("Polyend/Bass Tools/Pack 24 bit stereo/MIDS/x.wav", 2, 44100, 24, 44100),
-		wavEntry("Polyend/Bass Tools/Pack 16 bit mono/MIDS/x.wav", 1, 44100, 16, 88200), // twice as long
+		wavEntry("Polyend/Thump/Thump 24 bit stereo/artificial/kick_thick.wav", 2, 44100, 24, 44100),
+		wavEntry("Polyend/Thump/Thump 16 bit stereo/artificial/kick_thick.wav", 2, 44100, 16, 44000), // ~2ms short
+		wavEntry("Polyend/Thump/Thump 16 bit mono/artificial/kick_thick.wav", 1, 44100, 16, 44010),
 	}
 	ws := testWorkspace(t, entries, polyendAnnotations)
 	ws.Config.Locations[0].Layout = "vendor-dirs"
@@ -144,11 +149,36 @@ func TestPickCutsRefusesUnequalLength(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.CutsDropped != 0 {
-		t.Errorf("dropped %d cuts of unequal length — should have kept both", p.CutsDropped)
+	if len(p.Errors) != 0 {
+		t.Fatalf("errors: %v", p.Errors)
 	}
-	if len(p.Collisions) != 1 {
-		t.Errorf("collisions %v, want 1", p.Collisions)
+	if len(p.Entries) != 1 || p.CutsDropped != 2 {
+		t.Fatalf("%d entries, %d dropped — want 1 and 2", len(p.Entries), p.CutsDropped)
+	}
+	if e := p.Entries[0]; !strings.Contains(e.SourcePath, "24 bit stereo") {
+		t.Errorf("kept %q, want the longest render", e.SourcePath)
+	}
+	if joined := strings.Join(p.Warnings, "\n"); !strings.Contains(joined, "trimmed to a different length") {
+		t.Errorf("warnings %v, want the trims named", p.Warnings)
+	}
+}
+
+// TestIsCutSetNeedsOneRelPath: the structural proof is the same relative
+// path inside each tree — two different files that happen to land on one
+// output path are not cuts of each other. The extension is not part of
+// the coordinate: a re-render into another container is still the same
+// recording.
+func TestIsCutSetNeedsOneRelPath(t *testing.T) {
+	set := []Entry{
+		{SourcePath: "Polyend/Thump/Thump 24 bit stereo/acoustic/kick_a.wav", pack: "Polyend/Thump", tree: "Thump 24 bit stereo"},
+		{SourcePath: "Polyend/Thump/Thump 16 bit mono/artificial/kick_a.wav", pack: "Polyend/Thump", tree: "Thump 16 bit mono"},
+	}
+	if isCutSet(set, []int{0, 1}) {
+		t.Error("different relative paths inside their trees — not a cut set")
+	}
+	set[1].SourcePath = "Polyend/Thump/Thump 16 bit mono/ACOUSTIC/Kick_A.aif"
+	if !isCutSet(set, []int{0, 1}) {
+		t.Error("same coordinate up to case and extension — is a cut set")
 	}
 }
 
@@ -296,5 +326,74 @@ func TestPickCutsReexportStillNeedsTwoTrees(t *testing.T) {
 	}
 	if len(p.Collisions) != 1 {
 		t.Errorf("collisions %v, want 1", p.Collisions)
+	}
+}
+
+// TestPickCutsHeuristicTrees: "Kit Name/Kit Name 16 bit mono" reads as a
+// format tree by naming alone — a vendor nobody has annotated still sheds
+// its format level and its cut set resolves, which is the "across the
+// board" half of the Thump ask.
+func TestPickCutsHeuristicTrees(t *testing.T) {
+	ws := testWorkspace(t, []catalog.Entry{
+		wavEntry("Nobody/Boom Kit/Boom Kit 24 bit stereo/kick.wav", 2, 44100, 24, 44100),
+		wavEntry("Nobody/Boom Kit/Boom Kit 16 bit stereo/kick.wav", 2, 44100, 16, 44100),
+		wavEntry("Nobody/Boom Kit/Boom Kit 16-Bit_Mono/kick.wav", 1, 44100, 16, 44100),
+	}, nil)
+	ws.Config.Locations[0].Layout = "vendor-dirs"
+	if err := ws.SaveConfig(); err != nil {
+		t.Fatal(err)
+	}
+	writeProfile(t, ws, "devices/dev.toml", device(24, 44100, "stereo"))
+	writeProfile(t, ws, "storage/sq.toml", bigStorage)
+	writeView(t, ws, "v", "name=\"v\"\ndevice=\"dev\"\nstorage=\"sq\"\n[[include]]\nlocation=\"src\"\nglob=\"**\"\n")
+	p, err := Build(ws, "v")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Errors) != 0 {
+		t.Fatalf("errors: %v", p.Errors)
+	}
+	if len(p.Entries) != 1 || p.CutsDropped != 2 {
+		t.Fatalf("%d entries, %d dropped — want 1 and 2", len(p.Entries), p.CutsDropped)
+	}
+	e := p.Entries[0]
+	if want := "Nobody/Boom Kit/kick.wav"; e.OutPath != want {
+		t.Errorf("out %q, want %q", e.OutPath, want)
+	}
+	if !strings.Contains(e.SourcePath, "24 bit stereo") {
+		t.Errorf("kept %q, want the 24-bit stereo cut", e.SourcePath)
+	}
+}
+
+// TestHeuristicTreeRank pins the naming rule's edges: format words after
+// the pack's own name are a tree; words that carry meaning are not; a
+// bare "WAV" or a number alone is not claimed.
+func TestHeuristicTreeRank(t *testing.T) {
+	claims := []struct {
+		pack, dir string
+		ok        bool
+	}{
+		{"Thump", "Thump 16 bit mono", true},
+		{"Thump", "Thump 24 bit stereo", true},
+		{"Bass Tools", "Pack 16 bit stereo", true}, // Polyend's literal "Pack"
+		{"808 Kit", "808 Kit 16-Bit WAV", true},
+		{"808 Kit", "808 Kit 16bit 44.1khz Stereo", true},
+		{"Thump", "Thump", false},            // the pack's own name is no tree
+		{"Thump", "Kicks mono", false},       // "Kicks" means something
+		{"Thump", "artificial", false},       // category dir
+		{"Pack", "WAV", false},               // no anchor — annotate the vendor instead
+		{"Amen", "Original", false},          // Rhythm Lab's content dirs
+		{"Loops", "Bass Lines 166.5", false}, // a BPM-suffixed loop dir
+	}
+	for _, c := range claims {
+		if _, ok := heuristicTreeRank(c.pack, c.dir); ok != c.ok {
+			t.Errorf("heuristicTreeRank(%q, %q) = %v, want %v", c.pack, c.dir, ok, c.ok)
+		}
+	}
+	r24, _ := heuristicTreeRank("K", "K 24 bit stereo")
+	r16s, _ := heuristicTreeRank("K", "K 16 bit stereo")
+	r16m, _ := heuristicTreeRank("K", "K 16 bit mono")
+	if !(r24 < r16s && r16s < r16m) {
+		t.Errorf("rank order %d %d %d, want 24-bit stereo closest to canonical", r24, r16s, r16m)
 	}
 }

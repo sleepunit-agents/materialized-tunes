@@ -599,16 +599,13 @@ type treeStripper struct {
 	byTop      map[string]*annotations.Vendor // vendor-dirs: top dir → vendor (nil = unknown)
 }
 
+// newTreeStripper always returns a stripper: even a location whose vendors
+// are wholly unknown gets the structural rule — a dir named like its pack
+// plus format words ("Thump 16 bit mono") is a tree by naming alone.
 func newTreeStripper(lc workspace.LocationConfig, vendors []annotations.Vendor) *treeStripper {
-	if len(vendors) == 0 {
-		return nil
-	}
 	st := &treeStripper{vendorDirs: lc.Layout == "vendor-dirs", vendors: vendors, byTop: map[string]*annotations.Vendor{}}
 	if !st.vendorDirs {
 		st.fixed = annotations.BySlug(vendors)[lc.Vendor]
-		if st.fixed == nil {
-			return nil
-		}
 	}
 	return st
 }
@@ -643,7 +640,10 @@ type treeInfo struct {
 
 // strip returns the path without its format-tree segment and what the
 // vendor knows about that tree. ok is false when there was no tree to
-// remove.
+// remove. Annotations speak first — the vendor's globs and the pack's own
+// [[dir]] map; where both are silent, the structural rule reads the dir's
+// name against the pack's ("Thump 16 bit mono" under "Thump"), so packs
+// and vendors nobody has annotated still shed their format level.
 func (st *treeStripper) strip(p string) (out string, t treeInfo, ok bool) {
 	segs := strings.Split(p, "/")
 	packIdx := 0 // index of the pack dir segment
@@ -662,17 +662,26 @@ func (st *treeStripper) strip(p string) (out string, t treeInfo, ok bool) {
 	} else if len(segs) < 3 { // pack/tree/file
 		return p, treeInfo{}, false
 	}
-	if vendor == nil {
-		return p, treeInfo{}, false
-	}
-	pack := vendor.PackByDir(segs[packIdx])
 	tree := segs[packIdx+1]
-	rank, ok := vendor.FormatTreeRank(pack, tree)
-	if !ok {
-		return p, treeInfo{}, false
+	stripAt := func(rank int, reexport bool) (string, treeInfo, bool) {
+		kept := append(append([]string{}, segs[:packIdx+1]...), segs[packIdx+2:]...)
+		return strings.Join(kept, "/"), treeInfo{tree, rank, reexport, strings.Join(segs[:packIdx+1], "/")}, true
 	}
-	kept := append(append([]string{}, segs[:packIdx+1]...), segs[packIdx+2:]...)
-	return strings.Join(kept, "/"), treeInfo{tree, rank, vendor.ParallelRole == "reexport", strings.Join(segs[:packIdx+1], "/")}, true
+	if vendor != nil {
+		pack := vendor.PackByDir(segs[packIdx])
+		if rank, ok := vendor.FormatTreeRank(pack, tree); ok {
+			return stripAt(rank, vendor.ParallelRole == "reexport")
+		}
+		// the pack's own [[dir]] map spoke and said this dir is not a
+		// tree — a category dir at pack root stays what the human said
+		if _, claimed := annotations.PackDirRole(pack, tree); claimed {
+			return p, treeInfo{}, false
+		}
+	}
+	if rank, ok := heuristicTreeRank(segs[packIdx], tree); ok {
+		return stripAt(rank, false)
+	}
+	return p, treeInfo{}, false
 }
 
 // prefixLabel names an include's output prefix for humans: the As value

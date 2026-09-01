@@ -308,23 +308,17 @@ func loadVendor(dir string) (*Vendor, error) {
 // category dir at pack root that happens to be called "FX") is not. A
 // "." canonical dir means audio sits at pack root and nothing is a tree.
 func (v *Vendor) IsFormatTree(p *Pack, dir string) bool {
-	if p != nil {
-		for _, d := range p.Dirs {
-			dp := strings.Trim(d.Path, "/")
-			if strings.Contains(dp, "/") || !strings.EqualFold(dp, dir) {
-				continue
-			}
-			if d.Role == "format-tree" {
-				return true
-			}
-			// canonical-audio on a single segment is only a tree when the
-			// vendor has a format level at all and this dir IS that level
-			if d.Role == "canonical-audio" && v.CanonicalDir != "" && v.CanonicalDir != "." {
-				ok, _ := doublestar.Match(v.CanonicalDir, dir)
-				return ok
-			}
-			return false
+	if role, claimed := PackDirRole(p, dir); claimed {
+		if role == "format-tree" {
+			return true
 		}
+		// canonical-audio on a single segment is only a tree when the
+		// vendor has a format level at all and this dir IS that level
+		if role == "canonical-audio" && v.CanonicalDir != "" && v.CanonicalDir != "." {
+			ok, _ := doublestar.Match(v.CanonicalDir, dir)
+			return ok
+		}
+		return false
 	}
 	if v.CanonicalDir != "" && v.CanonicalDir != "." {
 		if ok, _ := doublestar.Match(v.CanonicalDir, dir); ok {
@@ -337,6 +331,25 @@ func (v *Vendor) IsFormatTree(p *Pack, dir string) bool {
 		}
 	}
 	return false
+}
+
+// PackDirRole reports the role a pack's own [[dir]] map assigns to a
+// single top-level segment, and whether the map speaks about it at all.
+// An entry with no role (a category dir at pack root) still claims the
+// segment — the annotation has said what the dir is, and it is not a
+// format tree.
+func PackDirRole(p *Pack, dir string) (role string, claimed bool) {
+	if p == nil {
+		return "", false
+	}
+	for _, d := range p.Dirs {
+		dp := strings.Trim(d.Path, "/")
+		if strings.Contains(dp, "/") || !strings.EqualFold(dp, dir) {
+			continue
+		}
+		return d.Role, true
+	}
+	return "", false
 }
 
 // PackByDir finds the pack annotated for an on-disk directory name.
