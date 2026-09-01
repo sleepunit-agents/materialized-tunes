@@ -1796,9 +1796,9 @@ function renderPlan() {
     panel = `<div style="font:600 12px var(--sans)">${esc(r.folder.split('/').pop())} <span style="font:400 10.5px var(--mono);color:var(--fg-faint)">· ${esc(r.pack_path)} · ${n(r.count)} files</span></div>
       <div style="font:400 11px var(--sans);color:var(--fg-dim)">${esc(KIND_ASK[r.kind] || '')}</div>
       ${whyPanel({ category: r.category, instrument: r.instrument, family: r.family, why: r.why })}
-      <div style="max-height:180px;overflow:auto;border:1px solid var(--bord);border-radius:5px">${files.map((f, i) => `<div class="pl-file ${pl.file === f ? 'on' : ''}" data-act="pl-qfile" data-i="${i}">
+      <div class="pl-files">${files.map((f, i) => `<div class="pl-file ${pl.file === f ? 'on' : ''}" data-act="pl-qfile" data-i="${i}">
           <span class="play-btn" data-act="pl-play" data-path="${esc(f.source_path)}" data-loc="${esc(f.location)}">${S.player && S.player.path === f.source_path && S.player.playing ? '❚❚' : '▶'}</span>
-          <span class="nm">${esc(f.name)}</span><span style="color:var(--fg-faint)">${esc(f.instrument || '—')}</span><span style="color:var(--fg-faint)">${esc(f.category || '—')}</span>
+          <span class="nm" title="${esc(f.source_path)}">${esc(f.name)}</span><span class="fm">${esc(f.instrument || '—')} · ${esc(f.category || '—')}</span>
         </div>`).join('') || `<div style="padding:8px;font:400 10.5px var(--mono);color:var(--fg-faint)">${pl.files ? 'no files' : 'loading…'}</div>`}</div>
       ${pl.file ? whyPanel(pl.file) : ''}
       ${renderPlanForm()}`;

@@ -7,6 +7,18 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.21 — 2026-09-01 (the plan's right panel earns its width)
+
+Jonathan's first ten minutes with v0.9.20: the panel was 420px and the
+file box inside it clipped names to an ellipsis. Sample names are long
+and the tail is where the note, velocity and round-robin live — a name
+you cannot read is a file you cannot decide about. The panel is now
+`clamp(560px, 40%, 780px)`, the file box grows to ~44vh and scrolls
+sideways instead of clipping (each row is as wide as its name), the
+per-file instrument · category trails the name as one dim annotation,
+and nothing on the Plan step ellipsizes a file or folder name any
+more — the wide list wraps instead.
+
 ## v0.9.20 — 2026-09-01 (the screens are steps, not tabs)
 
 SPEC §19.6 step 6, the last of Jonathan's 2026-09-01 ask. The tab bar

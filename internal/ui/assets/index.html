@@ -195,20 +195,25 @@
   .mat-btn.blocked { background: var(--bord-raise); color: var(--fg-faint); cursor: not-allowed; }
 
   /* ---- plan: the review surface (SPEC §19.2) ---- */
-  .pl-wrap { display: grid; grid-template-columns: minmax(0, 1fr) 420px; gap: 14px; padding: 16px 18px; height: 100%; min-height: 0; }
+  .pl-wrap { display: grid; grid-template-columns: minmax(0, 1fr) clamp(560px, 40%, 780px); gap: 14px; padding: 16px 18px; height: 100%; min-height: 0; }
   .pl-list { min-width: 0; overflow: auto; }
   .pl-panel { background: var(--bg-panel); border: 1px solid var(--bord-card); border-radius: 6px; padding: 12px 14px; overflow: auto; display: flex; flex-direction: column; gap: 10px; }
   .pl-row { display: grid; grid-template-columns: minmax(0, 1fr) 64px 118px; gap: 10px; align-items: center; padding: 7px 10px; border-bottom: 1px solid #16191c; cursor: pointer; }
   .pl-row:hover { background: var(--bg-card); }
   .pl-row.on { background: var(--bg-sel); }
-  .pl-row .f { font: 500 11px var(--mono); color: var(--fg-num); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pl-row .f { font: 500 11px var(--mono); color: var(--fg-num); overflow-wrap: anywhere; }
   .pl-row .ex { font: 400 10px var(--mono); color: var(--fg-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .pl-row .n { font: 600 11px var(--mono); color: var(--fg); text-align: right; }
   .pl-tag { font: 600 9.5px var(--mono); letter-spacing: .04em; text-transform: uppercase; padding: 2px 6px; border-radius: 3px; background: var(--bg-raise); color: var(--fg-dim); white-space: nowrap; }
   .pl-tag.unsorted { color: var(--err); } .pl-tag.uncategorized { color: var(--amber); } .pl-tag.general { color: var(--teal); }
   .pl-file { display: grid; grid-template-columns: 22px minmax(0, 1fr) 90px 80px; gap: 8px; align-items: center; padding: 3px 4px; border-bottom: 1px solid #16191c; font: 400 10.5px var(--mono); color: var(--fg-num); cursor: pointer; }
   .pl-file:hover, .pl-file.on { background: var(--bg-card); }
-  .pl-file .nm { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pl-file .nm { overflow-wrap: anywhere; }
+  /* the panel's file box: full names, never clipped — the box scrolls sideways instead */
+  .pl-files { max-height: min(420px, 44vh); overflow: auto; border: 1px solid var(--bord); border-radius: 5px; }
+  .pl-files .pl-file { display: flex; gap: 8px; width: max-content; min-width: 100%; box-sizing: border-box; }
+  .pl-files .pl-file .nm { white-space: nowrap; overflow: visible; }
+  .pl-files .pl-file .fm { color: var(--fg-faint); white-space: nowrap; }
   .why { font: 400 10.5px var(--mono); color: var(--fg-dim); display: flex; flex-direction: column; gap: 3px; background: var(--bg-deep); border: 1px solid var(--bord); border-radius: 5px; padding: 8px 10px; }
   .why b { color: var(--fg); font-weight: 600; }
   .why .t { color: var(--fg-faint); }
