@@ -445,8 +445,12 @@ function tabbar() {
 
 function statusbar() {
   const ann = S.summary ? `annotations: ${n(S.summary.packs_annotated)} packs known` : '';
+  // "which build am I actually running" must be answerable without an update
+  // pending — the tab-bar chip only exists when a newer build is known.
+  const u = S.upd;
+  const build = u ? `build ${u.commit || u.version || '?'}` : '';
   return `<div class="statusbar"><span>1–5 screens</span><span>L cycle lens</span><span>⌘K search</span>
-    <div style="flex:1"></div><span>${ann}</span></div>`;
+    <div style="flex:1"></div>${build ? `<span title="${esc(u.note || (u.available ? 'a newer build is published' : 'up to date'))}">${esc(build)}</span>` : ''}<span>${ann}</span></div>`;
 }
 
 /* ---------- library ---------- */

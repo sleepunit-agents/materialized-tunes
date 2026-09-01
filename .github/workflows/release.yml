@@ -38,7 +38,9 @@ jobs:
           CGO_ENABLED: "0"
         run: |
           set -euo pipefail
-          VERSION="$(git describe --tags --always --dirty)"
+          # --exclude latest: the rolling tag would otherwise dominate describe
+          # and every build would call itself "latest-N-g<sha>".
+          VERSION="$(git describe --tags --always --dirty --exclude latest)"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           VFLAG="-X github.com/sleepunit-agents/materialized-tunes/internal/version.Version=$VERSION -X github.com/sleepunit-agents/materialized-tunes/internal/version.Commit=$GITHUB_SHA"
           mkdir -p dist
