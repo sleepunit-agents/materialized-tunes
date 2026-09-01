@@ -70,6 +70,16 @@ func betterCut(a, b Entry) bool {
 // another container is still the same recording). Two different files that
 // merely land on one output path share neither, and stay a collision.
 //
+// The judgment is per coordinate, never over the whole output-path group:
+// pickCuts partitions the group by cutRel first and asks about each
+// partition alone. One stranger on the path — a Step-Kit wav that re-files
+// the same hit under a kit folder, or a second sample carrying the same
+// name in another folder of every tree (Thump's artificial/ and layered/
+// kick_thick) — used to poison the entire group, so three perfectly
+// parallel cuts fell through to the collision check while the stranger
+// slipped away behind a disambiguation prefix (Jonathan's Greystate claps,
+// 2026-09-01).
+//
 // Length is deliberately not part of the proof. It used to be, for cut
 // vendors — one render delivered at several bit depths is the same length
 // in every tree — but Polyend's Thump ships its three trees as three
@@ -129,29 +139,73 @@ func (p *Plan) pickCuts(caseSensitive bool) {
 	var example string
 	for _, k := range order {
 		idx := byOut[k]
-		if len(idx) < 2 || !isCutSet(p.Entries, idx) {
+		if len(idx) < 2 {
 			continue
 		}
-		sets++
-		best := idx[0]
-		for _, i := range idx[1:] {
-			if betterCut(p.Entries[i], p.Entries[best]) {
-				best = i
-			}
-			if d := p.Entries[i].DurationS - p.Entries[idx[0]].DurationS; d > 1e-3 || d < -1e-3 {
-				trimmed++
-			}
-		}
-		kept[p.Entries[best].tree]++
+		// One output path can carry several samples (same name, different
+		// folders) plus strays: judge each coordinate on its own.
+		parts := map[string][]int{}
+		var porder []string
 		for _, i := range idx {
-			if i != best {
-				drop[i] = true
-				dropped[p.Entries[i].tree]++
+			r := cutRel(p.Entries[i])
+			if _, seen := parts[r]; !seen {
+				porder = append(porder, r)
+			}
+			parts[r] = append(parts[r], i)
+		}
+		var cutSets [][]int
+		var loose []int
+		for _, r := range porder {
+			pi := parts[r]
+			if len(pi) >= 2 && isCutSet(p.Entries, pi) {
+				cutSets = append(cutSets, pi)
+			} else {
+				loose = append(loose, pi...)
 			}
 		}
-		p.CutsDropped += len(idx) - 1
-		if example == "" {
-			example = fmt.Sprintf("%s kept from %q", p.Entries[best].OutPath, p.Entries[best].tree)
+		// A loose member byte-identical to a set member is the same render
+		// the vendor re-filed (a kit folder holding the pack's own hits):
+		// it joins that set as one more redundant cut — never the keep,
+		// the tree cut it duplicates already delivers the same bytes.
+		for _, i := range loose {
+			for _, set := range cutSets {
+				match := false
+				for _, j := range set {
+					if p.Entries[j].SHA256 == p.Entries[i].SHA256 {
+						match = true
+						break
+					}
+				}
+				if match {
+					drop[i] = true
+					dropped[p.Entries[i].tree]++
+					p.CutsDropped++
+					break
+				}
+			}
+		}
+		for _, set := range cutSets {
+			sets++
+			best := set[0]
+			for _, i := range set[1:] {
+				if betterCut(p.Entries[i], p.Entries[best]) {
+					best = i
+				}
+				if d := p.Entries[i].DurationS - p.Entries[set[0]].DurationS; d > 1e-3 || d < -1e-3 {
+					trimmed++
+				}
+			}
+			kept[p.Entries[best].tree]++
+			for _, i := range set {
+				if i != best {
+					drop[i] = true
+					dropped[p.Entries[i].tree]++
+				}
+			}
+			p.CutsDropped += len(set) - 1
+			if example == "" {
+				example = fmt.Sprintf("%s kept from %q", p.Entries[best].OutPath, p.Entries[best].tree)
+			}
 		}
 	}
 	if len(drop) > 0 {
