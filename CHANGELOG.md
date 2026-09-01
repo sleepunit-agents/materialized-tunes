@@ -7,6 +7,23 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.19 — 2026-09-01 (the local layer does not become a shadow)
+
+SPEC §19.6 step 5. A local entry the checkout now says itself is a
+shadow: remove it and nothing moves, keep it and the layer drifts into a
+second source of truth. `correct.Reconcile` judges every entry by taking
+it away in memory — the checkout overlaid with the layer minus that one
+entry — and re-harvesting only the files it covers; changed = 0 is
+redundant, and an entry with no cataloged file under it is unmatched.
+`correct.Drop` rewrites the pack file without it, deletes the file when
+nothing but a borrowed identity is left, and logs the drop. On the Plan
+step the layer's listing gets *check against the checkout*, per-entry
+verdicts (redundant / still needed — N of M would move / no files under
+it) and *drop*; a sync that changes the checkout says how many local
+entries it just made redundant. On the probe, two of four seeded entries
+came back redundant for the right reason: upstream already carries the
+Drumtrax "Bass" block and the Rhythm Lab break pins.
+
 ## v0.9.18 — 2026-09-01 (the plan is the review surface)
 
 SPEC §19.6 step 4: seeing before doing, and correcting what you saw.

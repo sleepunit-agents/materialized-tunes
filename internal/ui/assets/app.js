@@ -25,7 +25,7 @@ const S = {
   discover: false, obtainable: true, disc: null, discBusy: false,
   view: null,                      // selected recipe name
   pf: null, pfBusy: false, pfProgress: null, disabled: new Set(),
-  pl: { tab: 'queues', kind: '', q: null, busy: false, sel: null, files: null, file: null, tree: null, prefix: '', lex: null, form: null, radius: null, msg: '', local: null },
+  pl: { tab: 'queues', kind: '', q: null, busy: false, sel: null, files: null, file: null, tree: null, prefix: '', lex: null, form: null, radius: null, msg: '', local: null, rec: null, recBusy: false },
   rOpen: new Set(), rFilter: '', rModel: null,  // Recipe screen: expanded vendor rows, filter, the group model clicks act on
   run: { status: 'idle' }, runLog: ['[idle] no run started this session'],
   selCard: 0, locks: [], diff: null, diffBusy: false,
@@ -894,7 +894,7 @@ async function updateAnnotations() {
   S.annBusy = false;
   if (r && !r.error) {
     S.ann = r;
-    S.annMsg = r.action === 'updated' ? (r.note || 'updated') + (r.reharvested ? ' — classifications refreshed' : '')
+    S.annMsg = r.action === 'updated' ? (r.note || 'updated') + (r.reharvested ? ' — classifications refreshed' : '') + (r.redundant_local ? ` — ${r.redundant_local} of your local corrections are now in the repo; reconcile them on the Plan step` : '')
       : r.action === 'cloned' ? 'annotations fetched' + (r.reharvested ? ' — classifications refreshed' : '')
       : r.action === 'current' ? 'already up to date'
       : (r.note || 'could not update');
@@ -1601,6 +1601,47 @@ async function planReport() {
   S.pl.msg = 'reported — logged to annotations.local/corrections.jsonl with what the app resolved and why'; render();
 }
 
+async function planReconcile() {
+  const pl = S.pl;
+  pl.recBusy = true; pl.rec = null; render();
+  pl.rec = await api('/api/local/reconcile');
+  pl.recBusy = false; render();
+}
+
+async function planDrop(entries) {
+  const pl = S.pl;
+  if (!entries.length) return;
+  pl.recBusy = true; render();
+  const r = await api('/api/local/drop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ entries, reason: 'upstream agrees' }) });
+  pl.recBusy = false;
+  pl.msg = r.error ? r.error : `dropped ${r.dropped} — the checkout says the same now`;
+  pl.local = await api('/api/local');
+  await planReconcile();
+}
+
+function renderReconcile() {
+  const pl = S.pl;
+  if (!pl.local || !pl.local.entries || !pl.local.entries.length) return '';
+  const rec = pl.rec;
+  const head = `<div style="display:flex;align-items:center;gap:8px;margin-top:6px">
+      <span style="font:600 10px var(--sans);color:var(--fg-faint);letter-spacing:.05em;text-transform:uppercase">reconcile</span>
+      <span class="pl-btn" data-act="pl-reconcile">${pl.recBusy ? 'checking…' : 'check against the checkout'}</span>
+      ${rec && rec.redundant ? `<span class="pl-btn go" data-act="pl-drop-all">drop ${rec.redundant} redundant</span>` : ''}
+    </div>`;
+  if (!rec) return head + `<div style="font:400 10.5px var(--sans);color:var(--fg-faint)">an entry the repo now says itself is a shadow — remove it and nothing moves. This finds those.</div>`;
+  const rows = (rec.verdicts || []).map((v, i) => {
+    const what = v.kind === 'dir' ? esc(v.entry.path || '') : 'word ' + esc((v.entry.aliases || []).join(', '));
+    const state = v.unmatched ? '<span style="color:var(--fg-faint)">no files under it</span>'
+      : v.redundant ? `<span style="color:var(--green)">redundant — ${n(v.covered)} files, nothing moves</span>`
+      : `<span style="color:var(--amber)">still needed — ${n(v.changed)} of ${n(v.covered)} would move</span>`;
+    return `<div style="display:flex;gap:8px;align-items:center;font:400 10.5px var(--mono);color:var(--fg-dim)">
+        <span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(v.vendor)}/${esc(v.pack)} · ${what}</span>${state}
+        ${v.redundant || v.unmatched ? `<span class="pl-btn" style="padding:2px 7px" data-act="pl-drop" data-i="${i}">drop</span>` : ''}
+      </div>`;
+  }).join('');
+  return head + rows;
+}
+
 function instrumentOptions(lex, current) {
   if (!lex) return '';
   const fams = {};
@@ -1729,7 +1770,8 @@ function renderPlan() {
       ${pl.msg ? `<div style="font:500 11px var(--mono);color:var(--green)">${esc(pl.msg)}</div>` : ''}
       ${pl.local && pl.local.entries && pl.local.entries.length ? `<div style="font:600 10px var(--sans);color:var(--fg-faint);letter-spacing:.05em;text-transform:uppercase;margin-top:6px">your local layer</div>
         ${pl.local.entries.slice(0, 12).map(e => `<div style="font:400 10.5px var(--mono);color:var(--fg-dim)">${esc(e.vendor)}/${esc(e.pack)} · ${e.kind === 'dir' ? esc(e.entry.path || '') : 'word ' + esc((e.entry.aliases || []).join(', '))} → ${esc(e.entry.category || e.entry.default_category || e.entry.instrument || e.entry.default_instrument || e.entry.role || e.entry.id || '')}${e.entry.local ? ' <span style="color:var(--fg-faint)">(local only)</span>' : ''}</div>`).join('')}
-        <div style="font:400 10.5px var(--sans);color:var(--fg-faint)">${esc(pl.local.dir)}</div>` : ''}`;
+        <div style="font:400 10.5px var(--sans);color:var(--fg-faint)">${esc(pl.local.dir)}</div>
+        ${renderReconcile()}` : ''}`;
   }
   return `<div class="pl-wrap">${head ? `<div class="pl-list">${head}${list}</div>` : ''}<div class="pl-panel">${panel}</div></div>`;
 }
@@ -1931,6 +1973,9 @@ function wire() {
       if (act === 'pl-ack') { planAck(); }
       if (act === 'pl-report') { planReport(); }
       if (act === 'pl-export') { window.open('/api/local/export', '_blank'); }
+      if (act === 'pl-reconcile') { planReconcile(); }
+      if (act === 'pl-drop') { const v = S.pl.rec.verdicts[+el.dataset.i]; planDrop([{ file: v.file, vendor: v.vendor, pack: v.pack, kind: v.kind, entry: v.entry }]); }
+      if (act === 'pl-drop-all') { planDrop(S.pl.rec.verdicts.filter(v => v.redundant).map(v => ({ file: v.file, vendor: v.vendor, pack: v.pack, kind: v.kind, entry: v.entry }))); }
       if (act === 'go-migrate') { if (!el.classList.contains('blocked')) { S.screen = 'run'; startMigrate(); } }
       if (act === 'start-run') startRun();
       if (act === 'pick-card') { S.selCard = +el.dataset.i; loadCards(); }

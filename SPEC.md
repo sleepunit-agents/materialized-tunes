@@ -1532,8 +1532,15 @@ every caller reads `ws.AnnotationRoots()` = checkout then
 `<workspace>/annotations.local/`. `default_category` / `default_instrument`
 are the last tier per facet (after the multisample shape; Source tier
 `dir-default`); `observed` / `note` / `local` are parsed and carried.
-Schema + lint L7 landed in sample-vendor-annotations the same day. Not
-yet: anything that *writes* the local layer (§19.6 step 4).
+Schema + lint L7 landed in sample-vendor-annotations the same day.
+Writing the layer is v0.9.18 (§19.3). *Reconciliation shipped 2026-09-01
+(v0.9.19):* `GET /api/local/reconcile` judges every local entry by
+taking it away in memory (`annotations.Overlay` of the checkout with the
+layer minus that entry) and re-harvesting the files it covers — nothing
+moves means redundant; `POST /api/local/drop` removes the ones the user
+lets go and logs the drop. The Plan step offers it under the layer's
+listing; a sync that changes the checkout reports how many entries it
+made redundant.
 
 ### 19.6 Order of work (when Jonathan says go)
 
@@ -1548,6 +1555,6 @@ yet: anything that *writes* the local layer (§19.6 step 4).
    `[[instrument]]` entries to `annotations.local/` with blast-radius
    preview, ack list, corrections log, export zip~~ — shipped 2026-09-01
    (v0.9.18, `internal/correct`).
-5. Reconciliation after sync.
+5. ~~Reconciliation after sync~~ — shipped 2026-09-01 (v0.9.19).
 6. The Library → Recipe → Plan → Materialize re-cut of the UI (§19.1) —
    last, because it touches the most and unblocks the least.

@@ -38,6 +38,7 @@ func (s *Server) annotationsEndpoint(w http.ResponseWriter, r *http.Request) {
 		Action      string            `json:"action,omitempty"`
 		Note        string            `json:"note,omitempty"`
 		Reharvested bool              `json:"reharvested,omitempty"`
+		Redundant   int               `json:"redundant_local,omitempty"` // local entries the new checkout made shadows (SPEC §19.5)
 	}
 	out := resp{Version: version.Version}
 	if r.Method == http.MethodPost {
@@ -46,6 +47,7 @@ func (s *Server) annotationsEndpoint(w http.ResponseWriter, r *http.Request) {
 		if res.Changed() {
 			s.reharvestAll()
 			out.Reharvested = true
+			out.Redundant = s.redundantLocal()
 		}
 	}
 	out.Head = annotations.CheckoutHead(r.Context(), s.ws.Root)

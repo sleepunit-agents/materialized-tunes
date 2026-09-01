@@ -214,3 +214,68 @@ func TestPreviewAndApply(t *testing.T) {
 		t.Error("the log rides with the diff")
 	}
 }
+
+// After a sync the checkout may say what a local entry says; then the
+// entry is a shadow and reconciliation offers to drop it. An entry the
+// checkout still disagrees with is kept, and says how many files it holds.
+func TestReconcile(t *testing.T) {
+	ws, lc, cat := fixture(t)
+	vendors, _ := annotations.Load(ws.AnnotationRoots()...)
+	current := harvest.LoadMeta(ws, "src")
+	src := Sources{
+		Catalog: func(string) (map[string]catalog.Entry, error) { return cat, nil },
+		Meta:    func(string) map[string]harvest.Meta { return harvest.LoadMeta(ws, "src") },
+	}
+	// two local assertions: Fills are loops; Bass means kick in this pack
+	for _, c := range []Correction{
+		{Location: "src", Path: "Samples From Mars/Drumtrax From Mars/WAV/Fills", Facet: "category", Value: "loops"},
+		{Location: "src", Path: "Samples From Mars/Drumtrax From Mars", Facet: "alias", Word: "bass", Value: "kick"},
+	} {
+		if _, err := Apply(ws, lc, cat, current, vendors, c, Provenance{}); err != nil {
+			t.Fatal(err)
+		}
+		vendors, _ = annotations.Load(ws.AnnotationRoots()...)
+		current = harvest.LoadMeta(ws, "src")
+	}
+	vs, err := Reconcile(ws, src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vs) != 2 || vs[0].Redundant || vs[1].Redundant || vs[0].Changed != 1 || vs[1].Changed != 2 {
+		t.Fatalf("both still needed: %+v", vs)
+	}
+	// upstream catches up on the fills: the checkout's pack file now pins them
+	os.WriteFile(filepath.Join(ws.Root, "annotations", "vendors", "sfm", "packs", "dt.toml"),
+		[]byte("[pack]\nname=\"Drumtrax From Mars\"\nslug=\"drumtrax-from-mars\"\ndir=\"Drumtrax From Mars\"\n[[dir]]\npath=\"WAV/Fills\"\ncategory=\"loops\"\n"), 0o644)
+	vs, _ = Reconcile(ws, src)
+	var fills, alias *Verdict
+	for i := range vs {
+		if vs[i].Kind == "dir" {
+			fills = &vs[i]
+		} else {
+			alias = &vs[i]
+		}
+	}
+	if fills == nil || !fills.Redundant || fills.Covered != 2 || fills.Location != "src" || fills.Prefix != "Samples From Mars/Drumtrax From Mars/WAV/Fills" {
+		t.Errorf("fills entry must be redundant now: %+v", fills)
+	}
+	if alias == nil || alias.Redundant || alias.Changed != 2 {
+		t.Errorf("alias still needed: %+v", alias)
+	}
+	if err := Drop(ws, fills.LocalEntry, "upstream agrees"); err != nil {
+		t.Fatal(err)
+	}
+	rest, _ := List(ws)
+	if len(rest) != 1 || rest[0].Kind != "instrument" {
+		t.Errorf("drop must leave the alias alone: %+v", rest)
+	}
+	if err := Drop(ws, rest[0], ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(ws.LocalAnnotations(), "vendors", "samples-from-mars", "packs", "drumtrax-from-mars.toml")); !os.IsNotExist(err) {
+		t.Error("an emptied pack file with no identity of its own must go")
+	}
+	if rest, _ = List(ws); len(rest) != 0 {
+		t.Errorf("layer must be empty: %+v", rest)
+	}
+}

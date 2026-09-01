@@ -344,6 +344,9 @@ func (s *Server) local(w http.ResponseWriter, _ *http.Request) {
 		jsonErr(w, 500, err)
 		return
 	}
+	if entries == nil {
+		entries = []correct.LocalEntry{}
+	}
 	jsonOut(w, map[string]any{"entries": entries, "acks": len(correct.Acks(s.ws)), "dir": s.ws.LocalAnnotations()})
 }
 
@@ -356,4 +359,68 @@ func (s *Server) localExport(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", `attachment; filename="annotations.local.zip"`)
 	w.Write(b)
+}
+
+// reconcile judges every local entry against the checkout (SPEC §19.5):
+// an entry the checkout now agrees with is a shadow, offered for dropping.
+func (s *Server) reconcile(w http.ResponseWriter, _ *http.Request) {
+	s.mu.Lock()
+	in := s.freshInputs()
+	s.mu.Unlock()
+	vs, err := correct.Reconcile(s.ws, correct.Sources{Catalog: in.Catalog, Meta: in.Meta})
+	if err != nil {
+		jsonErr(w, 500, err)
+		return
+	}
+	if vs == nil {
+		vs = []correct.Verdict{}
+	}
+	redundant := 0
+	for _, v := range vs {
+		if v.Redundant {
+			redundant++
+		}
+	}
+	jsonOut(w, map[string]any{"verdicts": vs, "redundant": redundant})
+}
+
+// drop removes local entries the user let go.
+func (s *Server) drop(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Entries []correct.LocalEntry `json:"entries"`
+		Reason  string               `json:"reason"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonErr(w, 400, err)
+		return
+	}
+	dropped := 0
+	for _, e := range req.Entries {
+		if err := correct.Drop(s.ws, e, req.Reason); err != nil {
+			jsonErr(w, 400, fmt.Errorf("%s: %w", e.File, err))
+			return
+		}
+		dropped++
+	}
+	jsonOut(w, map[string]any{"dropped": dropped})
+}
+
+// redundantLocal counts the local entries a fresh checkout has made
+// shadows — what the sync response carries so the user hears about it
+// where the sync happened.
+func (s *Server) redundantLocal() int {
+	s.mu.Lock()
+	in := s.freshInputs()
+	s.mu.Unlock()
+	vs, err := correct.Reconcile(s.ws, correct.Sources{Catalog: in.Catalog, Meta: in.Meta})
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, v := range vs {
+		if v.Redundant {
+			n++
+		}
+	}
+	return n
 }
