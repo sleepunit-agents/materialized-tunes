@@ -26,6 +26,7 @@ import (
 
 	"github.com/bmatcuk/doublestar/v4"
 
+	"github.com/sleepunit-agents/materialized-tunes/internal/ableton"
 	"github.com/sleepunit-agents/materialized-tunes/internal/annotations"
 	"github.com/sleepunit-agents/materialized-tunes/internal/catalog"
 	"github.com/sleepunit-agents/materialized-tunes/internal/workspace"
@@ -113,23 +114,27 @@ type harvester struct {
 	lex        *annotations.Lexicon
 	cats       *annotations.CategoryLexicon
 	msDirs     map[string]bool
+	// docs is the document tier's index: audio path → the Live documents
+	// (catalog paths, sorted) whose refs resolve to it. See documentIndex.
+	docs map[string][]string
 }
 
 // newHarvester loads the annotations and sizes up the directories the
 // given audio paths live in. paths must include every audio sibling of
 // any path later handed to one: the multisample tier reads the shape of
-// the whole directory.
-func newHarvester(ws *workspace.Workspace, lc workspace.LocationConfig, paths []string) (*harvester, error) {
+// the whole directory. entries is the location's whole catalog: the
+// document tier resolves every Live document's refs against it.
+func newHarvester(ws *workspace.Workspace, lc workspace.LocationConfig, paths []string, entries map[string]catalog.Entry) (*harvester, error) {
 	vendors, err := annotations.Load(ws.AnnotationRoots()...)
 	if err != nil {
 		return nil, err
 	}
-	return newHarvesterWith(ws, lc, paths, vendors), nil
+	return newHarvesterWith(ws, lc, paths, entries, vendors), nil
 }
 
 // newHarvesterWith is newHarvester over annotations the caller already
 // holds — or has altered in memory to see what would change.
-func newHarvesterWith(ws *workspace.Workspace, lc workspace.LocationConfig, paths []string, vendors []annotations.Vendor) *harvester {
+func newHarvesterWith(ws *workspace.Workspace, lc workspace.LocationConfig, paths []string, entries map[string]catalog.Entry, vendors []annotations.Vendor) *harvester {
 	return &harvester{
 		fixed:      annotations.BySlug(vendors)[lc.Vendor],
 		vendors:    vendors,
@@ -138,20 +143,66 @@ func newHarvesterWith(ws *workspace.Workspace, lc workspace.LocationConfig, path
 		lex:        annotations.LoadInstruments(filepath.Join(ws.Root, "annotations")),
 		cats:       annotations.LoadCategories(filepath.Join(ws.Root, "annotations")),
 		msDirs:     multisampleDirs(paths),
+		docs:       documentIndex(entries),
 	}
 }
 
-// one harvests a single catalog path. ok is false when the path is too
-// shallow to sit inside a pack under the location's layout — there is
-// nothing to say about it.
-func (h *harvester) one(p string, e catalog.Entry) (m Meta, ok bool) {
+// documentIndex inverts the catalog's Live documents: for every audio
+// path, the documents whose refs resolve to it (ableton.Resolver, the
+// same order plan and materialize use). The document tier reads it — a
+// rack the vendor filed under Presets/Leads/ is the vendor saying what
+// the samples it points at are. Lists come out sorted so the tier's
+// first-wins / conflict verdicts pin.
+func documentIndex(entries map[string]catalog.Entry) map[string][]string {
+	var docs, audio []string
+	for p, e := range entries {
+		switch {
+		case e.Audio != nil:
+			audio = append(audio, p)
+		case e.Doc != nil && len(e.Doc.Refs) > 0:
+			docs = append(docs, p)
+		}
+	}
+	if len(docs) == 0 {
+		return nil
+	}
+	sort.Strings(audio)
+	sort.Strings(docs)
+	rs := ableton.NewResolver(audio)
+	idx := map[string][]string{}
+	for _, d := range docs {
+		seen := map[string]bool{}
+		for _, r := range entries[d].Doc.Refs {
+			src, ok := rs.Resolve(d, r)
+			if !ok || seen[src] {
+				continue
+			}
+			seen[src] = true
+			idx[src] = append(idx[src], d)
+		}
+	}
+	return idx
+}
+
+// site is where a catalog path sits under the location's layout: the
+// vendor and pack it belongs to, the pack's directory name, and the path
+// inside the pack (last element = the filename).
+type site struct {
+	vendor  *annotations.Vendor
+	pack    *annotations.Pack
+	packDir string
+	inPack  []string
+}
+
+// locate resolves a catalog path to its site. ok is false when the path
+// is too shallow to sit inside a pack under the layout.
+func (h *harvester) locate(p string) (s site, ok bool) {
 	segs := strings.Split(p, "/")
-	// vendor + pack for this path
-	vendor := h.fixed
+	s.vendor = h.fixed
 	packIdx := 0
 	if h.vendorDirs {
 		if len(segs) < 3 {
-			return Meta{}, false
+			return s, false
 		}
 		packIdx = 1
 		v, seen := h.byTop[segs[0]]
@@ -159,15 +210,29 @@ func (h *harvester) one(p string, e catalog.Entry) (m Meta, ok bool) {
 			v = annotations.ByName(h.vendors, segs[0])
 			h.byTop[segs[0]] = v
 		}
-		vendor = v
+		s.vendor = v
 	} else if len(segs) < 2 {
+		return s, false
+	}
+	if s.vendor != nil {
+		s.pack = s.vendor.PackByDir(segs[packIdx])
+	}
+	s.packDir = segs[packIdx]
+	s.inPack = segs[packIdx+1:]
+	return s, true
+}
+
+// one harvests a single catalog path. ok is false when the path is too
+// shallow to sit inside a pack under the location's layout — there is
+// nothing to say about it.
+func (h *harvester) one(p string, e catalog.Entry) (m Meta, ok bool) {
+	s, ok := h.locate(p)
+	if !ok {
 		return Meta{}, false
 	}
-	var pack *annotations.Pack
-	if vendor != nil {
-		pack = vendor.PackByDir(segs[packIdx])
-	}
-	inPack := segs[packIdx+1:] // path within the pack, last = filename
+	vendor, pack, inPack := s.vendor, s.pack, s.inPack
+	segs := strings.Split(p, "/")
+	packIdx := len(segs) - len(inPack) - 1
 	m = Meta{Path: p, SHA: e.SHA256}
 	base := strings.TrimSuffix(inPack[len(inPack)-1], filepath.Ext(inPack[len(inPack)-1]))
 	dirs := inPack[:len(inPack)-1]
@@ -186,6 +251,28 @@ func (h *harvester) one(p string, e catalog.Entry) (m Meta, ok bool) {
 		// vendor annotation said nothing (or there is none) — the shared
 		// lexicon reads the same folder/filename grammar cross-vendor
 		m.Category, catSrc = h.cats.ResolveSrc(base, labels)
+	}
+	// overrides, most local first: the pack's own [[instrument]] blocks
+	// (Drumtrax's "Bass" is its kick), then the vendor's (SFM's "CH"),
+	// then the shared lexicon inside Resolve
+	var overrides []annotations.Instrument
+	if pack != nil {
+		overrides = append(overrides, pack.Instruments...)
+	}
+	if vendor != nil {
+		overrides = append(overrides, vendor.Instruments...)
+	}
+	var docConflict annotations.Source
+	if m.Category == "" && len(h.docs[p]) > 0 {
+		// nothing on the file's own path said; a Live document the vendor
+		// filed under a labelled folder (Presets/Kits/) and pointed at
+		// this file is the vendor's word about it, one step removed
+		v := h.docCategory(p)
+		if v.conflict {
+			docConflict = v.src
+		} else if v.value != "" {
+			m.Category, catSrc = v.value, v.src
+		}
 	}
 	if m.Category == "" && len(echoes) > 0 {
 		// nothing on the path said; the pack's own name may ("Silk
@@ -208,17 +295,12 @@ func (h *harvester) one(p string, e catalog.Entry) (m Meta, ok bool) {
 		// fills the silence (a default, not a pin — SPEC §19.5)
 		m.Category, catSrc = defaults.category, defaults.categorySrc
 	}
+	if m.Category == "" && docConflict.Tier != "" {
+		// still nothing: say that the documents disagreed, so the
+		// silence has a reason on the Plan step
+		catSrc = docConflict
+	}
 	m.explain("category", catSrc)
-	// overrides, most local first: the pack's own [[instrument]] blocks
-	// (Drumtrax's "Bass" is its kick), then the vendor's (SFM's "CH"),
-	// then the shared lexicon inside Resolve
-	var overrides []annotations.Instrument
-	if pack != nil {
-		overrides = append(overrides, pack.Instruments...)
-	}
-	if vendor != nil {
-		overrides = append(overrides, vendor.Instruments...)
-	}
 	var instSrc annotations.Source
 	if pinned != "" {
 		// the pack's [[dir]] map pinned the instrument — curated truth
@@ -230,6 +312,17 @@ func (h *harvester) one(p string, e catalog.Entry) (m Meta, ok bool) {
 		// different one (break = loops) is a title on this file, not
 		// a label — a kit called "Beat" holds kicks, not breaks
 		m.Instrument, m.Family, instSrc = h.lex.ResolveInSrc(m.Category, base, labels, overrides)
+		var docConflict annotations.Source
+		if m.Instrument == "" && m.Family == "" && len(h.docs[p]) > 0 {
+			// the file's own path named nothing, not even a family; the
+			// folder of a document that points at it may (Presets/Leads/)
+			v := h.docInstrument(p, m.Category, overrides)
+			if v.conflict {
+				docConflict = v.src
+			} else if v.value != "" {
+				m.Instrument, m.Family, instSrc = v.value, v.family, v.src
+			}
+		}
 		if m.Instrument == "" && len(echoes) > 0 {
 			m.Instrument, m.Family, instSrc = h.lex.ResolveInSrc(m.Category, "", echoes, overrides)
 			instSrc.Echo = true
@@ -237,6 +330,9 @@ func (h *harvester) one(p string, e catalog.Entry) (m Meta, ok bool) {
 		if m.Instrument == "" && defaults.instrument != "" {
 			m.Instrument, m.Family = defaults.instrument, h.lex.FamilyOf(defaults.instrument, overrides)
 			instSrc = defaults.instrumentSrc
+		}
+		if m.Instrument == "" && m.Family == "" && docConflict.Tier != "" {
+			instSrc = docConflict
 		}
 	}
 	m.explain("instrument", instSrc)
@@ -256,7 +352,7 @@ func Run(ws *workspace.Workspace, lc workspace.LocationConfig) (*Result, error) 
 		}
 	}
 	sort.Strings(paths)
-	h, err := newHarvester(ws, lc, paths)
+	h, err := newHarvester(ws, lc, paths, entries)
 	if err != nil {
 		return nil, err
 	}
@@ -380,7 +476,7 @@ func (x *Explainer) Explain(p string) (Meta, error) {
 			siblings = append(siblings, q)
 		}
 	}
-	h, err := newHarvester(x.ws, x.lc, siblings)
+	h, err := newHarvester(x.ws, x.lc, siblings, x.entries)
 	if err != nil {
 		return Meta{}, err
 	}
@@ -431,7 +527,7 @@ func ExplainPrefix(ws *workspace.Workspace, lc workspace.LocationConfig, entries
 			scope = append(scope, p)
 		}
 	}
-	h := newHarvesterWith(ws, lc, scope, vendors)
+	h := newHarvesterWith(ws, lc, scope, entries, vendors)
 	out := make(map[string]Meta, len(paths))
 	for _, p := range paths {
 		if m, ok := h.one(p, entries[p]); ok {
@@ -491,6 +587,99 @@ const MetaFormat = metaFormat
 func MetaFresh(ws *workspace.Workspace) bool {
 	b, err := os.ReadFile(filepath.Join(ws.Root, "annotations-cache", "meta", ".format"))
 	return err == nil && strings.TrimSpace(string(b)) == metaFormat
+}
+
+// docVote is what the Live documents referencing one file agree on for
+// a facet: the value (and family, for instruments), its source, or the
+// fact that they contradicted each other — in which case nothing spoke
+// and src says why.
+type docVote struct {
+	value, family string
+	src           annotations.Source
+	conflict      bool
+}
+
+func (v *docVote) consider(value, family string, inner annotations.Source, doc string) {
+	if v.conflict {
+		return
+	}
+	src := annotations.Source{Tier: annotations.TierDocument, Segment: inner.Segment, Word: inner.Word, Doc: doc}
+	if v.value == "" {
+		v.value, v.family, v.src = value, family, src
+		return
+	}
+	if value != v.value || family != v.family {
+		v.conflict = true
+		v.src = annotations.Source{Tier: annotations.TierDocumentConflict,
+			Segment: path.Base(v.src.Doc) + ": " + v.value + " ≠ " + path.Base(doc) + ": " + value}
+		v.value, v.family = "", ""
+	}
+}
+
+// docLabels is what a Live document's own folders say, read the way a
+// sample's are: the format tree it lives under ("Ableton Live") names a
+// format and is dropped, pack-name echoes are set aside. dirs is the
+// full in-pack directory path ([[dir]] pins address it).
+func (h *harvester) docLabels(docPath string) (dirs, labels []string, s site, ok bool) {
+	s, ok = h.locate(docPath)
+	if !ok || len(s.inPack) < 2 {
+		return nil, nil, s, false
+	}
+	dirs = s.inPack[:len(s.inPack)-1]
+	read := dirs
+	if s.vendor != nil && s.vendor.IsFormatTree(s.pack, dirs[0]) {
+		read = dirs[1:]
+	}
+	labels, _ = labelDirs(read, s.packDir, s.pack)
+	return dirs, labels, s, true
+}
+
+// docCategory is the document tier for the category facet: each
+// document referencing p is read through the same pack / vendor /
+// lexicon rules a sample's folders get; the documents must agree.
+func (h *harvester) docCategory(p string) docVote {
+	var v docVote
+	for _, d := range h.docs[p] {
+		dirs, labels, s, ok := h.docLabels(d)
+		if !ok {
+			continue
+		}
+		c, _, _, src, _, _ := harvestCategory(dirs, labels, s.vendor, s.pack, s.packDir)
+		if c == "" {
+			c, src = h.cats.ResolveSrc("", labels)
+		}
+		if c == "" {
+			continue
+		}
+		v.consider(c, "", src, d)
+	}
+	return v
+}
+
+// docInstrument is the document tier for the instrument facet. category
+// is the file's category as known by now, so a word whose category
+// disagrees demotes the same way it would on the file's own path.
+func (h *harvester) docInstrument(p, category string, overrides []annotations.Instrument) docVote {
+	var v docVote
+	for _, d := range h.docs[p] {
+		dirs, labels, s, ok := h.docLabels(d)
+		if !ok {
+			continue
+		}
+		_, _, pinned, _, pinSrc, _ := harvestCategory(dirs, labels, s.vendor, s.pack, s.packDir)
+		var inst, fam string
+		var src annotations.Source
+		if pinned != "" {
+			inst, fam, src = pinned, h.lex.FamilyOf(pinned, overrides), pinSrc
+		} else {
+			inst, fam, src = h.lex.ResolveInSrc(category, "", labels, overrides)
+		}
+		if inst == "" && fam == "" {
+			continue
+		}
+		v.consider(inst, fam, src, d)
+	}
+	return v
 }
 
 // multisampleDirs finds the one structural signature vendors never

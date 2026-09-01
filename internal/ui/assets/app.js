@@ -1516,7 +1516,8 @@ const KIND_ASK = {
 };
 const TIER_LABEL = {
   'dir': 'pack [[dir]]', 'dir-default': 'pack [[dir]] default', 'dedicated-pack': 'vendor dedicated_packs', 'vendor-category': 'vendor [[category]]',
-  'categories': 'categories.toml', 'multisample': 'multisample shape of the directory', 'pack-instrument': 'pack [[instrument]]',
+  'categories': 'categories.toml', 'document': 'folder of a Live document referencing the file', 'document-conflict': 'Live documents referencing the file disagree',
+  'multisample': 'multisample shape of the directory', 'pack-instrument': 'pack [[instrument]]',
   'vendor-instrument': 'vendor [[instrument]]', 'override': 'override', 'compound': 'compound segment → family catch-all', 'lexicon': 'instruments.toml',
   'pack-code': 'pack [[instrument]] code', 'vendor-code': 'vendor [[instrument]] code', 'override-code': 'override code', 'lexicon-code': 'instruments.toml code',
   'demoted': 'word demoted (its category disagrees) → family catch-all',
@@ -1526,6 +1527,7 @@ function whySrc(src) {
   let out = `<span class="t">${esc(TIER_LABEL[src.tier] || src.tier)}</span>`;
   if (src.word) out += ` "${esc(src.word)}"`;
   if (src.segment) out += ` <span class="t">on</span> "${esc(src.segment)}"${src.echo ? ' <span class="t">(pack-name echo)</span>' : ''}`;
+  if (src.doc) out += ` <span class="t">in</span> "${esc(src.doc)}"`;
   return out;
 }
 function whyPanel(f) {

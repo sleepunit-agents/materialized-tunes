@@ -18,17 +18,23 @@ type Source struct {
 	// Echo marks a segment that only restates the pack's name, consulted
 	// after every real label stayed silent (see harvest.labelDirs).
 	Echo bool `json:"echo,omitempty"`
+	// Doc is set on the document tier: the Live document whose folder
+	// spoke for this file (catalog path). Segment and Word are the
+	// document's folder and the alias that matched inside it.
+	Doc string `json:"doc,omitempty"`
 }
 
 // Tiers, in the order harvest consults them for each facet.
 const (
 	// Category tiers.
-	TierDir            = "dir"             // a pack [[dir]] entry (Word = its path); also the instrument pin tier
-	TierDedicatedPack  = "dedicated-pack"  // vendor [[category]] dedicated_packs glob over the pack dir
-	TierVendorCategory = "vendor-category" // vendor [[category]] match glob over a directory name
-	TierCategories     = "categories"      // shared categories.toml alias
-	TierMultisample    = "multisample"     // no word anywhere; the directory has the chromatic multisample shape
-	TierDirDefault     = "dir-default"     // a pack [[dir]] default_category / default_instrument: nothing else spoke
+	TierDir              = "dir"               // a pack [[dir]] entry (Word = its path); also the instrument pin tier
+	TierDedicatedPack    = "dedicated-pack"    // vendor [[category]] dedicated_packs glob over the pack dir
+	TierVendorCategory   = "vendor-category"   // vendor [[category]] match glob over a directory name
+	TierCategories       = "categories"        // shared categories.toml alias
+	TierDocument         = "document"          // nothing on the file's own path spoke; a Live document that references it sits in a labelled folder (Doc = the document)
+	TierDocumentConflict = "document-conflict" // documents referencing the file sit in folders that disagree — none spoke
+	TierMultisample      = "multisample"       // no word anywhere; the directory has the chromatic multisample shape
+	TierDirDefault       = "dir-default"       // a pack [[dir]] default_category / default_instrument: nothing else spoke
 
 	// Instrument tiers. Alias tiers come before code tiers: a code speaks
 	// only for a segment no alias of any instrument claimed.
@@ -54,6 +60,8 @@ func (s Source) Describe() string {
 		TierDedicatedPack:    "vendor dedicated_packs",
 		TierVendorCategory:   "vendor [[category]]",
 		TierCategories:       "categories.toml",
+		TierDocument:         "folder of a Live document referencing the file",
+		TierDocumentConflict: "Live documents referencing the file disagree",
 		TierMultisample:      "multisample shape of the directory",
 		TierDirDefault:       "pack [[dir]] default",
 		TierPackInstrument:   "pack [[instrument]]",
@@ -79,6 +87,9 @@ func (s Source) Describe() string {
 		if s.Echo {
 			out += " (pack-name echo)"
 		}
+	}
+	if s.Doc != "" {
+		out += " in " + quote(s.Doc)
 	}
 	return out
 }

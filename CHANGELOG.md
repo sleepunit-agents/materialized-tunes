@@ -7,6 +7,37 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.24 — 2026-09-01 (a rack's folder labels its samples)
+
+Jonathan, on learning that Samples From Mars files `SuperPulse.adg`
+under `Presets/Leads/`: "that's something we should comb for our thing
+too. if there are directories that give us clear hints like that for
+vendors, we should take them." They do, and the v0.9.23 catalog already
+holds the join: a document's refs. The harvest gains a **document tier**
+— the catalog's Live documents are inverted (sample → the documents
+pointing at it, resolved in the `ableton.Resolver` order), and a
+document's folders are read through the same pack / vendor / lexicon
+rules a sample's get, with the format tree (`Ableton Live/`) dropped as
+a format, not a label. It ranks after every word on the sample's own
+path (a `Bass/` folder on the wav beats a rack folder; pins and local
+corrections beat both) and before pack-name echoes, the multisample
+shape and folder defaults. Documents that disagree about one file say
+nothing, and the *why* names both. `Source` carries `doc`; the Plan
+step's *why* reads `folder of a Live document referencing the file
+"leads" on "Leads" in ".../Presets/Leads/SuperPulse.adg"`.
+
+Measured off the house archive's listing (name-join, so ±): 1,463 of
+SFM's 1,692 racks sit in a role folder; of the ~28k SFM samples with no
+role word anywhere on their own path, ~15.5k get one from a rack —
+leads 4.4k, bass 2.9k, keys & pads 2.8k, FX 2k, pads 0.8k — the synth
+packs (SH5, Wasp, SYS100M, Mini, 2600, DX100, MS10, Voyetra, VP330)
+whose `WAV/` tree is patch names. In this archive SFM is the only vendor
+shipping presets at all; the tier reads Live documents because their
+refs are already parsed. A vendor shipping Kontakt/EXS only would need a
+name join (`SuperPulse.nki` ↔ `WAV/SuperPulse/`) — not built until one
+exists. Vocoder (883 samples) is not in `instruments.toml` yet, so those
+stay silent until the lexicon learns the word.
+
 ## v0.9.23 — 2026-09-01 (a rack lands beside its samples)
 
 Jonathan asked how Ableton handles multisampled instruments and whether

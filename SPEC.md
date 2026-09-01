@@ -198,6 +198,24 @@ grammar-derived, cheap to regenerate, never in a lockfile):
   dirs) is not a label: globs and lexicons read it only when nothing else
   on the path spoke. Runs after every scan and via `catalog harvest`;
   category globs match case-insensitively.
+- **The document tier (shipped 2026-09-01, v0.9.24).** A Live document
+  the vendor filed under a labelled folder is the vendor's word about
+  every sample it references, one step removed: `Presets/Leads/
+  SuperPulse.adg` says the 301 SuperPulse wavs — whose own path is just
+  the patch name — are leads. Harvest inverts the catalog's document
+  refs (the `ableton.Resolver` order plan and materialize use) and reads
+  each document's folders through the same pack / vendor / lexicon rules
+  a sample's get, the format tree it lives under (`Ableton Live/`)
+  dropped as a format, not a label. It speaks only after every word on
+  the sample's **own** path stayed silent (a `Bass/` folder on the wav
+  beats a rack folder; a pack `[[dir]]` pin or a local correction beats
+  both), before pack-name echoes, the multisample shape and folder
+  defaults. Documents that disagree about one file say nothing, and the
+  `why` names both. Off the house archive's listing: 1,463 of SFM's
+  1,692 racks sit in a role folder, and ~15.5k SFM samples with nothing
+  on their own path gain an instrument from one — leads, bass, keys &
+  pads, FX, pads — almost all in the synth packs whose `WAV/` tree is
+  patch names.
 - The **instrument facet** (§11.4) is computed the same way — from what the
   vendor labelled, never from audio analysis.
 
@@ -397,7 +415,11 @@ user_library_prefix = "Samples"   # where the recipe target sits inside the Live
   records. A document none of whose refs the catalog holds falls to
   `_Unsorted/` by its own path and is named in a warning. The ref
   resolution order is one definition, `ableton.Resolver`, shared with
-  materialize.
+  materialize. The vote also runs the other way: the document's own
+  folder is a label on the samples it references (the document tier,
+  §3.2), so a rack under `Presets/Leads/` and its patch-named samples
+  land together under `Synth/Lead/…` rather than both falling to
+  `_Unsorted`.
 - **Materialize** decodes, resolves every reference to a selected source
   and rewrites it to that source's *output* path, re-encodes
   deterministically (no gzip mtime) and hashes it into the lock like any
@@ -1007,7 +1029,9 @@ trust order:
    title, not a label — a kit called "Beat" holds kicks — and it speaks
    only for its family through the catch-all (`Drums/_General`), after
    every lower entry has had its turn. 86% of the house archive and 97%
-   of Splice carry one.
+   of Splice carry one. The folder a vendor files a Live document in
+   counts as a label on every sample the document references, after the
+   sample's own path (the document tier, §3.2).
 2. **Vendor APIs**, pack-level only (§11.3).
 3. **Never** audio analysis, and never asking the user to tag a 160k-file
    library. Unlabelled samples stay unlabelled and simply don't match.

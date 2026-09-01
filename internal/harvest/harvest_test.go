@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/sleepunit-agents/materialized-tunes/internal/ableton"
 	"github.com/sleepunit-agents/materialized-tunes/internal/annotations"
 	"github.com/sleepunit-agents/materialized-tunes/internal/audio"
 	"github.com/sleepunit-agents/materialized-tunes/internal/catalog"
@@ -498,5 +500,114 @@ func TestHarvestDefaultsAndLocalLayer(t *testing.T) {
 	want("Extras/Untitled 3.wav", "", "", "kick", annotations.TierDirDefault)
 	if m := got["Samples From Mars/X/WAV/Hits/Clint Eastwood.wav"]; m.Why.Category.Word != "WAV/Hits" {
 		t.Errorf("the winning entry is the local one at the same path: %+v", m.Why.Category)
+	}
+}
+
+// The document tier: a Live document the vendor filed under a labelled
+// folder speaks for the samples it references — after every word on the
+// sample's own path, before echoes, shape and defaults; documents that
+// disagree say nothing but explain why.
+func TestHarvestDocumentFolderLabelsItsSamples(t *testing.T) {
+	dir := t.TempDir()
+	ws, err := workspace.Init(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws.Config.Locations = []workspace.LocationConfig{{Name: "src", Type: "local", Root: dir, Layout: "vendor-dirs"}}
+	ws.SaveConfig()
+	write := func(rel, body string) {
+		p := filepath.Join(dir, rel)
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		os.WriteFile(p, []byte(body), 0o644)
+	}
+	write("annotations/vendors/sfm/vendor.toml", "[vendor]\nname=\"Samples From Mars\"\nslug=\"samples-from-mars\"\n[formats]\ncanonical_dir=\"WAV\"\nparallel_dirs=[\"Ableton Live*\"]\n")
+	write("annotations/instruments.toml", "[[instrument]]\nid=\"kick\"\nfamily=\"drums\"\naliases=[\"kick\"]\n[[instrument]]\nid=\"lead\"\nfamily=\"synth\"\naliases=[\"lead\",\"leads\"]\n[[instrument]]\nid=\"bass\"\nfamily=\"bass\"\naliases=[\"bass\"]\n")
+	write("annotations/categories.toml", "[[category]]\nid=\"loops\"\naliases=[\"loop\"]\n[[category]]\nid=\"one-shots\"\naliases=[\"hit\",\"kit\",\"kits\"]\n")
+
+	wav := func(p, sha string) catalog.Entry {
+		return catalog.Entry{Path: p, SHA256: sha, Size: 1, ScannedAt: time.Now(),
+			Audio: &audio.Meta{Format: "wav", Channels: 1, SampleRate: 44100, BitDepth: 16, Frames: 10}}
+	}
+	doc := func(p string, names ...string) catalog.Entry {
+		d := &ableton.Doc{}
+		for _, n := range names {
+			d.Refs = append(d.Refs, ableton.Ref{Name: n})
+		}
+		return catalog.Entry{Path: p, SHA256: "d-" + p, Size: 1, ScannedAt: time.Now(), Doc: d}
+	}
+	const ms10 = "Samples From Mars/MS10 From Mars/"
+	const live = ms10 + "Ableton Live/MS10 From Mars/Presets/"
+	cat := map[string]catalog.Entry{}
+	for _, e := range []catalog.Entry{
+		// a multisample whose own path says nothing but the patch name
+		wav(ms10+"WAV/SuperPulse/12 SuperPulse MS10 C0.wav", "p1"),
+		wav(ms10+"WAV/SuperPulse/12 SuperPulse MS10 C#0.wav", "p2"),
+		wav(ms10+"WAV/SuperPulse/12 SuperPulse MS10 D0.wav", "p3"),
+		wav(ms10+"WAV/SuperPulse/12 SuperPulse MS10 D#0.wav", "p4"),
+		wav(ms10+"WAV/SuperPulse/12 SuperPulse MS10 E0.wav", "p5"),
+		wav(ms10+"WAV/SuperPulse/12 SuperPulse MS10 F0.wav", "p6"),
+		// its own folder speaks: the rack's folder does not override it
+		wav(ms10+"WAV/Bass/12 Fat MS10 C0.wav", "b1"),
+		// nothing on the path, no document points at it: still silent
+		wav(ms10+"WAV/Untitled/12 Mystery MS10 C0.wav", "u1"),
+		// a hit named by a kit rack: category from the rack's folder
+		wav("Samples From Mars/808 From Mars/WAV/Assorted/Thump 01.wav", "k1"),
+		doc(live+"Leads/SuperPulse.adg",
+			"12 SuperPulse MS10 C0.wav", "12 SuperPulse MS10 C#0.wav", "12 SuperPulse MS10 D0.wav",
+			"12 SuperPulse MS10 D#0.wav", "12 SuperPulse MS10 E0.wav", "12 SuperPulse MS10 F0.wav", "12 Fat MS10 C0.wav"),
+		// a second rack in a folder that disagrees, naming one of them
+		doc(live+"Bass/Other.adg", "12 SuperPulse MS10 E0.wav"),
+		doc("Samples From Mars/808 From Mars/Ableton Live/808 From Mars/Presets/Kits/Clean Kit.adg", "Thump 01.wav"),
+	} {
+		cat[e.Path] = e
+	}
+	if err := catalog.Write(ws.CatalogPath("src"), cat); err != nil {
+		t.Fatal(err)
+	}
+	ws, _ = workspace.Load(dir)
+	if _, err := Run(ws, ws.Config.Locations[0]); err != nil {
+		t.Fatal(err)
+	}
+	got := LoadMeta(ws, "src")
+	want := func(p, cat, catTier, inst, fam, instTier string) *Meta {
+		m := got[p]
+		ct, it := "", ""
+		if m.Why != nil && m.Why.Category != nil {
+			ct = m.Why.Category.Tier
+		}
+		if m.Why != nil && m.Why.Instrument != nil {
+			it = m.Why.Instrument.Tier
+		}
+		if m.Category != cat || ct != catTier || m.Instrument != inst || m.Family != fam || it != instTier {
+			t.Errorf("%s: got %s(%s) %s/%s(%s), want %s(%s) %s/%s(%s)", p, m.Category, ct, m.Instrument, m.Family, it, cat, catTier, inst, fam, instTier)
+		}
+		return &m
+	}
+	m := want(ms10+"WAV/SuperPulse/12 SuperPulse MS10 C0.wav", "multisamples", annotations.TierMultisample, "lead", "synth", annotations.TierDocument)
+	if m.Why == nil || m.Why.Instrument == nil || m.Why.Instrument.Doc != live+"Leads/SuperPulse.adg" || m.Why.Instrument.Segment != "Leads" {
+		t.Errorf("the source should name the document and its folder: %+v", m.Why)
+	}
+	want(ms10+"WAV/SuperPulse/12 SuperPulse MS10 D#0.wav", "multisamples", annotations.TierMultisample, "lead", "synth", annotations.TierDocument)
+	// own path wins over the rack's folder
+	want(ms10+"WAV/Bass/12 Fat MS10 C0.wav", "", "", "bass", "bass", annotations.TierLexicon)
+	// no document: nothing spoke
+	want(ms10+"WAV/Untitled/12 Mystery MS10 C0.wav", "", "", "", "", "")
+	// two racks, two folders: silence with a reason
+	m = want(ms10+"WAV/SuperPulse/12 SuperPulse MS10 E0.wav", "multisamples", annotations.TierMultisample, "", "", annotations.TierDocumentConflict)
+	if m.Why == nil || m.Why.Instrument == nil || !strings.Contains(m.Why.Instrument.Segment, "≠") {
+		t.Errorf("conflict should name both documents: %+v", m.Why)
+	}
+	// a kit rack's folder says one-shots; nothing names the instrument
+	m = want("Samples From Mars/808 From Mars/WAV/Assorted/Thump 01.wav", "one-shots", annotations.TierDocument, "", "", "")
+	if m.Why == nil || m.Why.Category == nil || m.Why.Category.Word != "kits" {
+		t.Errorf("category source should carry the alias: %+v", m.Why)
+	}
+	// Explain sees the same tier for a single path
+	ex, err := Explain(ws, ws.Config.Locations[0], ms10+"WAV/SuperPulse/12 SuperPulse MS10 C0.wav")
+	if err != nil || ex.Instrument != "lead" || ex.Why == nil || ex.Why.Instrument == nil || ex.Why.Instrument.Tier != annotations.TierDocument {
+		t.Errorf("Explain: got %+v, %v; want lead via the document tier", ex, err)
+	}
+	if s := ex.Why.Instrument.Describe(); !strings.Contains(s, "SuperPulse.adg") || !strings.Contains(s, "Leads") {
+		t.Errorf("Describe should name folder and document: %q", s)
 	}
 }
