@@ -7,6 +7,26 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.22 — 2026-09-01 (a correction can be withdrawn)
+
+Jonathan, first session with the Plan step: he set MS10's SuperPulse to
+bass, then took the synth argument, and asked whether there was "a
+reasonable way to revert things". There was not — the local layer's
+only removal was *drop* on the reconcile list, and drop was gated to
+entries the checkout had already made redundant. A live correction had
+no undo; the closest thing was correcting the same folder again, which
+overwrites the entry but never returns the files to *needs a decision*.
+
+Every entry on the reconcile listing now has a button: *drop* when it is
+redundant or unmatched, *withdraw* when it is still doing work.
+Withdraw (`correct.Withdraw`, `POST /api/local/withdraw`) judges the
+entry, removes it, and patches the files it covered with the re-harvest
+— so the plan sees them exactly as they were before the correction, and
+a folder that needed a decision needs one again. Logged as a drop with
+reason `withdrawn`. The reconcile pass now loads its layers once and
+`judge` hands back the re-harvest it already computed, so a withdrawal
+is one pass, not two.
+
 ## v0.9.21 — 2026-09-01 (the plan's right panel earns its width)
 
 Jonathan's first ten minutes with v0.9.20: the panel was 420px and the

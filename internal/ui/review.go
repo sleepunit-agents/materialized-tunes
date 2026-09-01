@@ -405,6 +405,35 @@ func (s *Server) drop(w http.ResponseWriter, r *http.Request) {
 	jsonOut(w, map[string]any{"dropped": dropped})
 }
 
+// withdraw is the undo for a live correction: the entry goes, and what
+// it covered is re-harvested and patched so the plan sees those files
+// the way they were before it.
+func (s *Server) withdraw(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Entry  correct.LocalEntry `json:"entry"`
+		Reason string             `json:"reason"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonErr(w, 400, err)
+		return
+	}
+	if req.Reason == "" {
+		req.Reason = "withdrawn"
+	}
+	s.mu.Lock()
+	in := s.freshInputs()
+	s.mu.Unlock()
+	v, err := correct.Withdraw(s.ws, correct.Sources{Catalog: in.Catalog, Meta: in.Meta}, req.Entry, req.Reason)
+	if err != nil {
+		jsonErr(w, 400, fmt.Errorf("%s: %w", req.Entry.File, err))
+		return
+	}
+	s.mu.Lock()
+	s.meta = nil // per-file caches were just patched; the next plan re-stamps its inputs
+	s.mu.Unlock()
+	jsonOut(w, map[string]any{"withdrawn": 1, "covered": v.Covered, "changed": v.Changed})
+}
+
 // redundantLocal counts the local entries a fresh checkout has made
 // shadows — what the sync response carries so the user hears about it
 // where the sync happened.

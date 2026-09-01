@@ -103,6 +103,7 @@ func Handler(ws *workspace.Workspace) http.Handler {
 	mux.HandleFunc("/api/local/export", s.localExport)
 	mux.HandleFunc("/api/local/reconcile", s.reconcile)
 	mux.HandleFunc("/api/local/drop", s.drop)
+	mux.HandleFunc("/api/local/withdraw", s.withdraw)
 	mux.HandleFunc("/api/materialize", s.materialize)
 	mux.HandleFunc("/api/migrate", s.migrateRun)
 	mux.HandleFunc("/api/run", s.runStatus)

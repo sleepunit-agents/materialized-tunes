@@ -49,23 +49,9 @@ func Reconcile(ws *workspace.Workspace, src Sources) ([]Verdict, error) {
 	if err != nil || len(entries) == 0 {
 		return nil, err
 	}
-	repo, err := annotations.Load(filepath.Join(ws.Root, "annotations"))
+	ly, err := loadLayers(ws, src)
 	if err != nil {
 		return nil, err
-	}
-	local, err := annotations.Load(ws.LocalAnnotations())
-	if err != nil {
-		return nil, err
-	}
-	full := annotations.Overlay(repo, local)
-	// one pass per location: the pack directories its catalog holds
-	packIdx := map[string]*packIndex{}
-	for _, lc := range ws.Config.Locations {
-		cat, err := src.Catalog(lc.Name)
-		if err != nil {
-			continue
-		}
-		packIdx[lc.Name] = indexPacks(lc, cat, full)
 	}
 	// entries are independent and the re-harvest is pure: judge them in
 	// parallel, keep the listing's order
@@ -79,7 +65,7 @@ func Reconcile(ws *workspace.Workspace, src Sources) ([]Verdict, error) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			out[i], errs[i] = judge(ws, src, repo, local, full, packIdx, e)
+			out[i], _, _, errs[i] = judge(ws, src, ly, e)
 		}(i, e)
 	}
 	wg.Wait()
@@ -91,12 +77,70 @@ func Reconcile(ws *workspace.Workspace, src Sources) ([]Verdict, error) {
 	return out, nil
 }
 
+// Withdraw takes a live entry away for real — the undo for a correction
+// the user no longer stands behind. The entry is judged first, dropped,
+// and the files it covered are re-harvested with the layer as it now is
+// and patched into the per-file caches, so the plan sees them the way
+// they were before the correction (back to needing a decision, if that
+// is what they were). A redundant entry is just dropped.
+func Withdraw(ws *workspace.Workspace, src Sources, e LocalEntry, reason string) (Verdict, error) {
+	ly, err := loadLayers(ws, src)
+	if err != nil {
+		return Verdict{LocalEntry: e}, err
+	}
+	v, lc, after, err := judge(ws, src, ly, e)
+	if err != nil {
+		return v, err
+	}
+	if err := Drop(ws, e, reason); err != nil {
+		return v, err
+	}
+	if v.Changed > 0 {
+		if err := harvest.Patch(ws, lc, after); err != nil {
+			return v, err
+		}
+	}
+	return v, nil
+}
+
+// layers is the checkout, the local layer, their overlay, and each
+// location's pack index — what one reconciliation pass reads once.
+type layers struct {
+	repo, local, full []annotations.Vendor
+	packIdx           map[string]*packIndex
+}
+
+func loadLayers(ws *workspace.Workspace, src Sources) (*layers, error) {
+	repo, err := annotations.Load(filepath.Join(ws.Root, "annotations"))
+	if err != nil {
+		return nil, err
+	}
+	local, err := annotations.Load(ws.LocalAnnotations())
+	if err != nil {
+		return nil, err
+	}
+	ly := &layers{repo: repo, local: local, full: annotations.Overlay(repo, local), packIdx: map[string]*packIndex{}}
+	// one pass per location: the pack directories its catalog holds
+	for _, lc := range ws.Config.Locations {
+		cat, err := src.Catalog(lc.Name)
+		if err != nil {
+			continue
+		}
+		ly.packIdx[lc.Name] = indexPacks(lc, cat, ly.full)
+	}
+	return ly, nil
+}
+
 // judge takes one entry away in memory and re-harvests what it covers.
-func judge(ws *workspace.Workspace, src Sources, repo, local, full []annotations.Vendor, packIdx map[string]*packIndex, e LocalEntry) (Verdict, error) {
+// It also hands back the location the entry lives in and the re-harvest
+// itself, so a withdrawal can patch the caches without a second pass.
+func judge(ws *workspace.Workspace, src Sources, ly *layers, e LocalEntry) (Verdict, workspace.LocationConfig, map[string]harvest.Meta, error) {
 	v := Verdict{LocalEntry: e}
-	vendor := annotations.BySlug(full)[e.Vendor]
+	var where workspace.LocationConfig
+	var result map[string]harvest.Meta
+	vendor := annotations.BySlug(ly.full)[e.Vendor]
 	if vendor == nil {
-		vendor = byDirName(full, e.Vendor)
+		vendor = byDirName(ly.full, e.Vendor)
 	}
 	var pack *annotations.Pack
 	if vendor != nil {
@@ -104,14 +148,14 @@ func judge(ws *workspace.Workspace, src Sources, repo, local, full []annotations
 	}
 	if vendor == nil || pack == nil || pack.Dir == "" {
 		v.Unmatched = true
-		return v, nil
+		return v, where, nil, nil
 	}
 	for _, lc := range ws.Config.Locations {
 		cat, err := src.Catalog(lc.Name)
 		if err != nil {
 			continue
 		}
-		packPath := packIdx[lc.Name].pathOf(vendor.Slug, pack.Dir)
+		packPath := ly.packIdx[lc.Name].pathOf(vendor.Slug, pack.Dir)
 		if packPath == "" {
 			continue
 		}
@@ -121,10 +165,10 @@ func judge(ws *workspace.Workspace, src Sources, repo, local, full []annotations
 				prefix = packPath + "/" + strings.Trim(p, "/")
 			}
 		}
-		without := annotations.Overlay(repo, minus(local, e))
+		without := annotations.Overlay(ly.repo, minus(ly.local, e))
 		after, err := harvest.ExplainPrefix(ws, lc, cat, prefix, without)
 		if err != nil {
-			return v, err
+			return v, where, nil, err
 		}
 		if len(after) == 0 {
 			continue
@@ -136,6 +180,7 @@ func judge(ws *workspace.Workspace, src Sources, repo, local, full []annotations
 				v.Changed++
 			}
 		}
+		where, result = lc, after
 		break
 	}
 	if v.Covered == 0 {
@@ -143,7 +188,7 @@ func judge(ws *workspace.Workspace, src Sources, repo, local, full []annotations
 	} else {
 		v.Redundant = v.Changed == 0
 	}
-	return v, nil
+	return v, where, result, nil
 }
 
 func byDirName(vendors []annotations.Vendor, dir string) *annotations.Vendor {

@@ -1639,6 +1639,23 @@ async function planDrop(entries) {
   await planReconcile();
 }
 
+async function planWithdraw(v) {
+  const pl = S.pl;
+  const what = v.kind === 'dir' ? (v.entry.path || v.pack) : 'the word ' + (v.entry.aliases || []).join(', ');
+  if (!confirm(`Withdraw your correction on ${what}? ${n(v.changed)} of ${n(v.covered)} files go back to how they were before it.`)) return;
+  pl.recBusy = true; render();
+  const r = await api('/api/local/withdraw', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ entry: { file: v.file, vendor: v.vendor, pack: v.pack, kind: v.kind, entry: v.entry }, reason: 'withdrawn' }) });
+  pl.recBusy = false;
+  if (r.error) { pl.msg = r.error; render(); return; }
+  pl.msg = `withdrawn — ${n(r.changed)} of ${n(r.covered)} files back to how they were — re-planning`;
+  pl.sel = null; pl.file = null; pl.form = null; pl.radius = null;
+  S.pf = null; render();
+  await loadPreflight();
+  await loadPlanReview();
+  pl.local = await api('/api/local');
+  await planReconcile();
+}
+
 function renderReconcile() {
   const pl = S.pl;
   if (!pl.local || !pl.local.entries || !pl.local.entries.length) return '';
@@ -1648,7 +1665,7 @@ function renderReconcile() {
       <span class="pl-btn" data-act="pl-reconcile">${pl.recBusy ? 'checking…' : 'check against the checkout'}</span>
       ${rec && rec.redundant ? `<span class="pl-btn go" data-act="pl-drop-all">drop ${rec.redundant} redundant</span>` : ''}
     </div>`;
-  if (!rec) return head + `<div style="font:400 10.5px var(--sans);color:var(--fg-faint)">an entry the repo now says itself is a shadow — remove it and nothing moves. This finds those.</div>`;
+  if (!rec) return head + `<div style="font:400 10.5px var(--sans);color:var(--fg-faint)">an entry the repo now says itself is a shadow — remove it and nothing moves. This finds those. It also lists every correction you have made, each with a <i>withdraw</i> — the undo.</div>`;
   const rows = (rec.verdicts || []).map((v, i) => {
     const what = v.kind === 'dir' ? esc(v.entry.path || '') : 'word ' + esc((v.entry.aliases || []).join(', '));
     const state = v.unmatched ? '<span style="color:var(--fg-faint)">no files under it</span>'
@@ -1656,7 +1673,7 @@ function renderReconcile() {
       : `<span style="color:var(--amber)">still needed — ${n(v.changed)} of ${n(v.covered)} would move</span>`;
     return `<div style="display:flex;gap:8px;align-items:center;font:400 10.5px var(--mono);color:var(--fg-dim)">
         <span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(v.vendor)}/${esc(v.pack)} · ${what}</span>${state}
-        ${v.redundant || v.unmatched ? `<span class="pl-btn" style="padding:2px 7px" data-act="pl-drop" data-i="${i}">drop</span>` : ''}
+        ${v.redundant || v.unmatched ? `<span class="pl-btn" style="padding:2px 7px" data-act="pl-drop" data-i="${i}">drop</span>` : `<span class="pl-btn" style="padding:2px 7px" data-act="pl-withdraw" data-i="${i}" title="undo this correction — the files it covers go back to how they were">withdraw</span>`}
       </div>`;
   }).join('');
   return head + rows;
@@ -2026,6 +2043,7 @@ function wire() {
       if (act === 'pl-export') { window.open('/api/local/export', '_blank'); }
       if (act === 'pl-reconcile') { planReconcile(); }
       if (act === 'pl-drop') { const v = S.pl.rec.verdicts[+el.dataset.i]; planDrop([{ file: v.file, vendor: v.vendor, pack: v.pack, kind: v.kind, entry: v.entry }]); }
+      if (act === 'pl-withdraw') { planWithdraw(S.pl.rec.verdicts[+el.dataset.i]); }
       if (act === 'pl-drop-all') { planDrop(S.pl.rec.verdicts.filter(v => v.redundant).map(v => ({ file: v.file, vendor: v.vendor, pack: v.pack, kind: v.kind, entry: v.entry }))); }
       if (act === 'go-migrate') { if (!el.classList.contains('blocked')) { S.screen = 'run'; startMigrate(); } }
       if (act === 'start-run') startRun();

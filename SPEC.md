@@ -1551,7 +1551,12 @@ layer minus that entry) and re-harvesting the files it covers — nothing
 moves means redundant; `POST /api/local/drop` removes the ones the user
 lets go and logs the drop. The Plan step offers it under the layer's
 listing; a sync that changes the checkout reports how many entries it
-made redundant.
+made redundant. *Withdraw shipped 2026-09-01 (v0.9.22):* the same listing
+is the undo — a still-needed entry gets *withdraw* (`POST
+/api/local/withdraw`), which judges it, drops it, and patches the files it
+covered with the re-harvest so they read the way they did before the
+correction. A correction is a decision, and decisions get reversed; the
+layer is not append-only.
 
 ### 19.6 Order of work (when Jonathan says go)
 
