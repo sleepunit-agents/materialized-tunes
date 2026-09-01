@@ -7,6 +7,39 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.13 — 2026-09-01 (a dir that names the pack is not a label)
+
+Four more strays from Jonathan, all under Drums/Break. Three were the
+shared lexicon's rank order and are fixed in the annotations repo
+(`dc1dc6a` → `next`): "Vocal Loop Jack To The Beat" read as a break
+because `beat` is a break alias and break outranked vocal — the words
+that can only mean a voice (vocal, acapella, adlib) now sit above the
+drum vocabulary like the FX words do, while the loose ones (vox, voice,
+choir) stay low so "Vox Continental" is still an organ. DECAP's
+`percussion_loop_fill_repeating_conga` read as a break because `fill`
+was a break alias — fill is its own drums entry now, ranked below every
+named piece (a conga fill is a conga, a snare roll a snare) and above
+the two catch-alls (`percussion_loop_fill_drum_kit` → Drums/Fill). And
+Dr Sample From Mars' "Break Chop Dr Sample 01" hits read as loops
+because `break` is a loops alias — `chop` is a one-shots alias that
+beats the break words and loses to the loop words (a vocal chop loop is
+a loop), which is why loops is two entries in categories.toml.
+
+Moving vocal above drums exposed a harvest bug worth fixing on its own:
+every in-pack dir was a label, and Splice wraps nearly every pack in
+`<Label_-_Title_Audio>/`. Read as a label, that wrapper outranks the
+file's own words — a kick in "Vocal Pop House 2" would have become a
+vocal, and every one-shot in a Function Loops pack already reads as a
+loop (`*loop*` matches the label's name). The pack dir was never a
+label; a dir that restates it says nothing more. Harvest now splits a
+file's dirs into labels and pack-name echoes (whole-phrase match on
+normalized text, against the on-disk dir and the annotated name):
+globs and both lexicons read the labels, and consult the echoes only
+when nothing else on the path spoke — "Silk Vocals/RNT_silk_vocals/
+loops/RNT_SV_01.wav" is still a vocal. Unwrapped Splice packs that put
+"DRUMS" or "Loops" at the same depth keep those as labels. Expect
+Function Loops one-shots to move out of Loops on the next plan.
+
 ## v0.9.12 — 2026-09-01 (a pack can say what its own words mean)
 
 Drumtrax From Mars files its kicks under Bass. The pack calls them

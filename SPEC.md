@@ -193,8 +193,11 @@ grammar-derived, cheap to regenerate, never in a lockfile):
   the annotation layer's `[[category]]` and pack `[[dir]]` maps, with the
   shared `categories.toml` lexicon (whole-word aliases, dirs deepest-first
   then the stem) as the cross-vendor fallback — so unannotated vendors
-  still resolve loops/one-shots. Runs after every scan and via `catalog
-  harvest`; category globs match case-insensitively.
+  still resolve loops/one-shots. A dir that restates the pack's own name
+  (Splice's `Label_-_Title_Audio` wrapper, SFM's `Maschine/<Pack>` export
+  dirs) is not a label: globs and lexicons read it only when nothing else
+  on the path spoke. Runs after every scan and via `catalog harvest`;
+  category globs match case-insensitively.
 - The **instrument facet** (§11.4) is computed the same way — from what the
   vendor labelled, never from audio analysis.
 

@@ -240,3 +240,75 @@ func TestHarvestSharedBytesKeepTheirOwnLabels(t *testing.T) {
 		t.Error("harvest must stamp the meta cache format")
 	}
 }
+
+// A dir that restates the pack's own name is not a label. Splice wraps
+// nearly every pack in one (Label_-_Title_Audio); with the wrapper read as
+// a label, a kick in "Vocal Pop House 2" is a vocal and every one-shot in a
+// Function Loops pack is a loop. Unwrapped packs put real labels at the
+// same depth ("DRUMS", "Loops") — those must keep speaking — and a file
+// whose path says nothing else still gets the pack's word as a fallback.
+func TestHarvestPackEchoIsNoLabel(t *testing.T) {
+	dir := t.TempDir()
+	ws, _ := workspace.Init(dir)
+	ws.Config.Locations = []workspace.LocationConfig{{Name: "src", Type: "local", Root: dir, Layout: "vendor-dirs"}}
+	ws.SaveConfig()
+	write := func(rel, body string) {
+		p := filepath.Join(dir, rel)
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		os.WriteFile(p, []byte(body), 0o644)
+	}
+	// vocal above kick, as the shared lexicon has it since 2026-09-01
+	write("annotations/instruments.toml", "[[instrument]]\nid=\"vocal\"\nfamily=\"vocal\"\naliases=[\"vocal\",\"vocals\"]\n"+
+		"[[instrument]]\nid=\"kick\"\nfamily=\"drums\"\naliases=[\"kick\"]\n"+
+		"[[instrument]]\nid=\"drums\"\nfamily=\"drums\"\naliases=[\"drum\",\"drums\"]\n")
+	write("annotations/categories.toml", "[[category]]\nid=\"loops\"\naliases=[\"loop\",\"loops\"]\n"+
+		"[[category]]\nid=\"one-shots\"\naliases=[\"one shot\",\"one shots\",\"hit\"]\n")
+	write("annotations/vendors/splice/vendor.toml", "[vendor]\nname=\"Splice\"\nslug=\"splice\"\n[packs]\ngrammar=\"top-level-dirs\"\nresolver=\"splice-graphql\"\n"+
+		"[[category]]\nid=\"loops\"\nmatch=[\"*loop*\"]\n[[category]]\nid=\"one-shots\"\nmatch=[\"*one_shot*\",\"*hit*\"]\n")
+
+	mk := func(path, sha string) catalog.Entry {
+		return catalog.Entry{Path: path, SHA256: sha, Size: 1, ScannedAt: time.Now(),
+			Audio: &audio.Meta{Format: "wav", Channels: 1, SampleRate: 44100, BitDepth: 16, Frames: 10}}
+	}
+	cat := map[string]catalog.Entry{}
+	for _, e := range []catalog.Entry{
+		mk("Splice/Vocal Pop House 2/Dropgun_Samples_-_Vocal_Pop_House_2/drum_one_shots/DS_VPH_kick_01.wav", "s1"),
+		mk("Splice/Vocal Pop House 2/Dropgun_Samples_-_Vocal_Pop_House_2/vocal_loops/DS_VPH_vocal_loop_01.wav", "s2"),
+		mk("Splice/Cinematic Cyberpunk/Function_Loops_-_Cinematic_Cyberpunk/one_shots/FL_CC_hit_01.wav", "s3"),
+		mk("Splice/Silk Vocals/RNT_silk_vocals/loops/RNT_SV_01.wav", "s4"),
+		mk("Splice/Nu Disco Dynamite/DRUMS/DRUM_LOOPS/TND_01.wav", "s5"),
+	} {
+		cat[e.Path] = e
+	}
+	if err := catalog.Write(ws.CatalogPath("src"), cat); err != nil {
+		t.Fatal(err)
+	}
+	ws, _ = workspace.Load(dir)
+	if _, err := Run(ws, ws.Config.Locations[0]); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]Meta{}
+	f, _ := os.Open(filepath.Join(dir, "annotations-cache", "meta", "src.jsonl"))
+	defer f.Close()
+	dec := jsonDecoder(f)
+	for {
+		var m Meta
+		if dec.Decode(&m) != nil {
+			break
+		}
+		got[m.SHA] = m
+	}
+	want := map[string][2]string{
+		"s1": {"kick", "one-shots"}, // the wrapper's "Vocal" is the pack's name, not this file's
+		"s2": {"vocal", "loops"},    // the file's own words still speak
+		"s3": {"", "one-shots"},     // "Function_Loops" no longer makes a hit a loop
+		"s4": {"vocal", "loops"},    // nothing else spoke, so the echo may: the pack is vocals
+		"s5": {"drums", "loops"},    // an unwrapped pack's "DRUMS" is a real label
+	}
+	for sha, w := range want {
+		m := got[sha]
+		if m.Instrument != w[0] || m.Category != w[1] {
+			t.Errorf("%s: got %q/%q, want %q/%q", sha, m.Instrument, m.Category, w[0], w[1])
+		}
+	}
+}

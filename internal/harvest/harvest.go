@@ -127,14 +127,27 @@ func Run(ws *workspace.Workspace, lc workspace.LocationConfig) (*Result, error) 
 		base := strings.TrimSuffix(inPack[len(inPack)-1], filepath.Ext(inPack[len(inPack)-1]))
 		dirs := inPack[:len(inPack)-1]
 
+		// labels are the dirs that can describe a sound; a dir that only
+		// restates the pack's name is not one, and speaks last (see labelDirs)
+		labels, echoes := labelDirs(dirs, segs[packIdx], pack)
+
 		m.BPM = harvestBPM(base, dirs, vendor)
 		m.Key = harvestKey(base, vendor)
 		var pinned string
-		m.Category, m.Tags, pinned = harvestCategory(dirs, vendor, pack, segs[packIdx])
+		m.Category, m.Tags, pinned = harvestCategory(dirs, labels, vendor, pack, segs[packIdx])
 		if m.Category == "" {
 			// vendor annotation said nothing (or there is none) — the shared
 			// lexicon reads the same folder/filename grammar cross-vendor
-			m.Category = cats.Resolve(base, dirs)
+			m.Category = cats.Resolve(base, labels)
+		}
+		if m.Category == "" && len(echoes) > 0 {
+			// nothing on the path said; the pack's own name may ("Silk
+			// Vocals" holds vocals) — the echo is a fallback, not a label
+			c, _, _ := harvestCategory(dirs, echoes, vendor, pack, segs[packIdx])
+			if c == "" {
+				c = cats.Resolve("", echoes)
+			}
+			m.Category = c
 		}
 		if m.Category == "" && msDirs[path.Dir(p)] {
 			// no label anywhere claimed the file, but its directory has the
@@ -156,7 +169,10 @@ func Run(ws *workspace.Workspace, lc workspace.LocationConfig) (*Result, error) 
 			// beats whatever the filenames appear to say
 			m.Instrument, m.Family = pinned, lex.FamilyOf(pinned, overrides)
 		} else {
-			m.Instrument, m.Family = lex.Resolve(base, dirs, overrides)
+			m.Instrument, m.Family = lex.Resolve(base, labels, overrides)
+			if m.Instrument == "" && len(echoes) > 0 {
+				m.Instrument, m.Family = lex.Resolve("", echoes, overrides)
+			}
 		}
 
 		if m.BPM == 0 && m.Key == "" && m.Category == "" && m.Instrument == "" && len(m.Tags) == 0 {
@@ -328,12 +344,65 @@ func harvestKey(base string, v *annotations.Vendor) string {
 	return ""
 }
 
+// labelDirs splits a file's in-pack dirs into the ones that can describe
+// a sound and the ones that only restate the pack's own name. The pack
+// dir is no label — "Vocal Pop House" is a genre, "Drums That Knock" a
+// brand, and neither says what any one file inside is — and a dir that
+// echoes it says nothing more. Splice wraps nearly every pack in one
+// (<pack>/<Label_-_Title_Audio>/<category>/…), and read as a label that
+// wrapper outranks the file's own words: a kick in "Vocal Pop House"
+// reads as a vocal, every one-shot in a Function Loops pack as a loop.
+// Vendors' export dirs echo the same way ("Maschine/Dr Sample From Mars").
+//
+// Echoes are not thrown away: when nothing else on the path spoke, the
+// pack's name is the only thing that did ("Silk Vocals/…/RNT_SV_01.wav"
+// is a vocal), so callers consult them last. Matched as a whole phrase
+// over normalized text, so "Loops", "DRUMS", "One_Shots" — the label dirs
+// unwrapped Splice packs put at the same depth — stay labels.
+func labelDirs(dirs []string, packDir string, p *annotations.Pack) (labels, echoes []string) {
+	var names []string
+	for _, n := range []string{packDir, func() string {
+		if p != nil {
+			return p.Name
+		}
+		return ""
+	}()} {
+		if nn := annotations.Normalize(n); nn != "" {
+			names = append(names, " "+nn+" ")
+		}
+	}
+	if len(names) == 0 {
+		return dirs, nil
+	}
+	labels = make([]string, 0, len(dirs))
+	for _, d := range dirs {
+		echo := false
+		if nd := annotations.Normalize(d); nd != "" {
+			pad := " " + nd + " "
+			for _, n := range names {
+				if strings.Contains(pad, n) {
+					echo = true
+					break
+				}
+			}
+		}
+		if echo {
+			echoes = append(echoes, d)
+		} else {
+			labels = append(labels, d)
+		}
+	}
+	return labels, echoes
+}
+
 // harvestCategory resolves category + tags: the pack's [[dir]] map first
 // (deepest match governs category; tags union along the prefix chain),
 // then the vendor's [[category]] rules over directory names at any depth,
 // then dedicated_packs. instrument is the pack [[dir]] map's instrument
 // pin when the deepest matching entry carries one — "" otherwise.
-func harvestCategory(dirs []string, v *annotations.Vendor, p *annotations.Pack, packDir string) (category string, tags []string, instrument string) {
+// dirs is the full in-pack path ([[dir]] pins address it); labels is the
+// same minus the pack-name echoes, and is what the [[category]] globs see.
+func harvestCategory(dirs, labels []string, v *annotations.Vendor, p *annotations.Pack, packDir string) (category string, tags []string, instrument string) {
 	if v == nil {
 		return "", nil, ""
 	}
@@ -387,7 +456,7 @@ func harvestCategory(dirs []string, v *annotations.Vendor, p *annotations.Pack, 
 	outer:
 		for _, c := range v.Categories {
 			for _, g := range c.Match {
-				for _, d := range dirs {
+				for _, d := range labels {
 					// case-insensitive: vendors write "One Shots", "one_shots",
 					// "ONE-SHOTS" across labels and eras; the rule is one glob
 					gl := strings.ToLower(g)
