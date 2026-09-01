@@ -955,7 +955,11 @@ trust order:
 
 1. **What the vendor labelled** — `01. Bass Drum/`,
    `TA_Kick_Loop_124_D.wav`. `instruments.toml` carries canonical id,
-   family, the words vendors write, and `avoid` traps, applied to every
+   family, the words vendors write, `avoid` traps, and `codes` — the
+   drum-machine abbreviations (`bd`/`sd`/`cp`/`hh`) that speak for a
+   segment only when no alias of any instrument does, because two letters
+   are also a Splice pack code or a genre tag
+   (`FF_CP_124_drum_loop_venice_shaker` is a shaker loop) — applied to every
    vendor; per-vendor `[[instrument]]` blocks carry abbreviations only
    unambiguous inside one library (SFM's `CH`/`HH`/`BD`). Every label on a
    path is collected and the most specific wins (earliest in the lexicon),

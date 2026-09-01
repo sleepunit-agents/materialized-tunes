@@ -10,8 +10,15 @@ const testLexicon = `
 [[instrument]]
 id = "kick"
 family = "drums"
-aliases = ["kick", "bass drum", "bd"]
+aliases = ["kick", "bass drum"]
+codes = ["bd"]
 avoid = ["kick bass"]
+
+[[instrument]]
+id = "clap"
+family = "drums"
+aliases = ["clap", "claps"]
+codes = ["cp"]
 
 [[instrument]]
 id = "rim"
@@ -22,6 +29,11 @@ aliases = ["rim", "rimshot"]
 id = "tom"
 family = "drums"
 aliases = ["tom", "toms"]
+
+[[instrument]]
+id = "shaker"
+family = "percussion"
+aliases = ["shaker", "shakers"]
 
 [[instrument]]
 id = "drums"
@@ -86,6 +98,15 @@ func TestInstrumentResolve(t *testing.T) {
 		{"no label anywhere", "Untitled 4", []string{"Misc"}, ""},
 		// whole-word only: "subtomic" must not match tom
 		{"substring is not a match", "subtomic", nil, ""},
+		// codes: a two-letter abbreviation is also a Splice pack code or a
+		// genre tag, so it speaks for a segment only when no word does
+		{"pack code beside a word is not a clap", "FF_CP_124_drum_loop_venice_shaker", []string{"Loops"}, "shaker"},
+		{"genre tag beside a word is not a clap", "AU_PC_94_drum_loop_full_cp", []string{"Loops"}, "drums"},
+		{"code beside another family's word", "AU_PC_94_bass_loop_cp", nil, "bass"},
+		// but a name that says nothing longer still means the machine code,
+		// and it ranks as its instrument against the folder's catch-all
+		{"code alone is the instrument", "909 CP 01", []string{"Drum Hits"}, "clap"},
+		{"code alone under an unlabelled folder", "CP A 808 01", []string{"Misc"}, "clap"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -158,6 +179,14 @@ func TestInstrumentVendorOverride(t *testing.T) {
 	// without the override the same path says nothing
 	if got, _ := lx.Resolve("CH Clean 04", []string{"05. HH"}, nil); got != "" {
 		t.Errorf("without override: got %q, want none", got)
+		// a vendor block's codes follow the same rule as the shared lexicon's:
+	// they yield to any word in the segment, and speak when none does
+	coded := []Instrument{{ID: "tom", Codes: []string{"lt", "mt", "ht"}}}
+	if got, _ := lx.Resolve("LT 808 Kick Layer", nil, coded); got != "kick" {
+		t.Errorf("vendor code beside a word: got %q, want kick", got)
+	}
+	if got, _ := lx.Resolve("LT 808 01", []string{"Drums"}, coded); got != "tom" {
+		t.Errorf("vendor code alone: got %q, want tom", got)
 	}
 }
 

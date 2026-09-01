@@ -7,6 +7,27 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.11 — 2026-09-01 (a code speaks only when no word does)
+
+Two Splice files under Drums/Clap: `FF_CP_124_drum_loop_venice_shaker`
+(CP is the pack — Club Progressive; the file is a shaker loop) and
+`AU_PC_94_drum_loop_full_cp` (cp is cyberpunk; a full drum loop). The
+shared lexicon listed `cp` as a plain clap alias, and clap outranks both
+shaker and the generic drums entry, so a two-letter token beat the full
+word written right beside it. Two letters are a drum-machine code when
+the vendor writes nothing longer — and a pack code or genre tag when he
+does.
+
+So `[[instrument]]` grows `codes` (`bd`, `sd`/`sn`, `cp`, `hh` move there
+from `aliases`): a code is consulted for a segment only after every
+alias of every instrument has declined it, and where it speaks it ranks
+as its instrument — `Drum Hits/909 CP 01.wav` is still a clap. Vendor
+blocks take `codes` too; SFM's own `cp` stays a plain alias, the vendor's
+assertion. Alongside, the lexicon's generic drums entry moves below the
+percussion pieces: "drum" is written everywhere, and a shaker loop in a
+drum-loop pack is a shaker. Older builds ignore the unknown key, so a
+lexicon ahead of the binary loses the codes rather than misreading them.
+
 ## v0.9.10 — 2026-08-31 (the proof is the structure — length picks, it never blocks)
 
 Same night, third Polyend collision, and the one that killed the length

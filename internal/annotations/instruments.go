@@ -18,6 +18,15 @@ type Instrument struct {
 	Family  string   `toml:"family" json:"family,omitempty"`
 	Aliases []string `toml:"aliases" json:"aliases,omitempty"`
 	Avoid   []string `toml:"avoid" json:"avoid,omitempty"` // phrases that contain an alias but mean something else
+	// Codes are the drum-machine abbreviations — "bd", "sd", "cp", "hh" —
+	// that vendors write when they write nothing longer. Two letters are
+	// also what a Splice pack code or a genre tag looks like
+	// ("FF_CP_124_drum_loop_venice_shaker" is a shaker loop from the pack
+	// Club Progressive; "AU_PC_94_drum_loop_full_cp" is cyberpunk), so a
+	// code only speaks for a segment when no alias of any instrument does.
+	// Where it speaks it ranks as its instrument, like an alias would: the
+	// "909 CP 01" in a Drum Hits folder is still a clap.
+	Codes []string `toml:"codes" json:"codes,omitempty"`
 	// Split exempts one entry from its family's flat rendering: the family
 	// stays flat for everything else, this instrument keeps its own folder.
 	// For a real named instrument sitting in a family that is flat because
@@ -49,6 +58,7 @@ type Lexicon struct {
 	Instruments []Instrument
 	Families    []Family
 	patterns    []*regexp.Regexp  // per instrument: whole-word alternation of aliases
+	codes       []*regexp.Regexp  // per instrument: whole-word alternation of codes, nil when none
 	avoids      []*regexp.Regexp  // per instrument: nil when none
 	flat        map[string]bool   // family id → flat
 	split       map[string]bool   // instrument id → keeps its folder in a flat family
@@ -98,9 +108,11 @@ func (lx *Lexicon) DisplayName(id string) string {
 
 func (lx *Lexicon) compile() {
 	lx.patterns = make([]*regexp.Regexp, len(lx.Instruments))
+	lx.codes = make([]*regexp.Regexp, len(lx.Instruments))
 	lx.avoids = make([]*regexp.Regexp, len(lx.Instruments))
 	for i, ins := range lx.Instruments {
 		lx.patterns[i] = wordAlternation(ins.Aliases)
+		lx.codes[i] = wordAlternation(ins.Codes)
 		lx.avoids[i] = wordAlternation(ins.Avoid)
 	}
 	lx.flat = map[string]bool{}
@@ -174,6 +186,14 @@ func (lx *Lexicon) Match(segment string, vendorFirst []Instrument) (id, family s
 // match also reports the winner's rank — its position in the lexicon, which
 // is how Resolve compares labels found in different parts of a path.
 // Vendor overrides rank alongside the shared entry they name.
+//
+// Words are read before codes: every alias, vendor and shared, gets its
+// chance at the segment, and only a segment no word claims falls through
+// to the abbreviations. Within a segment that is the whole rule — a code
+// beside a longer label is a pack code or a genre tag, not the vendor
+// naming the sound twice. Across segments a code that did speak ranks as
+// its instrument, so Resolve treats "909 CP 01" under Drum Hits exactly
+// as it would "909 Clap 01".
 func (lx *Lexicon) match(segment string, vendorFirst []Instrument) (id, family string, rank int) {
 	norm := Normalize(segment)
 	if norm == "" {
@@ -192,6 +212,16 @@ func (lx *Lexicon) match(segment string, vendorFirst []Instrument) (id, family s
 	}
 	for i, ins := range lx.Instruments {
 		if hit(pad, lx.patterns[i], lx.avoids[i]) {
+			return ins.ID, ins.Family, i
+		}
+	}
+	for _, ins := range vendorFirst {
+		if hit(pad, wordAlternation(ins.Codes), wordAlternation(ins.Avoid)) {
+			return ins.ID, lx.familyOf(ins.ID, ins.Family), lx.rankOf(ins.ID)
+		}
+	}
+	for i, ins := range lx.Instruments {
+		if hit(pad, lx.codes[i], lx.avoids[i]) {
 			return ins.ID, ins.Family, i
 		}
 	}
