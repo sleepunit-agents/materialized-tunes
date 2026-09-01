@@ -7,6 +7,28 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.16 — 2026-09-01 (the cascade exists)
+
+SPEC §19.6 step 2. `annotations.Load` takes N roots and merges them in
+order: the repo checkout, then `<workspace>/annotations.local/` — a
+partial tree in the repo's own layout holding only what the user
+asserted about their own copy. The local layer's `[[dir]]`,
+`[[instrument]]` and `[[category]]` entries are prepended, its packs
+union in, a vendor dir may carry only `packs/`, and no precedence rule
+was added: pins were already deepest-match with the first entry winning
+a tie and override blocks already first-hit, so a local entry at the
+same or deeper path simply wins. Every caller now reads
+`ws.AnnotationRoots()`.
+
+Two schema additions landed in sample-vendor-annotations the same day
+and harvest honours them: `default_category` / `default_instrument` on
+`[[dir]]` speak last — only for a file no word, no vendor rule and no
+directory shape claimed (Source tier `dir-default`) — where today's
+`category` / `instrument` are pins that beat the filenames; and
+`observed` / `note` provenance on `[[dir]]` and `[[instrument]]`, with a
+consumer-local `local = true` the repo's lint (L7) rejects. Nothing
+writes the local layer yet — that is step 4.
+
 ## v0.9.15 — 2026-09-01 (every facet says why)
 
 The first piece of SPEC §19 (seeing before doing). Every harvested

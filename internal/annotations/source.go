@@ -28,6 +28,7 @@ const (
 	TierVendorCategory = "vendor-category" // vendor [[category]] match glob over a directory name
 	TierCategories     = "categories"      // shared categories.toml alias
 	TierMultisample    = "multisample"     // no word anywhere; the directory has the chromatic multisample shape
+	TierDirDefault     = "dir-default"     // a pack [[dir]] default_category / default_instrument: nothing else spoke
 
 	// Instrument tiers. Alias tiers come before code tiers: a code speaks
 	// only for a segment no alias of any instrument claimed.
@@ -54,6 +55,7 @@ func (s Source) Describe() string {
 		TierVendorCategory:   "vendor [[category]]",
 		TierCategories:       "categories.toml",
 		TierMultisample:      "multisample shape of the directory",
+		TierDirDefault:       "pack [[dir]] default",
 		TierPackInstrument:   "pack [[instrument]]",
 		TierVendorInstrument: "vendor [[instrument]]",
 		TierOverride:         "override",

@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -26,7 +25,7 @@ scan of such a location; this re-runs it on demand.`,
 		if err != nil {
 			return err
 		}
-		vendors, err := annotations.Load(filepath.Join(ws.Root, "annotations"))
+		vendors, err := annotations.Load(ws.AnnotationRoots()...)
 		if err != nil {
 			return err
 		}

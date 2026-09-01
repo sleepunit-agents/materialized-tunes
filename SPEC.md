@@ -1159,7 +1159,8 @@ Ordered roughly by how much the design already accommodates them.
   cached as correctable annotations.
 - **Local annotation layer**: the user's own overrides at the bottom of the
   cascade (`device default → vendor → pack → local`), always winning. Taste
-  lives here, never in the repo.
+  lives here, never in the repo. *Reading it shipped 2026-09-01 (§19.5);
+  writing it is §19.6 step 4.*
 - **Direct device upload** for staged devices (SysEx/SDS the way elektroid
   does it); v0 answer remains: hand the folder to Transfer.
 - **Perceptual (audio-content) dedup** and **free-form tagging**. Byte dedup
@@ -1490,13 +1491,23 @@ removing it changes no file's placement (upstream now says the same), it
 offers to drop it. Without this the local layer becomes a permanent
 shadow of the repo and the cascade rots into two sources of truth.
 
+*Shipped 2026-09-01 (v0.9.16):* `annotations.Load(roots…)` merges layers
+in order, local last-and-first — `[[dir]]`, `[[instrument]]`, `[[category]]`
+entries prepended, packs unioned, a vendor dir with only `packs/` allowed;
+every caller reads `ws.AnnotationRoots()` = checkout then
+`<workspace>/annotations.local/`. `default_category` / `default_instrument`
+are the last tier per facet (after the multisample shape; Source tier
+`dir-default`); `observed` / `note` / `local` are parsed and carried.
+Schema + lint L7 landed in sample-vendor-annotations the same day. Not
+yet: anything that *writes* the local layer (§19.6 step 4).
+
 ### 19.6 Order of work (when Jonathan says go)
 
 1. ~~Per-facet provenance in `harvest.Meta` + a `why` endpoint~~ —
    shipped 2026-09-01 as `catalog why` / `/api/why` (v0.9.15).
-2. N-root `annotations.Load` + `default_*` + `observed`/`note` in the
-   schema (one annotations PR, one mtunes change). The cascade exists
-   before any UI writes to it.
+2. ~~N-root `annotations.Load` + `default_*` + `observed`/`note` in the
+   schema~~ — shipped 2026-09-01 (v0.9.16; annotations schema + lint L7).
+   The cascade exists before any UI writes to it.
 3. Plan as a run + cached artifact (§19.4). Fixes the preflight hang by
    itself.
 4. Queues + tree + why panel on the Plan step, writing `[[dir]]` and pack

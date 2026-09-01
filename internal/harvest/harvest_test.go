@@ -430,3 +430,73 @@ func TestHarvestBreakIsALoop(t *testing.T) {
 		}
 	}
 }
+
+// A [[dir]] default speaks last — only for a file no word and no shape
+// claimed — where a pin would have overruled the filenames. And the local
+// layer's entries win over the checkout's at the same path, without any
+// new precedence rule.
+func TestHarvestDefaultsAndLocalLayer(t *testing.T) {
+	dir := t.TempDir()
+	ws, err := workspace.Init(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws.Config.Locations = []workspace.LocationConfig{{Name: "src", Type: "local", Root: dir, Layout: "vendor-dirs"}}
+	ws.SaveConfig()
+	write := func(rel, body string) {
+		p := filepath.Join(dir, rel)
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		os.WriteFile(p, []byte(body), 0o644)
+	}
+	write("annotations/instruments.toml", "[[instrument]]\nid=\"kick\"\nfamily=\"drums\"\naliases=[\"kick\"]\n[[instrument]]\nid=\"lead\"\nfamily=\"synth\"\naliases=[\"lead\"]\n[[instrument]]\nid=\"synth\"\nfamily=\"synth\"\naliases=[\"synth\"]\n")
+	write("annotations/categories.toml", "[[category]]\nid=\"loops\"\naliases=[\"loop\"]\n[[category]]\nid=\"one-shots\"\naliases=[\"hit\"]\n")
+	write("annotations/vendors/sfm/vendor.toml", "[vendor]\nname=\"Samples From Mars\"\nslug=\"samples-from-mars\"\n")
+	// the checkout: Patches is a default (patch names say nothing), Hits is a pin
+	write("annotations/vendors/sfm/packs/x.toml", "[pack]\nname=\"X\"\nslug=\"x\"\ndir=\"X\"\n[[dir]]\npath=\"WAV/Patches\"\ndefault_category=\"multisamples\"\ndefault_instrument=\"synth\"\n[[dir]]\npath=\"WAV/Hits\"\ncategory=\"one-shots\"\n")
+	// the user's copy: Hits are actually loops here, and Extras is theirs alone
+	write("annotations.local/vendors/sfm/packs/x.toml", "[pack]\nslug=\"x\"\n[[dir]]\npath=\"WAV/Hits\"\ncategory=\"loops\"\nobserved=\"2026-09-01\"\n[[dir]]\npath=\"WAV/Extras\"\ndefault_instrument=\"kick\"\nlocal=true\n")
+
+	mk := func(path, sha string) catalog.Entry {
+		return catalog.Entry{Path: path, SHA256: sha, Size: 1, ScannedAt: time.Now(),
+			Audio: &audio.Meta{Format: "wav", Channels: 1, SampleRate: 44100, BitDepth: 16, Frames: 10}}
+	}
+	cat := map[string]catalog.Entry{}
+	for _, e := range []catalog.Entry{
+		mk("Samples From Mars/X/WAV/Patches/David Lynch.wav", "d1"),  // nothing spoke → both defaults
+		mk("Samples From Mars/X/WAV/Patches/Kick Loop 01.wav", "d2"), // its own words win over both defaults
+		mk("Samples From Mars/X/WAV/Patches/Cosmic Lead.wav", "d3"),  // instrument word, category default
+		mk("Samples From Mars/X/WAV/Hits/Clint Eastwood.wav", "l1"),  // local pin beats the checkout's at the same path
+		mk("Samples From Mars/X/WAV/Extras/Untitled 3.wav", "l2"),    // local-only default
+	} {
+		cat[e.Path] = e
+	}
+	if err := catalog.Write(ws.CatalogPath("src"), cat); err != nil {
+		t.Fatal(err)
+	}
+	ws, _ = workspace.Load(dir)
+	if _, err := Run(ws, ws.Config.Locations[0]); err != nil {
+		t.Fatal(err)
+	}
+	got := LoadMeta(ws, "src")
+	want := func(p, cat, catTier, inst, instTier string) {
+		m := got["Samples From Mars/X/WAV/"+p]
+		ct, it := "", ""
+		if m.Why != nil && m.Why.Category != nil {
+			ct = m.Why.Category.Tier
+		}
+		if m.Why != nil && m.Why.Instrument != nil {
+			it = m.Why.Instrument.Tier
+		}
+		if m.Category != cat || ct != catTier || m.Instrument != inst || it != instTier {
+			t.Errorf("%s: got %s(%s) %s(%s), want %s(%s) %s(%s)", p, m.Category, ct, m.Instrument, it, cat, catTier, inst, instTier)
+		}
+	}
+	want("Patches/David Lynch.wav", "multisamples", annotations.TierDirDefault, "synth", annotations.TierDirDefault)
+	want("Patches/Kick Loop 01.wav", "loops", annotations.TierCategories, "kick", annotations.TierLexicon)
+	want("Patches/Cosmic Lead.wav", "multisamples", annotations.TierDirDefault, "lead", annotations.TierLexicon)
+	want("Hits/Clint Eastwood.wav", "loops", annotations.TierDir, "", "")
+	want("Extras/Untitled 3.wav", "", "", "kick", annotations.TierDirDefault)
+	if m := got["Samples From Mars/X/WAV/Hits/Clint Eastwood.wav"]; m.Why.Category.Word != "WAV/Hits" {
+		t.Errorf("the winning entry is the local one at the same path: %+v", m.Why.Category)
+	}
+}

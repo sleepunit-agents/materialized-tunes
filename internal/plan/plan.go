@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"math"
 	"path"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -294,7 +293,7 @@ func BuildView(ws *workspace.Workspace, v *view.View) (*Plan, error) {
 	// view keeps trees or the location's vendors are unknown).
 	var vendors []annotations.Vendor
 	if v.FormatTree != "keep" || lay != nil {
-		if vendors, err = annotations.Load(filepath.Join(ws.Root, "annotations")); err != nil {
+		if vendors, err = annotations.Load(ws.AnnotationRoots()...); err != nil {
 			return nil, err
 		}
 	}

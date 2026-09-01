@@ -13,8 +13,9 @@ var catalogHarvestCmd = &cobra.Command{
 	Short: "Derive per-file bpm/key/category from filenames + annotations into the local meta cache",
 	Long: `Reads what vendors already put in filenames and folders ("_C#4", "124 Bpm",
 "Champion Sub - 10A", "Bass Lines 166.5/") plus the annotation layer's
-category and [[dir]] maps, and writes annotations-cache/meta/<location>.jsonl
-keyed by content SHA. The UI's bpm/key/cat columns read it. Runs after
+category and [[dir]] maps — the repo checkout plus your own annotations.local
+— and writes annotations-cache/meta/<location>.jsonl keyed by source path,
+each facet with its why (see "catalog why"). The UI's bpm/key/cat columns read it. Runs after
 every scan automatically; this re-runs it on demand (e.g. after pulling
 new annotations).`,
 	RunE: func(cmd *cobra.Command, args []string) error {

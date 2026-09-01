@@ -7,7 +7,6 @@
 package browse
 
 import (
-	"path/filepath"
 	"sort"
 
 	"github.com/sleepunit-agents/materialized-tunes/internal/annotations"
@@ -81,7 +80,7 @@ type Related struct {
 // vendors (resolver-backed, no repo packs) contribute nothing — the
 // registry is the union of the community's shelves, not a vendor crawl.
 func Discover(ws *workspace.Workspace) ([]DiscoverRow, error) {
-	vendors, err := annotations.Load(filepath.Join(ws.Root, "annotations"))
+	vendors, err := annotations.Load(ws.AnnotationRoots()...)
 	if err != nil {
 		return nil, err
 	}

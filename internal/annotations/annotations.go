@@ -154,12 +154,113 @@ type Dir struct {
 	// names carry no honest signal — jungle breaks named after their
 	// sources ("Sub-Urban", "Clint Eastwood") read as anything but drums.
 	Instrument string `toml:"instrument" json:"instrument,omitempty"`
+
+	// DefaultCategory / DefaultInstrument speak last: they answer only
+	// for a file no word on the path (and no directory shape) said
+	// anything about. Where category / instrument are pins that beat the
+	// filenames, these fill silence — a synth pack's Leads folder holding
+	// one labelled kick loop keeps the loop a loop. (SPEC §19.5.)
+	DefaultCategory   string `toml:"default_category" json:"default_category,omitempty"`
+	DefaultInstrument string `toml:"default_instrument" json:"default_instrument,omitempty"`
+
+	Provenance
 }
 
-// Load reads every vendor under root. Root may be a checkout of the
-// annotations repo (vendors/<slug>/...) or a bare directory of vendor
-// dirs. A missing root is not an error — annotations are optional.
-func Load(root string) ([]Vendor, error) {
+// Provenance is what an entry asserted from a real copy carries: when it
+// was seen and by what evidence. Local marks an entry the user keeps out
+// of any export — their own opinion, never the repo's; upstream lint
+// rejects it, so it cannot leak. Shared by [[dir]] and [[instrument]].
+type Provenance struct {
+	Observed string `toml:"observed" json:"observed,omitempty"` // YYYY-MM-DD
+	Note     string `toml:"note" json:"note,omitempty"`
+	Local    bool   `toml:"local" json:"local,omitempty"`
+}
+
+// Load reads every vendor under each root and merges them in order:
+// a later root is the more local layer and its entries are consulted
+// first — its [[dir]] entries, [[instrument]] and [[category]] blocks
+// are prepended to the earlier root's for the same vendor or pack, its
+// packs union in, and a vendor no earlier root knows is added whole.
+// The usual call is (repo checkout, <workspace>/annotations.local): the
+// local layer is a partial tree in the repo's own layout holding only
+// what the user asserted (SPEC §19.5). No precedence rule is added by
+// merging — pins are already deepest-match with the first entry winning
+// a tie, and override blocks are already first-hit — so a local entry
+// at the same or deeper path simply wins.
+//
+// A root may be a checkout of the annotations repo (vendors/<slug>/...)
+// or a bare directory of vendor dirs. A missing root is not an error —
+// annotations are optional.
+func Load(roots ...string) ([]Vendor, error) {
+	var merged []Vendor
+	for _, root := range roots {
+		layer, err := loadRoot(root)
+		if err != nil {
+			return nil, err
+		}
+		merged = mergeLayer(merged, layer)
+	}
+	return merged, nil
+}
+
+// mergeLayer lays over onto base: over's entries come first wherever
+// the two describe the same vendor or pack; scalar facts about a vendor
+// or pack stay base's unless base never said.
+func mergeLayer(base, over []Vendor) []Vendor {
+	if len(base) == 0 {
+		return over
+	}
+	idx := map[string]int{}
+	for i, v := range base {
+		idx[v.Slug] = i
+		idx[filepath.Base(v.dir)] = i // a local dir with no vendor.toml is named for the slug
+	}
+	for _, ov := range over {
+		i, ok := idx[ov.Slug]
+		if !ok {
+			i, ok = idx[filepath.Base(ov.dir)]
+		}
+		if !ok {
+			base = append(base, ov)
+			idx[ov.Slug] = len(base) - 1
+			continue
+		}
+		v := &base[i]
+		v.Instruments = append(append([]Instrument(nil), ov.Instruments...), v.Instruments...)
+		v.Categories = append(append([]Category(nil), ov.Categories...), v.Categories...)
+		for _, op := range ov.Packs {
+			bp := v.packBySlugOrDir(op.Slug, op.Dir)
+			if bp == nil {
+				v.Packs = append(v.Packs, op)
+				continue
+			}
+			bp.Dirs = append(append([]Dir(nil), op.Dirs...), bp.Dirs...)
+			bp.Instruments = append(append([]Instrument(nil), op.Instruments...), bp.Instruments...)
+			if bp.Name == "" {
+				bp.Name = op.Name
+			}
+			if bp.Dir == "" {
+				bp.Dir = op.Dir
+			}
+		}
+		if v.Name == "" {
+			v.Name = ov.Name
+		}
+	}
+	return base
+}
+
+func (v *Vendor) packBySlugOrDir(slug, dir string) *Pack {
+	for i := range v.Packs {
+		p := &v.Packs[i]
+		if (slug != "" && p.Slug == slug) || (dir != "" && p.Dir == dir) {
+			return p
+		}
+	}
+	return nil
+}
+
+func loadRoot(root string) ([]Vendor, error) {
 	base := root
 	if _, err := os.Stat(filepath.Join(root, "vendors")); err == nil {
 		base = filepath.Join(root, "vendors")
@@ -245,9 +346,13 @@ func loadVendor(dir string) (*Vendor, error) {
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "vendor.toml"))
 	if os.IsNotExist(err) {
-		return nil, nil // not a vendor dir; skip
-	}
-	if err != nil {
+		// a local layer may hold only packs/ for a vendor the checkout
+		// already describes — the dir name is the slug then
+		if st, serr := os.Stat(filepath.Join(dir, "packs")); serr != nil || !st.IsDir() {
+			return nil, nil // not a vendor dir; skip
+		}
+		data = nil
+	} else if err != nil {
 		return nil, err
 	}
 	if err := toml.Unmarshal(data, &vf); err != nil {

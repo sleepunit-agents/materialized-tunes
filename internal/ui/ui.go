@@ -556,7 +556,7 @@ func (s *Server) diff(w http.ResponseWriter, r *http.Request) {
 // The art/blurb endpoints only ever fetch these — no open proxy.
 func (s *Server) allowedURLs() (images, pages map[string]bool) {
 	images, pages = map[string]bool{}, map[string]bool{}
-	vendors, err := annotations.Load(filepath.Join(s.ws.Root, "annotations"))
+	vendors, err := annotations.Load(s.ws.AnnotationRoots()...)
 	if err != nil {
 		return
 	}

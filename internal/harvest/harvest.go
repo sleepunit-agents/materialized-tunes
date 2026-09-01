@@ -120,7 +120,7 @@ type harvester struct {
 // any path later handed to one: the multisample tier reads the shape of
 // the whole directory.
 func newHarvester(ws *workspace.Workspace, lc workspace.LocationConfig, paths []string) (*harvester, error) {
-	vendors, err := annotations.Load(filepath.Join(ws.Root, "annotations"))
+	vendors, err := annotations.Load(ws.AnnotationRoots()...)
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +174,8 @@ func (h *harvester) one(p string, e catalog.Entry) (m Meta, ok bool) {
 	m.Key = harvestKey(base, vendor)
 	var pinned string
 	var catSrc, pinSrc annotations.Source
-	m.Category, m.Tags, pinned, catSrc, pinSrc = harvestCategory(dirs, labels, vendor, pack, segs[packIdx])
+	var defaults dirDefaults
+	m.Category, m.Tags, pinned, catSrc, pinSrc, defaults = harvestCategory(dirs, labels, vendor, pack, segs[packIdx])
 	if m.Category == "" {
 		// vendor annotation said nothing (or there is none) — the shared
 		// lexicon reads the same folder/filename grammar cross-vendor
@@ -183,7 +184,7 @@ func (h *harvester) one(p string, e catalog.Entry) (m Meta, ok bool) {
 	if m.Category == "" && len(echoes) > 0 {
 		// nothing on the path said; the pack's own name may ("Silk
 		// Vocals" holds vocals) — the echo is a fallback, not a label
-		c, _, _, src, _ := harvestCategory(dirs, echoes, vendor, pack, segs[packIdx])
+		c, _, _, src, _, _ := harvestCategory(dirs, echoes, vendor, pack, segs[packIdx])
 		if c == "" {
 			c, src = h.cats.ResolveSrc("", echoes)
 		}
@@ -195,6 +196,11 @@ func (h *harvester) one(p string, e catalog.Entry) (m Meta, ok bool) {
 		// multisample shape — chromatic note-suffixed siblings
 		m.Category = "multisamples"
 		catSrc = annotations.Source{Tier: annotations.TierMultisample, Segment: strings.Join(dirs, "/")}
+	}
+	if m.Category == "" && defaults.category != "" {
+		// no word and no shape said anything; the folder's default_category
+		// fills the silence (a default, not a pin — SPEC §19.5)
+		m.Category, catSrc = defaults.category, defaults.categorySrc
 	}
 	m.explain("category", catSrc)
 	// overrides, most local first: the pack's own [[instrument]] blocks
@@ -221,6 +227,10 @@ func (h *harvester) one(p string, e catalog.Entry) (m Meta, ok bool) {
 		if m.Instrument == "" && len(echoes) > 0 {
 			m.Instrument, m.Family, instSrc = h.lex.ResolveInSrc(m.Category, "", echoes, overrides)
 			instSrc.Echo = true
+		}
+		if m.Instrument == "" && defaults.instrument != "" {
+			m.Instrument, m.Family = defaults.instrument, h.lex.FamilyOf(defaults.instrument, overrides)
+			instSrc = defaults.instrumentSrc
 		}
 	}
 	m.explain("instrument", instSrc)
@@ -546,10 +556,12 @@ func labelDirs(dirs []string, packDir string, p *annotations.Pack) (labels, echo
 // pin when the deepest matching entry carries one — "" otherwise.
 // dirs is the full in-pack path ([[dir]] pins address it); labels is the
 // same minus the pack-name echoes, and is what the [[category]] globs see.
-// catSrc and instSrc say which entry or rule answered.
-func harvestCategory(dirs, labels []string, v *annotations.Vendor, p *annotations.Pack, packDir string) (category string, tags []string, instrument string, catSrc, instSrc annotations.Source) {
+// catSrc and instSrc say which entry or rule answered. defaults carries
+// the deepest matching entry's default_category / default_instrument,
+// which the caller applies only after every other tier stayed silent.
+func harvestCategory(dirs, labels []string, v *annotations.Vendor, p *annotations.Pack, packDir string) (category string, tags []string, instrument string, catSrc, instSrc annotations.Source, defaults dirDefaults) {
 	if v == nil {
-		return "", nil, "", annotations.Source{}, annotations.Source{}
+		return "", nil, "", annotations.Source{}, annotations.Source{}, dirDefaults{}
 	}
 	seen := map[string]bool{}
 	addTags := func(ts []string) {
@@ -563,6 +575,7 @@ func harvestCategory(dirs, labels []string, v *annotations.Vendor, p *annotation
 	rel := strings.Join(dirs, "/")
 	if p != nil {
 		best, bestInst := -1, -1
+		bestDefCat, bestDefInst := -1, -1
 		for _, d := range p.Dirs {
 			dp := strings.Trim(d.Path, "/")
 			match := false
@@ -587,6 +600,16 @@ func harvestCategory(dirs, labels []string, v *annotations.Vendor, p *annotation
 				bestInst = len(dp)
 				instrument = d.Instrument
 				instSrc = annotations.Source{Tier: annotations.TierDir, Segment: rel, Word: d.Path}
+			}
+			if d.DefaultCategory != "" && len(dp) > bestDefCat {
+				bestDefCat = len(dp)
+				defaults.category = d.DefaultCategory
+				defaults.categorySrc = annotations.Source{Tier: annotations.TierDirDefault, Segment: rel, Word: d.Path}
+			}
+			if d.DefaultInstrument != "" && len(dp) > bestDefInst {
+				bestDefInst = len(dp)
+				defaults.instrument = d.DefaultInstrument
+				defaults.instrumentSrc = annotations.Source{Tier: annotations.TierDirDefault, Segment: rel, Word: d.Path}
 			}
 		}
 	}
@@ -623,7 +646,13 @@ func harvestCategory(dirs, labels []string, v *annotations.Vendor, p *annotation
 			}
 		}
 	}
-	return category, tags, instrument, catSrc, instSrc
+	return category, tags, instrument, catSrc, instSrc, defaults
+}
+
+// dirDefaults is what a [[dir]] entry says when nothing else does.
+type dirDefaults struct {
+	category, instrument       string
+	categorySrc, instrumentSrc annotations.Source
 }
 
 // LoadMeta reads a location's harvested metadata cache, keyed by source

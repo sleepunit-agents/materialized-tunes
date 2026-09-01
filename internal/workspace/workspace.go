@@ -137,6 +137,18 @@ func (w *Workspace) SaveConfig() error {
 	return writeFileAtomic(filepath.Join(w.Root, "config.toml"), []byte(sb.String()))
 }
 
+// AnnotationRoots are the annotation layers in cascade order: the repo
+// checkout, then the user's own partial tree (annotations.local — SPEC
+// §19.5), which annotations.Load consults first. Either may be absent.
+func (w *Workspace) AnnotationRoots() []string {
+	return []string{filepath.Join(w.Root, "annotations"), filepath.Join(w.Root, "annotations.local")}
+}
+
+// LocalAnnotations is where the user's own annotation entries live.
+func (w *Workspace) LocalAnnotations() string {
+	return filepath.Join(w.Root, "annotations.local")
+}
+
 func (w *Workspace) CatalogPath(location string) string {
 	return filepath.Join(w.Root, "catalog", location+".jsonl")
 }

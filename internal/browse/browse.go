@@ -66,7 +66,7 @@ func SplitCatalogRef(ref string) (location, path string, ok bool) {
 // Rows aggregates pack summaries across locations. dev applies the device
 // lens (nil = off); location filters to one location ("" = all).
 func Rows(ws *workspace.Workspace, dev *profile.Device, location string) ([]Row, error) {
-	vendors, err := annotations.Load(filepath.Join(ws.Root, "annotations"))
+	vendors, err := annotations.Load(ws.AnnotationRoots()...)
 	if err != nil {
 		return nil, err
 	}

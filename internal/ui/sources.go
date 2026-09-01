@@ -137,7 +137,7 @@ func (s *Server) suggestions(w http.ResponseWriter, _ *http.Request) {
 	}
 
 	// tier 1: vendors that declare their install location
-	vendors, _ := annotations.Load(filepath.Join(s.ws.Root, "annotations"))
+	vendors, _ := annotations.Load(s.ws.AnnotationRoots()...)
 	for _, v := range vendors {
 		paths := v.InstallMac
 		switch runtime.GOOS {
@@ -364,7 +364,7 @@ func (s *Server) startScan(name string) error {
 					// locations' harvests are stale under it too
 					s.reharvestAll()
 				}
-				if vendors, err := annotations.Load(filepath.Join(s.ws.Root, "annotations")); err == nil {
+				if vendors, err := annotations.Load(s.ws.AnnotationRoots()...); err == nil {
 					resolve.Location(context.Background(), s.ws, lc, vendors, nil) // best-effort, cached
 				}
 				s.mu.Lock()

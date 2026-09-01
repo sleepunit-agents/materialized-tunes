@@ -50,6 +50,8 @@ type Instrument struct {
 	// "vendor". Set by the loader, never by the file; it only names the
 	// tier in a Source.
 	Scope string `toml:"-" json:"-"`
+
+	Provenance
 }
 
 // tier names the Source tier an override block answers as.

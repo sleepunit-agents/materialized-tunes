@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -72,7 +71,7 @@ var scanCmd = &cobra.Command{
 				fmt.Printf(", %d stereo files checked for dual-mono", res.DualMonoChecked)
 			}
 			fmt.Println()
-			if vendors, err := annotations.Load(filepath.Join(ws.Root, "annotations")); err == nil {
+			if vendors, err := annotations.Load(ws.AnnotationRoots()...); err == nil {
 				if r, err := resolve.Location(cmd.Context(), ws, lc, vendors, nil); err == nil && r.Packs > 0 && r.Resolved+r.Missing+r.Failed > 0 {
 					fmt.Printf("  resolved %d packs via the vendor API (%d not found, %d failed)\n", r.Resolved, r.Missing, r.Failed)
 				}
