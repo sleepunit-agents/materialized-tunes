@@ -1321,9 +1321,10 @@ CHANGELOG.md.
 | 12 | Optional analysis sidecar, explicitly *not now* | Keeps the door open without bending the design toward it. |
 | 19 | `[proposed 2026-09-01]` Plan as the review surface, kinds of _Unsorted, local annotation layer as cascade + diff + submission | See where files land before they do, and let the user correct facts in a shape the repo can take back. |
 
-## 19. Seeing before doing; correcting what you saw `[proposed 2026-09-01]`
+## 19. Seeing before doing; correcting what you saw `[shipped 2026-09-01]`
 
-Design only — nothing here is built. Jonathan's ask (2026-09-01): *see
+Proposed and built the same day (v0.9.15–v0.9.20; the shipped notes sit
+under each subsection). Jonathan's ask (2026-09-01): *see
 where things are going to go before they go there, and correct mistakes*
 — and shape the correction so the user makes it, not the annotator. Three
 parts: the flow the screens become, the corrections tool and its kinds,
@@ -1348,10 +1349,20 @@ Library ──"materialize…"──▶ Recipe ──▶ Plan ──▶ Material
   *materialize* (or *migrate* when the lock says files would just move).
 - **Materialize** shows the run, then returns to Plan with the lock diff.
 
-The API is already step-shaped (`/api/views`, `/api/preflight`,
+The API is already step-shaped (`/api/views`, `/api/plan`,
 `/api/materialize`, `/api/run`); this is mostly a frontend re-cut plus
 turning preflight into a run. Nothing built under §19.2–19.5 may assume
 the tab model.
+
+*Shipped 2026-09-01 (v0.9.20):* the tab bar is two places and a step
+strip — Library · [Recipe → Plan → Materialize] · Setup. A step is
+reachable only when the one before it has something to hand over: Plan
+needs a recipe, Materialize needs a plan that fits with no errors (or a
+run already under way). Library's exit is *materialize…* → Recipe;
+Recipe's exit is *PLAN → N files*; the verdict (fit, issues) and the
+materialize / migrate buttons live on Plan; Materialize returns with
+*back to the plan*, and the lock history moved behind it as *history &
+diff*.
 
 ### 19.2 The plan is the review surface
 
@@ -1556,5 +1567,5 @@ made redundant.
    preview, ack list, corrections log, export zip~~ — shipped 2026-09-01
    (v0.9.18, `internal/correct`).
 5. ~~Reconciliation after sync~~ — shipped 2026-09-01 (v0.9.19).
-6. The Library → Recipe → Plan → Materialize re-cut of the UI (§19.1) —
-   last, because it touches the most and unblocks the least.
+6. ~~The Library → Recipe → Plan → Materialize re-cut of the UI (§19.1)~~
+   — shipped 2026-09-01 (v0.9.20).

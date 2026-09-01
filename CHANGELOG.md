@@ -7,6 +7,23 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.20 — 2026-09-01 (the screens are steps, not tabs)
+
+SPEC §19.6 step 6, the last of Jonathan's 2026-09-01 ask. The tab bar
+is two places and a step strip: Library · [Recipe → Plan → Materialize]
+· Setup. Steps happen in order and a step is reachable only when the
+one before it has something to hand over — Plan needs a recipe,
+Materialize needs a plan that fits with no errors (or a run already
+under way); a step that cannot be entered is dimmed and says why. The
+Library's one exit into the pipeline is *materialize…*, which lands on
+Recipe. Recipe's exit is *PLAN → N files*, with how many need a
+decision; the meter and issues stay there because they are useful
+while editing rules, but the verdict and the materialize / migrate
+buttons now live on Plan, whose empty right panel shows them. Materialize
+offers *back to the plan* when it is not running and tucks the lock
+history behind *history & diff* rather than a top-level tab. Keyboard
+numbers respect the gates.
+
 ## v0.9.19 — 2026-09-01 (the local layer does not become a shadow)
 
 SPEC §19.6 step 5. A local entry the checkout now says itself is a

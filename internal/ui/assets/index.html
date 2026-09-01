@@ -48,6 +48,9 @@
   .tab .num { font: 500 10px var(--mono); color: var(--fg-faint); }
   .tab .label { font: 600 12px var(--sans); color: var(--fg-dim); }
   .tab.on .label { color: var(--fg); }
+  .tab.off { cursor: default; opacity: .45; }
+  .tabbar .steps { display: flex; align-items: center; gap: 2px; margin-left: 14px; padding-left: 14px; border-left: 1px solid var(--bord-raise); }
+  .tabbar .arrow { font: 500 11px var(--mono); color: var(--fg-ghost); padding: 0 2px; }
   .lens-chip { display: flex; align-items: center; gap: 6px; background: rgba(13,138,148,.14); border: 1px solid rgba(61,196,207,.4); border-radius: 5px; padding: 4px 10px; }
   .lens-chip .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--teal); }
   .lens-chip .name { font: 600 11px var(--sans); color: var(--teal); }

@@ -444,8 +444,26 @@ function titlebar() {
   return `<div class="titlebar"><span class="brand">mtunes</span><span class="meta">${meta}</span></div>`;
 }
 
+// The screens are steps, not tabs (SPEC §19.1): Library and Setup are
+// places; Recipe → Plan → Materialize happen in that order, and a step
+// is reachable only when the one before it has something to hand over.
+function runAllowed() {
+  const r = S.run || {};
+  if (r.status === 'running' || r.status === 'done' || r.status === 'error') return true;
+  const p = S.pf && S.pf.plan;
+  return !!(S.view && p && p.fits && !(p.errors || []).length);
+}
+function stepAllowed(k) {
+  if (k === 'plan') return !!S.view;
+  if (k === 'run') return runAllowed();
+  return true;
+}
 function tabbar() {
-  const tabs = [['library', 'Library', '1'], ['recipe', 'Recipe', '2'], ['plan', 'Plan', '3'], ['run', 'Materialize', '4'], ['cards', 'Cards', '5'], ['sources', 'Setup', '6']];
+  const tab = (k, label, num, off, title) => `
+      <div class="tab ${S.screen === k ? 'on' : ''} ${off ? 'off' : ''}" data-act="tab" data-k="${k}" title="${esc(title || '')}">
+        <span class="num">${num}</span><span class="label">${label}</span>
+      </div>`;
+  const steps = [['recipe', 'Recipe', '2', ''], ['plan', 'Plan', '3', 'pick a recipe first'], ['run', 'Materialize', '4', 'the plan has to fit, with no errors']];
   const lens = S.lens ? `
     <div class="lens-chip"><span class="dot"></span><span class="name">Lens · ${esc(S.lens)}</span>
     <span class="x" data-act="clear-lens">✕</span></div>` : '';
@@ -455,14 +473,16 @@ function tabbar() {
     upd = `<span style="font:500 10.5px var(--mono);color:var(--amber);white-space:nowrap;margin-right:8px">${esc(S.updMsg)}</span>`;
   } else if (S.upd && S.upd.available) {
     const r = S.upd.remote || {};
-    upd = `<span data-act="upd-apply" title="${esc(r.sha || '')} · ${esc(r.subject || '')}" style="cursor:pointer;font:600 10.5px var(--mono);color:var(--amber);border:1px solid rgba(224,182,79,.4);border-radius:10px;padding:3px 10px;white-space:nowrap;margin-right:8px">⇣ new build · update &amp; restart</span>`;
+    upd = `<span data-act="upd-apply" title="${esc(r.sha || '')} · ${esc(r.subject || '')}" style="cursor:pointer;font:600 10.5px var(--mono);color:var(--amber);border:1px solid rgba(224,182,79,.4);border-radius:10px;padding:2px 9px;margin-right:8px">update → ${esc((r.sha || '').slice(0, 7))}</span>`;
   }
   return `<div class="tabbar">
-    ${tabs.map(([k, label, num]) => `
-      <div class="tab ${S.screen === k ? 'on' : ''}" data-act="tab" data-k="${k}">
-        <span class="num">${num}</span><span class="label">${label}</span>
-      </div>`).join('')}
+    ${tab('library', 'Library', '1')}
+    <span class="steps">
+      ${steps.map(([k, label, num, why], i) => (i ? '<span class="arrow">→</span>' : '') + tab(k, label, num, !stepAllowed(k), stepAllowed(k) ? '' : why)).join('')}
+    </span>
+    ${S.screen === 'cards' ? tab('cards', 'History', '5') : ''}
     <div style="flex:1"></div>${upd}${lens}
+    ${tab('sources', 'Setup', '6')}
   </div>`;
 }
 
@@ -673,6 +693,7 @@ function renderDiscover() {
       <div style="flex:1"></div>
       <span class="chip ${S.obtainable ? 'active' : ''}" data-act="obtainable" title="acquirable packs only — flip it off to see the out-of-print tail">obtainable${S.obtainable ? ' ✓' : ''}</span>
       <div class="search">⌕ <input id="search" placeholder="Search packs…" value="${esc(S.search)}"><span class="kbd">⌘K</span></div>
+      <span class="chip" data-act="go-recipe" title="pick or make a recipe — the way out of the library into the pipeline" style="color:var(--fg);border-color:var(--bord-hover)">materialize…</span>
     </div>
     <div class="disc-note" style="padding:8px 18px 0">Everything here is in the community registry because someone owns it. Cards are thin on purpose — previews live on the vendor's page, and that's where the link goes.</div>`;
 
@@ -740,6 +761,7 @@ function renderLibrary() {
       ${locs.map(l => `<span class="chip ${S.locFilter === l ? 'active' : ''}" data-act="loc" data-l="${esc(l)}" title="${S.locFilter === l ? 'click to clear' : 'only ' + esc(l)}">${esc(l)}${S.locFilter === l ? ' ✕' : ''}</span>`).join('')}
       ${S.locFilter ? `<span class="chip active" data-act="add-group" data-g="${esc(S.locFilter)}" title="add every ${esc(S.locFilter)} pack to a recipe as one rule">+ add all ${n(rows.length)} to recipe</span>` : ''}
       <div class="search">⌕ <input id="search" placeholder="Search packs…" value="${esc(S.search)}"><span class="kbd">⌘K</span></div>
+      <span class="chip" data-act="go-recipe" title="pick or make a recipe — the way out of the library into the pipeline" style="color:var(--fg);border-color:var(--bord-hover)">materialize…</span>
       <div style="position:relative">
         <div class="lens-btn ${S.lens ? 'on' : ''}" data-act="toggle-menu">
           <span class="dot"></span><span class="label">Lens · ${S.lens ? esc(S.lens) : 'off'}</span><span class="caret">▾</span>
@@ -1359,11 +1381,8 @@ function renderRecipe() {
         <span style="color:${over > 0 ? 'var(--err)' : 'var(--green)'}">${over > 0 ? fmtB(over) + ' over' : fmtB(usable - onDisk) + ' free'}</span>
       </div>
       <div class="issues">${issues}</div>
-      <div class="mat-btn ${!fits || errors.length ? 'blocked' : ''}" data-act="go-run">MATERIALIZE — ${n(S.pf.files ?? 0)} FILES</div>
-      ${(pf.plan && (pf.plan.unsorted || pf.plan.uncategorized || pf.plan.general)) ? `<div class="mat-btn" style="margin-top:8px;background:var(--bg-raise);color:var(--fg);border:1px solid var(--bord-raise)" data-act="go-plan">REVIEW PLAN — ${n((pf.plan.unsorted||0) + (pf.plan.uncategorized||0) + (pf.plan.general||0))} FILES NEED A DECISION</div>` : `<div class="mat-btn" style="margin-top:8px;background:var(--bg-raise);color:var(--fg-dim);border:1px solid var(--bord-raise)" data-act="go-plan">REVIEW PLAN — WALK THE TREE</div>`}
-      ${pf.migrate ? `<div class="mat-btn ${errors.length ? 'blocked' : ''}" style="margin-top:8px" data-act="go-migrate">MIGRATE — MOVE ${n(pf.migrate.moves + pf.migrate.companions)} FILES INTO THE NEW LAYOUT</div>
-      <div style="font:400 10px var(--mono);color:var(--fg-faint);margin-top:6px;text-align:center">renames the last materialize in place — nothing re-rendered, no duplicates, emptied folders removed</div>` : ''}
-      <div style="font:400 10px var(--mono);color:var(--fg-faint);margin-top:8px;text-align:center">writes to the recipe's target — exactly what the checked vendors select</div>`;
+      <div class="mat-btn" data-act="go-plan">PLAN → ${n(S.pf.files ?? 0)} FILES${(pf.plan && (pf.plan.unsorted || pf.plan.uncategorized || pf.plan.general)) ? ` · ${n((pf.plan.unsorted||0) + (pf.plan.uncategorized||0) + (pf.plan.general||0))} NEED A DECISION` : ''}</div>
+      <div style="font:400 10px var(--mono);color:var(--fg-faint);margin-top:8px;text-align:center">see where every file lands and fix what's wrong — materialize is the plan's exit</div>`;
   } else {
     right = `<div style="font:400 11px var(--mono);color:var(--fg-faint);padding:24px 4px">nothing selected yet — check a vendor on the left</div>`;
   }
@@ -1417,7 +1436,8 @@ function renderRun() {
       <div class="stat"><div class="v" style="color:${skips.length ? 'var(--warn)' : 'var(--fg)'}">${isDone ? skips.length : '—'}</div><div class="l">failed — skipped, run continued</div></div>
       <div class="stat"><div class="v" style="font-size:11px;padding-top:4px">${isDone && r.lock ? esc(r.lock.split('/').pop()) : '—'}</div><div class="l">lockfile</div></div>
     </div>
-    ${!running ? `<div class="go-btn" data-act="start-run">START RUN — ${esc(S.view || '')}</div>` : ''}
+    ${!running && !isDone ? `<div class="go-btn" data-act="start-run">START RUN — ${esc(S.view || '')}</div>` : ''}
+    ${!running ? `<div style="display:flex;gap:8px;margin:10px 0"><span class="pl-btn" data-act="back-plan">← back to the plan${isDone ? ' — it re-reads the lock' : ''}</span><span class="pl-btn" data-act="tab" data-k="cards">history &amp; diff</span></div>` : ''}
     ${isDone ? `<div class="done-band"><span style="font:700 12px var(--mono);color:var(--green)">DONE</span>
       <span style="font:500 12px var(--sans);color:#b8e0c8">${n(r.written)} of ${n(r.total)} written — lock recorded</span></div>` : ''}
     ${isErr ? `<div class="err-band"><span style="font:700 12px var(--mono);color:var(--err)">ABORTED</span>
@@ -1703,6 +1723,30 @@ function renderPlanForm() {
   </div>`;
 }
 
+// The plan's verdict and its exits: fit, issues, materialize or migrate.
+function renderVerdict() {
+  const pf = S.pf, p = pf && pf.plan;
+  if (!p) return S.pfBusy ? `<div style="font:500 11px var(--mono);color:var(--fg-faint)">${esc(pfProgressLabel())}</div>` : '';
+  const fits = p.fits, warnings = p.warnings || [], errors = p.errors || [];
+  const fitLabel = !fits ? "WON'T FIT" : (warnings.length || errors.length) ? `FITS · ${warnings.length + errors.length} issues` : 'FITS · clean';
+  const fitColor = !fits ? 'var(--err)' : (warnings.length || errors.length) ? 'var(--warn)' : 'var(--green)';
+  const issues = [
+    ...errors.map(t => `<div class="issue err" data-act="issue-toggle" title="click to expand"><span class="k">ERROR</span><span class="t">${esc(t)}</span></div>`),
+    ...warnings.map(t => `<div class="issue warn" data-act="issue-toggle" title="click to expand"><span class="k">WARN</span><span class="t">${esc(t)}</span></div>`),
+  ].join('');
+  return `<div style="display:flex;align-items:baseline;gap:10px">
+      <span style="font:600 12.5px var(--sans)">Verdict</span>
+      <span style="font:400 11px var(--mono);color:var(--fg-faint)">${esc(pf.storage)} · ${fmtB(p.total_on_disk ?? 0)} of ${fmtB(p.usable_bytes ?? 0)} usable</span>
+      <div style="flex:1"></div>
+      <span style="font:700 12px var(--mono);color:${fitColor}">${fitLabel}</span>
+    </div>
+    ${issues ? `<div class="issues" style="max-height:160px;overflow:auto">${issues}</div>` : ''}
+    <div class="mat-btn ${!fits || errors.length ? 'blocked' : ''}" style="margin:0" data-act="go-run">MATERIALIZE — ${n(pf.files ?? 0)} FILES</div>
+    ${pf.migrate ? `<div class="mat-btn ${errors.length ? 'blocked' : ''}" style="margin:0" data-act="go-migrate">MIGRATE — MOVE ${n(pf.migrate.moves + pf.migrate.companions)} FILES INTO THE NEW LAYOUT</div>
+    <div style="font:400 10px var(--mono);color:var(--fg-faint);text-align:center">renames the last materialize in place — nothing re-rendered, no duplicates, emptied folders removed</div>` : ''}
+    <div style="font:400 10px var(--mono);color:var(--fg-faint);text-align:center">writes to the recipe's target — exactly what the plan shows</div>`;
+}
+
 function renderPlan() {
   const pl = S.pl;
   if (!S.view) return `<div class="run-wrap"><div style="font:400 12px var(--sans);color:var(--fg-faint)">Pick a recipe first — the plan is built from one.</div></div>`;
@@ -1766,7 +1810,8 @@ function renderPlan() {
       <div style="font:400 11px var(--sans);color:var(--fg-dim)">Wrong? The why says which level answered. Fix that level: the folder (a pin), a word that means something else in this pack (word means), or report it as the parser's mistake.</div>
       ${renderPlanForm()}`;
   } else {
-    panel = `<div style="font:400 11.5px var(--sans);color:var(--fg-faint)">${pl.tab === 'queues' ? 'Pick a folder. One decision per folder — the files inside are there to listen to, not to label one by one.' : 'Walk the tree as it will be written. Click a file to see why it landed there; confident misfiles live here, no queue holds them.'}</div>
+    panel = `${renderVerdict()}
+      <div style="font:400 11.5px var(--sans);color:var(--fg-faint)">${pl.tab === 'queues' ? 'Pick a folder. One decision per folder — the files inside are there to listen to, not to label one by one.' : 'Walk the tree as it will be written. Click a file to see why it landed there; confident misfiles live here, no queue holds them.'}</div>
       ${pl.msg ? `<div style="font:500 11px var(--mono);color:var(--green)">${esc(pl.msg)}</div>` : ''}
       ${pl.local && pl.local.entries && pl.local.entries.length ? `<div style="font:600 10px var(--sans);color:var(--fg-faint);letter-spacing:.05em;text-transform:uppercase;margin-top:6px">your local layer</div>
         ${pl.local.entries.slice(0, 12).map(e => `<div style="font:400 10.5px var(--mono);color:var(--fg-dim)">${esc(e.vendor)}/${esc(e.pack)} · ${e.kind === 'dir' ? esc(e.entry.path || '') : 'word ' + esc((e.entry.aliases || []).join(', '))} → ${esc(e.entry.category || e.entry.default_category || e.entry.instrument || e.entry.default_instrument || e.entry.role || e.entry.id || '')}${e.entry.local ? ' <span style="color:var(--fg-faint)">(local only)</span>' : ''}</div>`).join('')}
@@ -1782,7 +1827,13 @@ function wire() {
   $app.querySelectorAll('[data-act]').forEach(el => {
     el.addEventListener('click', (e) => {
       const act = el.dataset.act;
-      if (act === 'tab') { stopPlayback(); S.packOpen = null; S.pd = null; S.screen = el.dataset.k; if (S.screen === 'cards') { S.locks = []; } render(); }
+      if (act === 'tab') {
+        const k = el.dataset.k;
+        if (!stepAllowed(k)) { if (k === 'plan') { S.screen = 'recipe'; render(); } return; }
+        stopPlayback(); S.packOpen = null; S.pd = null; S.screen = k; if (S.screen === 'cards') { S.locks = []; } render();
+      }
+      if (act === 'go-recipe') { stopPlayback(); S.packOpen = null; S.pd = null; S.screen = 'recipe'; render(); }
+      if (act === 'back-plan') { S.screen = 'plan'; S.pf = null; S.pl.q = null; S.pl.tree = null; render(); }
       if (act === 'issue-toggle') { if (!String(window.getSelection())) el.classList.toggle('open'); } // a click that selected text is a copy, not a toggle
       if (act === 'clear-lens') { S.lens = null; loadPacks().then(render); }
       if (act === 'toggle-menu') { S.lensMenu = !S.lensMenu; render(); }
@@ -1955,8 +2006,8 @@ function wire() {
         recipeEdit((async () => { for (const g of gs) if (!await collapseGroup(g)) return false; return true; })(),
           `collapsed ${gs.length} ${gs.length === 1 ? 'vendor' : 'vendors'} — same selection, fewer rules`);
       }
-      if (act === 'go-run') { if (!el.classList.contains('blocked')) { S.screen = 'run'; render(); } }
-      if (act === 'go-plan') { S.screen = 'plan'; S.pl.q = null; S.pl.tree = null; render(); }
+      if (act === 'go-run') { if (!el.classList.contains('blocked') && runAllowed()) { S.screen = 'run'; render(); } }
+      if (act === 'go-plan') { if (!S.view) return; S.screen = 'plan'; S.pl.q = null; S.pl.tree = null; render(); }
       if (act === 'pl-tab') { S.pl.tab = el.dataset.k; S.pl.sel = null; S.pl.file = null; S.pl.form = null; S.pl.q = null; S.pl.tree = null; render(); }
       if (act === 'pl-kind') { S.pl.kind = el.dataset.k; S.pl.q = null; S.pl.sel = null; S.pl.form = null; render(); }
       if (act === 'pl-row') { openQueueRow(+el.dataset.i); }
@@ -2104,7 +2155,7 @@ window.addEventListener('keydown', (e) => {
     playFile(f.path, f.name, f.duration || 0);
     return;
   }
-  if (map[e.key]) { S.screen = map[e.key]; if (S.screen === 'cards') S.locks = []; render(); }
+  if (map[e.key] && stepAllowed(map[e.key])) { S.screen = map[e.key]; if (S.screen === 'cards') S.locks = []; render(); }
   if (e.key === 'l' || e.key === 'L') {
     const order = [null, ...S.devices.filter(d => S.owned[d.name]).map(d => d.name)];
     const i = order.indexOf(S.lens);
