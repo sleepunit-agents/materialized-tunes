@@ -74,8 +74,8 @@ async function boot() {
       render();
     });
   }
-  const [summary, devices, views] = await Promise.all([api('/api/summary'), api('/api/devices'), api('/api/views')]);
-  S.summary = summary; S.devices = devices || []; S.views = views || [];
+  const [summary, devices, views, stos] = await Promise.all([api('/api/summary'), api('/api/devices'), api('/api/views'), api('/api/storages')]);
+  S.summary = summary; S.devices = devices || []; S.views = views || []; S.storages = stos || [];
   if (!S.view && S.views.length) S.view = S.views[0].name;
   // default: every device profile in the workspace counts as "mine"
   for (const d of S.devices) if (!(d.name in S.owned)) S.owned[d.name] = true;
@@ -1021,6 +1021,17 @@ async function startScan(name) {
   S.scans[name] = { location: name, status: 'running' }; S._wasBusy = true; render();
 }
 
+// The one button that guarantees everything is current: annotations pulled
+// now, every location scanned (Live documents read, trees re-harvested under
+// this build). Progress shows per row; the rules card re-reads when done.
+async function scanAll() {
+  const r = await api('/api/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ all: true }) });
+  for (const name of (r && r.locations) || []) S.scans[name] = { location: name, status: 'running' };
+  S._wasBusy = true;
+  S.annMsg = r && r.annotations === 'updated' ? (r.note || 'annotations updated') + ' — rescanning every source' : 'rescanning every source';
+  render();
+}
+
 async function addLocation(body) {
   const r = await api('/api/locations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   if (r.error) { S.toast = r.error; render(); return; }
@@ -1102,6 +1113,7 @@ function renderSources() {
     <div class="screen-head"><h1>Sources</h1>
       <span class="sum">${S.locations.length} configured${S.suggestions.length ? ` · ${S.suggestions.length} suggested` : ''}</span>
       <div style="flex:1"></div>
+      ${f || !S.locations.length ? '' : `<span class="restore-btn" data-act="scan-all" title="pull the newest classification rules and rescan every source — the whole catalog is this build's when the rows finish">rescan all</span>`}
       ${f ? '' : '<span class="restore-btn" data-act="new-source">+ add source</span>'}
     </div>
     <div style="padding:14px 18px;display:flex;flex-direction:column;gap:9px;max-width:900px">
@@ -1113,6 +1125,18 @@ function renderSources() {
       ${renderStorages()}
       ${S.toast ? `<div style="font:500 11px var(--mono);color:var(--warn)">${esc(S.toast)}</div>` : ''}
     </div>`;
+}
+
+// Which build's harvest the classifications on disk came from. Same as the
+// app: fine. Different: a re-derivation is either in flight (launch does it)
+// or wanted — "rescan all" is the guarantee.
+function annDerived(ann) {
+  if (!ann.version) return '';
+  const st = 'font:400 10px var(--mono);';
+  if (ann.reharvesting) return `<span style="${st}color:var(--amber)">classifications refreshing under this build…</span>`;
+  if (!ann.meta_build) return `<span style="${st}color:var(--fg-faint)">classifications not derived yet — rescan all</span>`;
+  if (ann.meta_build === ann.version) return `<span style="${st}color:var(--fg-faint)">classifications derived by this build</span>`;
+  return `<span style="${st}color:var(--warn)">classifications derived by build ${esc(ann.meta_build)}, not this one — rescan all</span>`;
 }
 
 // The classification rules live in a data repo that moves without app
@@ -1128,6 +1152,7 @@ function renderAnnotations() {
         ${h ? `<span style="font:400 10.5px var(--mono);color:var(--fg-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">annotations ${esc(h.sha)} · ${esc(h.date)} · ${esc(h.subject)}</span>`
             : `<span style="font:400 10.5px var(--mono);color:var(--fg-faint)">annotations not fetched yet — update now, or scanning a source fetches them</span>`}
         <span style="font:400 10px var(--mono);color:var(--fg-faint)">refreshed at launch and before every scan · app ${esc(ann.version || '?')}</span>
+        ${annDerived(ann)}
         ${S.annMsg ? `<span style="font:500 10.5px var(--mono);color:var(--amber)">${esc(S.annMsg)}</span>` : ''}
       </div>
       ${S.annBusy
@@ -1254,6 +1279,16 @@ async function setLayout(tpl) {
   if (ok) { S.pf = null; loadPreflight(); } else render();
 }
 
+// The recipe's device and storage, as selects over the profiles on Setup.
+// A recipe whose profile has since been deleted still shows its name so
+// the mismatch is visible rather than silently picking the first one.
+function recipeProfilePick(id, what, profiles, cur) {
+  const names = profiles.map(p => p.name);
+  if (cur && !names.includes(cur)) names.push(cur);
+  const opts = names.map(nm => `<option value="${esc(nm)}" ${nm === cur ? 'selected' : ''}>${esc(nm)}</option>`).join('');
+  return `<select id="${id}" title="the ${what} this recipe materializes for — profiles live on Setup" style="font:500 11.5px var(--mono);color:var(--fg-dim);background:var(--bg-raise);border:1px solid var(--bord-raise);border-radius:4px;padding:3px 8px;max-width:180px">${opts}</select>`;
+}
+
 function renderRecipe() {
   if (!S.pf && !S.pfBusy) loadPreflight();
   const pf = S.pf;
@@ -1280,7 +1315,7 @@ function renderRecipe() {
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
       <span style="font:600 14px var(--sans)">Recipe</span>
       <select id="view-pick" style="font:500 11.5px var(--mono);color:var(--fg-dim);background:var(--bg-raise);border:1px solid var(--bord-raise);border-radius:4px;padding:3px 8px">${viewOpts}</select>
-      ${pf ? `<span class="rtag dev">${esc(pf.device)}</span><span class="rtag" style="cursor:default">${esc(pf.storage)}</span>` : ''}
+      ${pf ? recipeProfilePick('rc-device', 'device', S.devices, pf.device) + recipeProfilePick('rc-storage', 'storage', S.storages, pf.storage) : ''}
       <span class="rtag" data-act="set-target" title="choose the folder this recipe materializes into">${vmeta.target ? esc(vmeta.target) : '+ set target'}</span>
       ${layoutPick(pf, vmeta)}
       ${S.renaming ? `${inp('rn-name', 'new name', S.view, '160px')}<span class="restore-btn" data-act="rename-cancel">cancel</span><span class="mat-btn" style="margin:0;padding:4px 12px;font-size:11px" data-act="rename-save">rename</span>`
@@ -1894,6 +1929,7 @@ function wire() {
       if (act === 'close-pack') { stopPlayback(); S.packOpen = null; S.pd = null; render(); }
       if (act === 'pd-folder') { S.pdFolder = el.dataset.f; loadPdFolder().then(render); }
       if (act === 'scan') startScan(el.dataset.l);
+      if (act === 'scan-all') scanAll();
       if (act === 'ann-update') updateAnnotations();
       if (act === 'upd-apply') applyUpdate();
       if (act === 'dev-new') { S.devForm = { bit_depth: 16, sample_rate: 44100, channels: 'stereo', mode: 'card', layout: 'mirror', sanitize: true }; S.toast=''; render(); }
@@ -2139,6 +2175,13 @@ function wire() {
   if (pv) pv.addEventListener('change', () => { readForm(); S.pl.radius = null; });
   const vp = document.getElementById('view-pick');
   if (vp) vp.addEventListener('change', () => { S.view = vp.value; S.disabled = new Set(); S.pf = null; loadPreflight(); });
+  for (const [id, action, key] of [['rc-device', 'set-device', 'device'], ['rc-storage', 'set-storage', 'storage']]) {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('change', async () => {
+      const ok = await viewAction({ action, name: S.view, [key]: el.value });
+      if (ok) { S.pf = null; S.views = await api('/api/views') || S.views; loadPreflight(); } else render();
+    });
+  }
   const lp = document.getElementById('layout-pick');
   if (lp) lp.addEventListener('change', () => {
     if (lp.value !== '__custom') { setLayout(lp.value); return; }

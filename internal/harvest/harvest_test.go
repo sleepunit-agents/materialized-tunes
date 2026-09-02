@@ -12,6 +12,7 @@ import (
 	"github.com/sleepunit-agents/materialized-tunes/internal/annotations"
 	"github.com/sleepunit-agents/materialized-tunes/internal/audio"
 	"github.com/sleepunit-agents/materialized-tunes/internal/catalog"
+	"github.com/sleepunit-agents/materialized-tunes/internal/version"
 	"github.com/sleepunit-agents/materialized-tunes/internal/workspace"
 )
 
@@ -285,6 +286,28 @@ func TestHarvestSharedBytesKeepTheirOwnLabels(t *testing.T) {
 	}
 	if !MetaFresh(ws) {
 		t.Error("harvest must stamp the meta cache format")
+	}
+	if got := MetaBuild(ws); got != version.Version {
+		t.Errorf("MetaBuild = %q, want this build %q", got, version.Version)
+	}
+	// Another build wrote it: same record format, different harvest. A
+	// self-update relaunch must treat that as stale, not fresh.
+	stamp := filepath.Join(dir, "annotations-cache", "meta", ".format")
+	if err := os.WriteFile(stamp, []byte(MetaFormat+"\nsome-other-build\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if MetaFresh(ws) {
+		t.Error("a cache written by another build must not read as fresh")
+	}
+	// A cache from before the stamp existed (format line only) is stale too.
+	if err := os.WriteFile(stamp, []byte(MetaFormat+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if MetaFresh(ws) {
+		t.Error("an unstamped cache must not read as fresh")
+	}
+	if MetaBuild(ws) != "" {
+		t.Error("an unstamped cache has no build")
 	}
 }
 

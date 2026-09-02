@@ -29,6 +29,7 @@ import (
 	"github.com/sleepunit-agents/materialized-tunes/internal/ableton"
 	"github.com/sleepunit-agents/materialized-tunes/internal/annotations"
 	"github.com/sleepunit-agents/materialized-tunes/internal/catalog"
+	"github.com/sleepunit-agents/materialized-tunes/internal/version"
 	"github.com/sleepunit-agents/materialized-tunes/internal/workspace"
 )
 
@@ -428,7 +429,7 @@ func writeMeta(ws *workspace.Workspace, lc workspace.LocationConfig, out []Meta)
 		os.Remove(tmp)
 		return err
 	}
-	os.WriteFile(filepath.Join(dir, ".format"), []byte(metaFormat+"\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, ".format"), []byte(MetaStamp()), 0o644)
 	return nil
 }
 
@@ -581,12 +582,44 @@ const metaFormat = "3"
 // MetaFormat is the current cache format, for tests that write a cache by hand.
 const MetaFormat = metaFormat
 
-// MetaFresh reports whether the meta cache on disk was written by this
-// build's format. False means harvest must run again before LoadMeta's
-// answers mean anything — including the cache simply not existing yet.
+// MetaStamp is what a harvest writes to the cache's .format: the record
+// format, then the build. Tests that write a cache by hand write this.
+func MetaStamp() string { return metaFormat + "\n" + version.Version + "\n" }
+
+// MetaFresh reports whether the meta cache on disk was written by THIS
+// build — same record format and same version. False means harvest must
+// run again before LoadMeta's answers mean anything: the cache doesn't
+// exist yet, or a different build wrote it. The version half is what makes
+// a self-update honest — the document tier (v0.9.24) changed what harvest
+// derives without touching the record format, and the relaunch kept
+// serving the old build's classifications until someone rescanned. Harvest
+// is string ops over the catalog; re-running it on every new build is
+// cheaper than a user wondering whether they're looking at stale answers.
 func MetaFresh(ws *workspace.Workspace) bool {
+	format, build := metaStamp(ws)
+	return format == metaFormat && build == version.Version
+}
+
+// MetaBuild is the build whose harvest wrote the meta cache — "" when no
+// harvest has run, or the cache predates the stamp (≤ v0.9.26).
+func MetaBuild(ws *workspace.Workspace) string {
+	_, build := metaStamp(ws)
+	return build
+}
+
+// metaStamp reads the cache's .format: line 1 the record format, line 2
+// the build that wrote it (absent on caches written before the stamp).
+func metaStamp(ws *workspace.Workspace) (format, build string) {
 	b, err := os.ReadFile(filepath.Join(ws.Root, "annotations-cache", "meta", ".format"))
-	return err == nil && strings.TrimSpace(string(b)) == metaFormat
+	if err != nil {
+		return "", ""
+	}
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	format = strings.TrimSpace(lines[0])
+	if len(lines) > 1 {
+		build = strings.TrimSpace(lines[1])
+	}
+	return format, build
 }
 
 // docVote is what the Live documents referencing one file agree on for

@@ -50,6 +50,8 @@ type Server struct {
 	meta  map[string]map[string]fileMeta
 	scans map[string]*scanState // per-location scan progress
 
+	reharvesting bool // reharvestAll in flight (launch after a new build, or annotations moved)
+
 	inputs  *plan.Inputs             // what plans read, shared across builds (SPEC §19.4)
 	plans   map[string]*planArtifact // per view: the last plan built, entries and all
 	planRun *planRun                 // at most one plan build at a time

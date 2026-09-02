@@ -7,6 +7,39 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.27 — 2026-09-02 (a new build re-derives on launch; rescan all; the recipe's device and storage are editable)
+
+Jonathan, on the latest build with the latest annotations: "we should
+add a rescan button or something because right now there's no real way
+to guarantee it other than closing the app. I also don't see a way to
+edit the existing recipe."
+
+The rescan button existed — per location, on Setup — and the closing
+the app was doing something real that nothing else did: the launch
+re-harvest. But that fired only when the annotations moved or the meta
+*record format* changed, and the document tier (v0.9.24) changed what
+harvest derives without touching the format. So a self-update relaunch
+kept serving the previous build's classifications until the user
+rescanned, and nothing on screen said so. Three things:
+
+- **The meta cache is stamped with the build that wrote it.** `MetaFresh`
+  now means "this format AND this build" — every new build re-derives
+  every location's classifications on launch (string ops over the
+  catalog; cheaper than a user wondering). Caches from before the stamp
+  read as stale once, on the first launch of this build.
+- **`rescan all` on Setup.** One click: annotations pulled now (no
+  throttle), every location scanned — Live documents read where they
+  haven't been, trees re-harvested. Progress per row as before. The
+  CLASSIFICATION RULES card now states which build derived what's on
+  disk (`classifications derived by this build` / `…by build X, not this
+  one — rescan all` / `…refreshing under this build…`), from
+  `/api/annotations` (`meta_build`, `reharvesting`).
+- **The recipe head's device and storage are selects**, not tags —
+  `set-device` / `set-storage` view actions rewrite the one key and refuse
+  a profile that isn't on Setup. With target, layout, rename, the vendor
+  rows and the pack excludes, every field of a recipe is now editable
+  from the screen; the TOML's comments and hand edits survive each.
+
 ## v0.9.26 — 2026-09-01 (Setup says whether the racks were read)
 
 Jonathan's screenshot: SuperPulse on Plan, `instrument — · nothing

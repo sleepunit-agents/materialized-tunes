@@ -41,6 +41,12 @@ func (s *Server) annotationsEndpoint(w http.ResponseWriter, r *http.Request) {
 		Note        string            `json:"note,omitempty"`
 		Reharvested bool              `json:"reharvested,omitempty"`
 		Redundant   int               `json:"redundant_local,omitempty"` // local entries the new checkout made shadows (SPEC §19.5)
+		// MetaBuild is the build whose harvest derived the classifications
+		// on disk; Reharvesting says a re-derivation is in flight right
+		// now. Together they answer "am I looking at this build's answers"
+		// without closing the app to find out.
+		MetaBuild    string `json:"meta_build,omitempty"`
+		Reharvesting bool   `json:"reharvesting,omitempty"`
 	}
 	out := resp{Version: version.Version}
 	if r.Method == http.MethodPost {
@@ -53,6 +59,10 @@ func (s *Server) annotationsEndpoint(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	out.Head = annotations.CheckoutHead(r.Context(), s.ws.Root)
+	out.MetaBuild = harvest.MetaBuild(s.ws)
+	s.mu.Lock()
+	out.Reharvesting = s.reharvesting
+	s.mu.Unlock()
 	jsonOut(w, out)
 }
 
@@ -62,11 +72,15 @@ func (s *Server) annotationsEndpoint(w http.ResponseWriter, r *http.Request) {
 // new grammar applies to the trees immediately, no rescan needed. New
 // files on disk still need a scan; this only refreshes what's cataloged.
 func (s *Server) reharvestAll() {
+	s.mu.Lock()
+	s.reharvesting = true
+	s.mu.Unlock()
 	for _, lc := range s.ws.Config.Locations {
 		harvest.Run(s.ws, lc) // best-effort; a failed location keeps its old meta
 	}
 	s.mu.Lock()
 	s.meta = nil // per-file metadata caches were just rewritten
+	s.reharvesting = false
 	s.mu.Unlock()
 }
 
@@ -397,8 +411,27 @@ func (s *Server) scanEndpoint(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		var req struct {
 			Location string `json:"location"`
+			// All: the "rescan everything" button. Pulls the annotations
+			// right now (no throttle), then scans every location — each
+			// scan re-reads Live documents it hasn't yet and re-harvests
+			// its trees under the current build and grammar. One click
+			// that guarantees the whole catalog is this build's, instead
+			// of closing the app and hoping launch does it.
+			All bool `json:"all"`
 		}
 		json.NewDecoder(r.Body).Decode(&req)
+		if req.All {
+			res := annotations.SyncNow(r.Context(), s.ws.Root)
+			var started []string
+			for _, lc := range s.ws.Config.Locations {
+				if s.startScan(lc.Name) == nil {
+					started = append(started, lc.Name)
+				}
+			}
+			jsonOut(w, map[string]any{"status": "started", "locations": started,
+				"annotations": string(res.Action), "note": res.Note})
+			return
+		}
 		if err := s.startScan(req.Location); err != nil {
 			jsonErr(w, 409, err)
 			return

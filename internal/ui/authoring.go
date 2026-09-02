@@ -24,7 +24,7 @@ import (
 
 func (s *Server) viewWrite(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Action  string `json:"action"` // create | add-rule | remove-rule | set-target | set-layout | rename
+		Action  string `json:"action"` // create | add-rule | remove-rule | set-target | set-layout | set-device | set-storage | rename
 		Name    string `json:"name"`
 		NewName string `json:"new_name"` // rename
 		Device  string `json:"device"`
@@ -233,6 +233,32 @@ func (s *Server) viewWrite(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := os.WriteFile(path, []byte(setScalar(string(data), "target", req.Target)), 0o644); err != nil {
+			jsonErr(w, 500, err)
+			return
+		}
+
+	// set-device / set-storage: the recipe head's two selects. The profile
+	// has to exist — a recipe pointing at a device file that isn't there
+	// fails at plan with a worse message than this one.
+	case "set-device", "set-storage":
+		key, val, dir := "device", req.Device, "devices"
+		if req.Action == "set-storage" {
+			key, val, dir = "storage", req.Storage, "storage"
+		}
+		if val == "" {
+			jsonErr(w, 400, fmt.Errorf("%s is required", key))
+			return
+		}
+		if _, err := os.Stat(filepath.Join(s.ws.Root, dir, val+".toml")); err != nil {
+			jsonErr(w, 400, fmt.Errorf("no %s profile %q — add it on Setup first", key, val))
+			return
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			jsonErr(w, 404, err)
+			return
+		}
+		if err := os.WriteFile(path, []byte(setScalar(string(data), key, val)), 0o644); err != nil {
 			jsonErr(w, 500, err)
 			return
 		}

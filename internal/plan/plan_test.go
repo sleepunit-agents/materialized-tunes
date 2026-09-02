@@ -46,7 +46,7 @@ func testWorkspace(t *testing.T, entries []catalog.Entry, files map[string]strin
 		if strings.HasPrefix(rel, "annotations-cache/meta/") {
 			// a planted meta fixture speaks the current format — without
 			// the stamp, Build would re-harvest right over it
-			os.WriteFile(filepath.Join(dir, "annotations-cache", "meta", ".format"), []byte(harvest.MetaFormat+"\n"), 0o644)
+			os.WriteFile(filepath.Join(dir, "annotations-cache", "meta", ".format"), []byte(harvest.MetaStamp()), 0o644)
 		}
 	}
 	// reload so the location config is live

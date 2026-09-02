@@ -148,3 +148,44 @@ func TestEmptyingARecipeIsAllowed(t *testing.T) {
 		t.Error("Load must still refuse a recipe with no rules — materializing one selects nothing")
 	}
 }
+
+// The recipe head's device and storage selects rewrite one key each and
+// refuse a profile that doesn't exist — the rest of the file, comments
+// and rules included, comes through untouched.
+func TestRecipeSetDeviceAndStorage(t *testing.T) {
+	s, path := editServer(t, threePackRecipe)
+	for _, d := range []string{"devices", "storage"} {
+		if err := os.MkdirAll(filepath.Join(s.ws.Root, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	os.WriteFile(filepath.Join(s.ws.Root, "devices", "op1.toml"), []byte("name = \"op1\"\n"), 0o644)
+	os.WriteFile(filepath.Join(s.ws.Root, "storage", "sd.toml"), []byte("name = \"sd\"\n"), 0o644)
+
+	edit(t, s, map[string]any{"action": "set-device", "name": "push", "device": "op1"})
+	edit(t, s, map[string]any{"action": "set-storage", "name": "push", "storage": "sd"})
+	v, err := view.LoadRaw(s.ws.Root, "push")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Device != "op1" || v.Storage != "sd" {
+		t.Errorf("device/storage = %q/%q, want op1/sd", v.Device, v.Storage)
+	}
+	if len(v.Include) != 3 {
+		t.Errorf("rules = %d, want 3 — a scalar edit must not touch the blocks", len(v.Include))
+	}
+	if b, _ := os.ReadFile(path); !strings.Contains(string(b), "# hand-written, another location entirely") {
+		t.Error("comments must survive a scalar edit")
+	}
+
+	// A profile that isn't on disk is refused, and the file stays put.
+	b, _ := json.Marshal(map[string]any{"action": "set-device", "name": "push", "device": "ghost"})
+	w := httptest.NewRecorder()
+	s.viewWrite(w, httptest.NewRequest(http.MethodPost, "/api/view", strings.NewReader(string(b))))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("unknown device → %d, want 400: %s", w.Code, w.Body.String())
+	}
+	if v, _ := view.LoadRaw(s.ws.Root, "push"); v.Device != "op1" {
+		t.Errorf("a refused edit must leave device = op1, got %q", v.Device)
+	}
+}
