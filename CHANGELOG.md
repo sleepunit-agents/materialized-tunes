@@ -7,6 +7,48 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.28 — 2026-09-02 (a big Live set no longer blanks the app; every build keeps a log)
+
+Jonathan rescanned his archive drive on v0.9.27 — it finished — and the
+next launch was "the chrome and nothing inside". "I think we may need
+some kind of debug build or something for me to get you some logs."
+
+What happened: since v0.9.23 a Live document's catalog entry carries
+every sample it references, on one JSONL line. The catalog reader was a
+`bufio.Scanner` with a 1 MiB line cap, and an archive-drive `.als` with
+a few thousand refs runs past it. One such line made `catalog.Load`
+answer `bufio.Scanner: token too long` for the **whole location** —
+every reader of that catalog failed, `/api/packs` answered 500, the
+summary silently skipped the location (0 files), and `boot()` in the
+frontend had no error path, so `render()` never ran. Reproduced
+headlessly against a fixture with a 1.6 MB set entry: the old build
+draws an empty `#app`; this one draws the library.
+
+- **The catalog reader has no line cap.** `catalog.Load` streams with
+  `json.Decoder`; `loadCatalogCount` (the Setup row) reads lines with
+  `ReadBytes`. Test: a 6,000-ref document round-trips.
+- **A document lists each distinct ref once.** A set that plays one kick
+  in forty clips referenced it forty times; `ParseDoc` dedupes by key,
+  first-seen order. Smaller lines, same plan vote.
+- **There is no debug build — every build logs.** `<workspace>/logs/mtunes.log`
+  (rolls to `.1` past 4 MiB): launch line (version, commit, OS, Go,
+  workspace), every scan's result or error, launch re-derivation, every
+  API request that fails, takes over a second, or panics (with stack).
+  A panic in a handler answers 500 with the message instead of dropping
+  the connection; background goroutines (launch re-harvest, scan, plan,
+  materialize, migrate, self-update, auto-scan) run under a recover that
+  logs instead of killing the process. Setup's rules card names the
+  file. When the workspace itself won't load, `mtunes-desktop-error.log`
+  lands beside the exe. `mtunes ui` tees the same log to stderr.
+- **The window is never blank.** `boot()` draws the shell first, gathers
+  each launch request separately (`Promise.allSettled`), and renders
+  whatever answered. What didn't — a catalog that failed to load, a
+  request that errored — is a red banner above the library naming the
+  endpoint, the error, and the log path. A render that throws, or any
+  uncaught error, lands in a fixed banner rather than a white page.
+  `/api/summary` carries `problems` (catalogs it could not read) and
+  `log`.
+
 ## v0.9.27 — 2026-09-02 (a new build re-derives on launch; rescan all; the recipe's device and storage are editable)
 
 Jonathan, on the latest build with the latest annotations: "we should

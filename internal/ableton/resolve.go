@@ -13,15 +13,23 @@ type Doc struct {
 	Refs []Ref `json:"refs"`
 }
 
-// ParseDoc decodes a gzipped Live document and lists its references.
+// ParseDoc decodes a gzipped Live document and lists its references —
+// each distinct one once, in first-seen order. A set that plays one kick
+// in forty clips references it forty times; the catalog wants to know
+// the kick is in it, not how many times, and the entry is one JSONL line
+// that has to be read back on every launch.
 func ParseDoc(gz []byte) (*Doc, error) {
 	xmlBytes, err := Decode(gz)
 	if err != nil {
 		return nil, err
 	}
-	d := &Doc{Refs: Refs(xmlBytes)}
-	if d.Refs == nil {
-		d.Refs = []Ref{} // present-but-empty survives JSON, nil would not
+	d := &Doc{Refs: []Ref{}} // present-but-empty survives JSON, nil would not
+	seen := map[string]bool{}
+	for _, r := range Refs(xmlBytes) {
+		if k := r.Key(); !seen[k] {
+			seen[k] = true
+			d.Refs = append(d.Refs, r)
+		}
 	}
 	return d, nil
 }

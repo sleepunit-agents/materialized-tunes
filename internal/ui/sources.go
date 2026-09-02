@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -76,7 +78,9 @@ func (s *Server) reharvestAll() {
 	s.reharvesting = true
 	s.mu.Unlock()
 	for _, lc := range s.ws.Config.Locations {
-		harvest.Run(s.ws, lc) // best-effort; a failed location keeps its old meta
+		if _, err := harvest.Run(s.ws, lc); err != nil { // best-effort; a failed location keeps its old meta
+			log.Printf("re-harvest %s: %v", lc.Name, err)
+		}
 	}
 	s.mu.Lock()
 	s.meta = nil // per-file metadata caches were just rewritten
@@ -243,15 +247,24 @@ func loadCatalogCount(path string) (files, docs int, err error) {
 		return 0, 0, err
 	}
 	defer f.Close()
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for sc.Scan() {
-		files++
-		if bytes.Contains(sc.Bytes(), []byte(`"doc":{`)) {
-			docs++
+	// ReadBytes, not a Scanner: a Live set's line can run past a megabyte
+	// (see catalog.Load) and a scanner's cap would make the row an error.
+	br := bufio.NewReaderSize(f, 256*1024)
+	for {
+		line, err := br.ReadBytes('\n')
+		if len(bytes.TrimSpace(line)) > 0 {
+			files++
+			if bytes.Contains(line, []byte(`"doc":{`)) {
+				docs++
+			}
+		}
+		if err == io.EOF {
+			return files, docs, nil
+		}
+		if err != nil {
+			return files, docs, err
 		}
 	}
-	return files, docs, sc.Err()
 }
 
 func (s *Server) addLocation(w http.ResponseWriter, r *http.Request) {
@@ -362,7 +375,7 @@ func (s *Server) startScan(name string) error {
 	s.scans[name] = st
 	s.mu.Unlock()
 
-	go func() {
+	go guard("scan", func() {
 		// Freshen the annotations checkout before harvest reads it. Throttled
 		// and serialized inside Sync, so concurrent/auto scans stay cheap.
 		annSync := annotations.Sync(context.Background(), s.ws.Root)
@@ -397,13 +410,15 @@ func (s *Server) startScan(name string) error {
 				st.Status = "done"
 				delete(s.meta, name) // per-file metadata was just rewritten
 				s.mu.Unlock()
+				log.Printf("scan %s: %s (%s)", name, st.Result, time.Since(st.Started).Round(time.Second))
 				return
 			}
 		}
+		log.Printf("scan %s: error: %v", name, err)
 		s.mu.Lock()
 		st.Status, st.Error = "error", err.Error()
 		s.mu.Unlock()
-	}()
+	})
 	return nil
 }
 

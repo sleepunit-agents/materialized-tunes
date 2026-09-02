@@ -8,11 +8,12 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"github.com/sleepunit-agents/materialized-tunes/internal/ableton"
+	"io"
 	"os"
 	"sort"
 	"time"
 
+	"github.com/sleepunit-agents/materialized-tunes/internal/ableton"
 	"github.com/sleepunit-agents/materialized-tunes/internal/audio"
 )
 
@@ -30,6 +31,13 @@ type Entry struct {
 
 // Load reads a catalog file into a path-keyed map. A missing file is an
 // empty catalog, not an error.
+//
+// Lines are read with a streaming decoder, not a line scanner: a Live
+// set's entry carries every sample it references, and on an archive
+// drive that is one JSONL line that can run past a megabyte. A scanner's
+// line cap turned one such document into "token too long" for the whole
+// location — every reader of that catalog failed, and the app opened to
+// an empty window (2026-09-02).
 func Load(path string) (map[string]Entry, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -41,18 +49,20 @@ func Load(path string) (map[string]Entry, error) {
 	defer f.Close()
 
 	entries := map[string]Entry{}
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	dec := json.NewDecoder(bufio.NewReaderSize(f, 256*1024))
 	line := 0
-	for sc.Scan() {
-		line++
+	for {
 		var e Entry
-		if err := json.Unmarshal(sc.Bytes(), &e); err != nil {
+		err := dec.Decode(&e)
+		if err == io.EOF {
+			return entries, nil
+		}
+		line++
+		if err != nil {
 			return nil, fmt.Errorf("%s:%d: %w", path, line, err)
 		}
 		entries[e.Path] = e
 	}
-	return entries, sc.Err()
 }
 
 // Write persists entries sorted by path, atomically.

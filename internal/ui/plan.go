@@ -103,7 +103,7 @@ func (s *Server) planEndpoint(w http.ResponseWriter, r *http.Request) {
 	s.planRun = pr
 	s.mu.Unlock()
 
-	go func() {
+	go guard("plan build", func() {
 		a, err := s.buildArtifact(v, disabled, key, in, func(stage string, done, total int) {
 			s.mu.Lock()
 			pr.Stage, pr.Count, pr.Total = stage, done, total
@@ -117,7 +117,7 @@ func (s *Server) planEndpoint(w http.ResponseWriter, r *http.Request) {
 		}
 		s.plans[req.View] = a
 		pr.Status = "done"
-	}()
+	})
 	s.mu.Lock()
 	cp := *pr
 	s.mu.Unlock()

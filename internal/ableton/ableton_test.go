@@ -185,3 +185,19 @@ func TestRewriteLive10(t *testing.T) {
 		t.Errorf("re-parse = %+v", got)
 	}
 }
+
+// A set that plays one sample in forty clips references it forty times;
+// the catalog lists it once (the entry is one JSONL line, read on every
+// launch).
+func TestParseDocDedupesRefs(t *testing.T) {
+	block := `<FileRef><RelativePathType Value="3"/><RelativePath Value="Samples/kick.wav"/><Path Value="C:/x/Samples/kick.wav"/></FileRef>`
+	other := `<FileRef><RelativePathType Value="3"/><RelativePath Value="Samples/snare.wav"/><Path Value="C:/x/Samples/snare.wav"/></FileRef>`
+	xml := "<Ableton>" + strings.Repeat(block, 40) + other + strings.Repeat(block, 3) + "</Ableton>"
+	d, err := ParseDoc(Encode([]byte(xml)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Refs) != 2 || d.Refs[0].Name != "kick.wav" || d.Refs[1].Name != "snare.wav" {
+		t.Fatalf("refs = %+v", d.Refs)
+	}
+}

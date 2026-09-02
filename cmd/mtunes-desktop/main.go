@@ -13,6 +13,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -47,11 +48,20 @@ func main() {
 		fmt.Fprintln(os.Stderr, "mtunes-desktop: set MTUNES_WORKSPACE (no ~/mtunes-library found)")
 		os.Exit(1)
 	}
+	// The exe is a GUI-subsystem build: no console, so stderr is nowhere.
+	// The log lives in the workspace (Setup names it) — and when the
+	// workspace itself won't load, beside the exe, so there is always a
+	// file that says why the window never opened.
 	ws, err := workspace.Load(root)
 	if err != nil {
+		if exe, e := os.Executable(); e == nil {
+			os.WriteFile(filepath.Join(filepath.Dir(exe), "mtunes-desktop-error.log"),
+				[]byte(fmt.Sprintf("mtunes-desktop: workspace %s: %v\n", root, err)), 0o644)
+		}
 		fmt.Fprintln(os.Stderr, "mtunes-desktop:", err)
 		os.Exit(1)
 	}
+	ui.OpenLog(ws.Root, false)
 
 	api := ui.Handler(ws)
 
@@ -105,9 +115,11 @@ func main() {
 		},
 	})
 	if err != nil {
+		log.Printf("mtunes-desktop: %v", err)
 		fmt.Fprintln(os.Stderr, "mtunes-desktop:", err)
 		os.Exit(1)
 	}
+	log.Printf("exit: window closed")
 }
 
 func viewNames(ws *workspace.Workspace) []string {

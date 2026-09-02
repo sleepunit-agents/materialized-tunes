@@ -40,6 +40,7 @@ const S = {
   player: null,  // {path, name, dur, playing}
   toast: '',
   upd: null, updBusy: false, updMsg: '',  // app self-update state
+  booting: false, bootErr: [],           // launch: shell before catalog; what launch could not read
 };
 
 const fmtB = (b) => {
@@ -49,7 +50,26 @@ const fmtB = (b) => {
 };
 const n = (x) => (x ?? 0).toLocaleString('en-US');
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const api = (p, opt) => fetch(p, opt).then(r => r.json());
+const api = (p, opt) => fetch(p, opt).then(r => r.json().catch(() => { throw new Error(`${p.split('?')[0]} answered ${r.status} with no JSON`); }),
+  e => { throw new Error(`${p.split('?')[0]}: ${e.message || e}`); });
+
+// A blank window is the one failure the app must never show. Anything that
+// throws on the way to (or inside) a render lands on screen instead — what
+// failed, where the log is — and the page keeps whatever it had drawn.
+function fatal(where, err) {
+  const msg = (err && (err.stack || err.message)) || String(err);
+  console.error(where, err);
+  let el = document.getElementById('fatal');
+  if (!el) {
+    el = document.createElement('div'); el.id = 'fatal';
+    el.style.cssText = 'position:fixed;left:12px;right:12px;bottom:34px;z-index:99;background:#2a1512;border:1px solid var(--err);border-radius:6px;padding:10px 14px;font:400 11.5px var(--mono);color:#f2b8b0;white-space:pre-wrap;max-height:40vh;overflow:auto';
+    document.body.appendChild(el);
+  }
+  const log = S.summary && S.summary.log ? `\nlog: ${S.summary.log}` : '';
+  el.textContent = `something broke in ${where} — reload (F5) after fixing, and send the log\n${msg}${log}`;
+}
+window.addEventListener('error', (e) => fatal('script', e.error || e.message));
+window.addEventListener('unhandledrejection', (e) => fatal('a request', e.reason));
 
 async function boot() {
   // Wails injects window.runtime; the browser build never has it
@@ -74,12 +94,24 @@ async function boot() {
       render();
     });
   }
-  const [summary, devices, views, stos] = await Promise.all([api('/api/summary'), api('/api/devices'), api('/api/views'), api('/api/storages')]);
-  S.summary = summary; S.devices = devices || []; S.views = views || []; S.storages = stos || [];
+  S.booting = true; render(); // the shell, now — the library fills in when the catalog answers
+  const calls = ['/api/summary', '/api/devices', '/api/views', '/api/storages'];
+  const got = await Promise.allSettled(calls.map(c => api(c)));
+  S.bootErr = [];
+  const val = (i) => {
+    const g = got[i];
+    if (g.status === 'rejected') { S.bootErr.push(String(g.reason && g.reason.message || g.reason)); return null; }
+    if (g.value && g.value.error) { S.bootErr.push(`${calls[i]}: ${g.value.error}`); return null; }
+    return g.value;
+  };
+  const summary = val(0), devices = val(1), views = val(2), stos = val(3);
+  S.summary = summary; S.devices = Array.isArray(devices) ? devices : []; S.views = Array.isArray(views) ? views : []; S.storages = Array.isArray(stos) ? stos : [];
+  for (const pr of (summary && summary.problems) || []) S.bootErr.push(pr);
   if (!S.view && S.views.length) S.view = S.views[0].name;
   // default: every device profile in the workspace counts as "mine"
   for (const d of S.devices) if (!(d.name in S.owned)) S.owned[d.name] = true;
-  await loadPacks();
+  try { await loadPacks(); } catch (e) { S.bootErr.push(String(e.message || e)); }
+  S.booting = false;
   render();
   pollRun();
   pollScans();
@@ -118,7 +150,9 @@ async function applyUpdate() {
 async function loadPacks() {
   const q = new URLSearchParams();
   if (S.lens) q.set('device', S.lens);
-  S.packs = await api('/api/packs?' + q) || [];
+  const r = await api('/api/packs?' + q);
+  if (r && r.error) throw new Error('/api/packs: ' + r.error);
+  S.packs = Array.isArray(r) ? r : [];
 }
 
 async function loadDiscover() {
@@ -264,11 +298,29 @@ async function startMigrate() {
 /* ---------- render ---------- */
 
 function render() {
+  try { renderInner(); } catch (e) { fatal(`rendering the ${S.screen} screen`, e); }
+}
+
+// What launch could not read, on screen. A catalog that fails to load is
+// a location that would otherwise silently vanish from every screen; a
+// launch request that failed is why the library is empty. The log path
+// is what to send.
+function bootBanner() {
+  if (!S.bootErr || !S.bootErr.length) return '';
+  const log = S.summary && S.summary.log;
+  return `<div style="flex:none;background:#2a1512;border-bottom:1px solid var(--err);padding:8px 18px;font:400 11px var(--mono);color:#f2b8b0;white-space:pre-wrap">${S.bootErr.map(esc).join('\n')}${log ? `\n<span style="color:var(--fg-dim)">log: ${esc(log)} — send it</span>` : ''}</div>`;
+}
+
+function renderInner() {
   const screens = { library: renderLibrary, recipe: renderRecipe, plan: renderPlan, run: renderRun, cards: renderCards, sources: renderSources };
+  const main = S.booting
+    ? `<div style="padding:40px 24px;font:400 12px var(--mono);color:var(--fg-faint)">reading the catalog…</div>`
+    : screens[S.screen]();
   $app.innerHTML = `
     ${titlebar()}
     ${tabbar()}
-    <div class="main">${screens[S.screen]()}</div>
+    ${bootBanner()}
+    <div class="main">${main}</div>
     ${addToPicker()}
     ${dirPicker()}
     ${statusbar()}
@@ -1153,6 +1205,7 @@ function renderAnnotations() {
             : `<span style="font:400 10.5px var(--mono);color:var(--fg-faint)">annotations not fetched yet — update now, or scanning a source fetches them</span>`}
         <span style="font:400 10px var(--mono);color:var(--fg-faint)">refreshed at launch and before every scan · app ${esc(ann.version || '?')}</span>
         ${annDerived(ann)}
+        ${S.summary && S.summary.log ? `<span style="font:400 10px var(--mono);color:var(--fg-faint)" title="every launch, scan, error and slow request lands here — send it when something looks wrong">log ${esc(S.summary.log)}</span>` : ''}
         ${S.annMsg ? `<span style="font:500 10.5px var(--mono);color:var(--amber)">${esc(S.annMsg)}</span>` : ''}
       </div>
       ${S.annBusy

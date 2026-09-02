@@ -29,7 +29,11 @@ var uiCmd = &cobra.Command{
 			return err
 		}
 		url := "http://" + ln.Addr().String()
-		fmt.Printf("mtunes ui → %s  (ctrl-c to stop)\n", url)
+		if p := ui.OpenLog(ws.Root, true); p != "" {
+			fmt.Printf("mtunes ui → %s  (ctrl-c to stop; log %s)\n", url, p)
+		} else {
+			fmt.Printf("mtunes ui → %s  (ctrl-c to stop)\n", url)
+		}
 		go func() {
 			time.Sleep(300 * time.Millisecond)
 			if runtime.GOOS == "darwin" {

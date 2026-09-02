@@ -14,6 +14,7 @@ import (
 	"html"
 	"io"
 	"io/fs"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -35,6 +36,7 @@ import (
 	"github.com/sleepunit-agents/materialized-tunes/internal/profile"
 	"github.com/sleepunit-agents/materialized-tunes/internal/resolve"
 	"github.com/sleepunit-agents/materialized-tunes/internal/selfupdate"
+	"github.com/sleepunit-agents/materialized-tunes/internal/version"
 	"github.com/sleepunit-agents/materialized-tunes/internal/view"
 	"github.com/sleepunit-agents/materialized-tunes/internal/workspace"
 )
@@ -79,12 +81,14 @@ func Handler(ws *workspace.Workspace) http.Handler {
 	// and when the pull lands new grammar, re-derive the trees from it
 	// immediately: classification fixes apply on launch, not after the next
 	// scan someone remembers to run.
-	go func() {
+	go guard("launch re-harvest", func() {
 		if annotations.Sync(context.Background(), ws.Root).Changed() || !harvest.MetaFresh(ws) {
+			log.Printf("launch: re-deriving classifications (meta cache written by build %q, this is %q)", harvest.MetaBuild(ws), version.Version)
 			s.reharvestAll()
+			log.Printf("launch: classifications re-derived")
 		}
-	}()
-	go s.autoScan()
+	})
+	go guard("auto-scan", s.autoScan)
 	mux := http.NewServeMux()
 	static, _ := fs.Sub(assets, "assets")
 	mux.Handle("/", http.FileServer(http.FS(static)))
@@ -129,7 +133,7 @@ func Handler(ws *workspace.Workspace) http.Handler {
 	mux.HandleFunc("/api/storages", s.storages)
 	mux.HandleFunc("/api/volumes", s.volumes)
 	mux.HandleFunc("/api/dirs", s.dirs)
-	return mux
+	return logged(mux)
 }
 
 func jsonOut(w http.ResponseWriter, v any) {
@@ -149,11 +153,19 @@ func (s *Server) summary(w http.ResponseWriter, _ *http.Request) {
 		Files     int    `json:"files"`
 		Bytes     int64  `json:"bytes"`
 		Packs     int    `json:"packs_annotated"`
+		// Log is the process log's path — what to send when something
+		// looks wrong. Problems are what this launch could not read: a
+		// catalog that fails to load is otherwise a location that quietly
+		// vanishes from every screen.
+		Log      string   `json:"log,omitempty"`
+		Problems []string `json:"problems,omitempty"`
 	}
-	o := out{Workspace: s.ws.Root, Locations: len(s.ws.Config.Locations)}
+	o := out{Workspace: s.ws.Root, Locations: len(s.ws.Config.Locations), Log: LogPath()}
 	for _, lc := range s.ws.Config.Locations {
 		entries, err := catalog.Load(s.ws.CatalogPath(lc.Name))
 		if err != nil {
+			log.Printf("summary: catalog for %s: %v", lc.Name, err)
+			o.Problems = append(o.Problems, fmt.Sprintf("catalog for %s: %v", lc.Name, err))
 			continue
 		}
 		for _, ce := range entries {
@@ -168,6 +180,9 @@ func (s *Server) summary(w http.ResponseWriter, _ *http.Request) {
 				o.Packs++
 			}
 		}
+	} else {
+		log.Printf("summary: library rows: %v", err)
+		o.Problems = append(o.Problems, "library: "+err.Error())
 	}
 	jsonOut(w, o)
 }
@@ -295,7 +310,7 @@ func (s *Server) materialize(w http.ResponseWriter, r *http.Request) {
 	s.run = rs
 	s.mu.Unlock()
 
-	go func() {
+	go guard("materialize", func() {
 		// context.Background, NOT the request context: the POST returns
 		// immediately and its context dies with it — the run must not.
 		out, err := materialize.Materialize(context.Background(), s.ws, p, target, func(count, total int) {
@@ -312,7 +327,7 @@ func (s *Server) materialize(w http.ResponseWriter, r *http.Request) {
 		rs.Status = "done"
 		rs.Count = out.Written
 		rs.Written, rs.Resumed, rs.Skipped, rs.LockPath = out.Written, out.Resumed, out.Skipped, out.LockPath
-	}()
+	})
 	jsonOut(w, map[string]string{"status": "started"})
 }
 
@@ -376,7 +391,7 @@ func (s *Server) migrateRun(w http.ResponseWriter, r *http.Request) {
 	s.run = rs
 	s.mu.Unlock()
 
-	go func() {
+	go guard("migrate", func() {
 		// context.Background, NOT the request context — see materialize
 		out, err := materialize.Migrate(context.Background(), s.ws, l, p, mg, target, func(count, total int) {
 			s.mu.Lock()
@@ -392,7 +407,7 @@ func (s *Server) migrateRun(w http.ResponseWriter, r *http.Request) {
 		rs.Status = "done"
 		rs.Count = out.Renamed + out.Rewritten
 		rs.Written, rs.Skipped, rs.LockPath = out.Renamed+out.Rewritten, out.Skipped, out.LockPath
-	}()
+	})
 	jsonOut(w, map[string]string{"status": "started"})
 }
 

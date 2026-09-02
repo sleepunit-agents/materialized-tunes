@@ -33,9 +33,9 @@ func (s *Server) updateEndpoint(w http.ResponseWriter, r *http.Request) {
 	jsonOut(w, map[string]string{"status": status, "note": note})
 	if restart {
 		// Let the response reach the frontend before the process swaps out.
-		go func() {
+		go guard("self-update", func() {
 			time.Sleep(400 * time.Millisecond)
 			selfupdate.Restart()
-		}()
+		})
 	}
 }
