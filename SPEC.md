@@ -1490,6 +1490,15 @@ one action vocabulary:
   every file's *why* one click away. This is where misfiles are found
   ("Groove Therapy Pad in Drums/Break") — they are confident, so no queue
   holds them.
+- **Dump** *(v0.9.40)* — the queues with nothing left out, as one file:
+  every folder waiting for a decision (acked ones included, marked), every
+  file in it, the majority answer with its why, and each file's own answer
+  where it differs. `GET /api/plan/dump?view=` (text; `&format=json` for
+  tools), the *dump* chip on the Plan screen, `mtunes plan dump <view>`.
+  The queues are a picker for the person deciding one folder at a time;
+  the dump is for whoever maintains the lexicon, reading every silence in
+  one sitting. Not a normal user's control — it will move behind a
+  developer toggle once one exists.
 
 The **why** panel is the primitive both share: per facet, which tier
 answered (pack `[[dir]]` pin / pack `[[instrument]]` / vendor block /

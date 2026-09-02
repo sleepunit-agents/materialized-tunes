@@ -2085,6 +2085,7 @@ function renderPlan() {
       <div style="flex:1"></div>
       <div class="seg"><span class="${pl.tab === 'queues' ? 'on' : ''}" data-act="pl-tab" data-k="queues">Queues</span><span class="${pl.tab === 'tree' ? 'on' : ''}" data-act="pl-tab" data-k="tree">Tree</span></div>
       ${pl.local ? `<span class="chip" data-act="pl-export" title="zip of annotations.local minus your local-only entries — drop it in the channel">local layer · ${n((pl.local.entries || []).length)} entries · export</span>` : ''}
+      ${S.pf && !S.pf.error && !S.pfBusy ? `<span class="chip" data-act="pl-dump" title="one text file: every folder waiting for a decision (acked ones marked), every file in it, and the why per facet — drop it in the channel">dump · what isn't matched and why</span>` : ''}
     </div>
     ${pl.tab === 'queues' ? `<div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">${kindChips}</div>` : ''}`;
 
@@ -2343,6 +2344,7 @@ function wire() {
       if (act === 'pl-ack') { planAck(); }
       if (act === 'pl-report') { planReport(); }
       if (act === 'pl-export') { window.open('/api/local/export', '_blank'); }
+      if (act === 'pl-dump') { window.open('/api/plan/dump?' + new URLSearchParams({ view: S.view }), '_blank'); }
       if (act === 'pl-reconcile') { planReconcile(); }
       if (act === 'pl-drop') { const v = S.pl.rec.verdicts[+el.dataset.i]; planDrop([{ file: v.file, vendor: v.vendor, pack: v.pack, kind: v.kind, entry: v.entry }]); }
       if (act === 'pl-withdraw') { planWithdraw(S.pl.rec.verdicts[+el.dataset.i]); }

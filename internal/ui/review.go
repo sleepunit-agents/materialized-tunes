@@ -162,6 +162,34 @@ func (s *Server) queues(w http.ResponseWriter, r *http.Request) {
 	jsonOut(w, map[string]any{"view": a.View, "built": a.Built, "kinds": kindTotals, "rows": out, "total_rows": total})
 }
 
+// dump hands over the whole decision surface as one file: every folder
+// the queues would show (acked included, marked), every file in it, the
+// why per facet — text by default, ?format=json for tools. The queues are
+// a picker; this is for whoever maintains the lexicon, reading every
+// silence in one sitting instead of being handed folders one at a time.
+func (s *Server) dump(w http.ResponseWriter, r *http.Request) {
+	a, err := s.artifactFor(r.URL.Query().Get("view"))
+	if err != nil {
+		jsonErr(w, 409, err)
+		return
+	}
+	d := plan.BuildDump(a.Plan, s.inputs.Meta, correct.Acks(s.ws))
+	d.View, d.Built, d.App, d.Annotations = a.View, a.Built, version.Version, s.provenance().AnnotationsSHA
+	if r.URL.Query().Get("format") == "json" {
+		jsonOut(w, d)
+		return
+	}
+	name := strings.Map(func(c rune) rune {
+		if c == '"' || c == '/' || c == '\\' {
+			return '-'
+		}
+		return c
+	}, a.View)
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="plan-dump-%s-%s.txt"`, name, a.Built.Local().Format("20060102-1504")))
+	d.WriteText(w)
+}
+
 // folder lists one source folder's files as the plan places them.
 func (s *Server) folder(w http.ResponseWriter, r *http.Request) {
 	a, err := s.artifactFor(r.URL.Query().Get("view"))

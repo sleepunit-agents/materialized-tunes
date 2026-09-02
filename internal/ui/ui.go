@@ -101,6 +101,7 @@ func Handler(ws *workspace.Workspace) http.Handler {
 	mux.HandleFunc("/api/views", s.views)
 	mux.HandleFunc("/api/plan", s.planEndpoint)
 	mux.HandleFunc("/api/plan/queues", s.queues)
+	mux.HandleFunc("/api/plan/dump", s.dump)
 	mux.HandleFunc("/api/plan/folder", s.folder)
 	mux.HandleFunc("/api/plan/tree", s.tree)
 	mux.HandleFunc("/api/correct", s.correctEndpoint)

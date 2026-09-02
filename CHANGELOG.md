@@ -7,6 +7,31 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.40 — 2026-09-02 (dump: what isn't matched and why, all of it)
+
+Jonathan: "we should add a dump button or something on the plan page …
+if you had the full list of what isn't being matched and why right now,
+you could hit a lot of these faster than me." The queues are a picker —
+three hundred rows, four example names each, acked folders hidden —
+because a person decides one folder at a time. The lexicon's maintainer
+works the other way round: every silence at once, with the words that
+failed to speak in front of them.
+
+**`GET /api/plan/dump?view=`** hands over the whole decision surface as
+one text file (`&format=json` for tools): the same grouping as the
+queues — by source folder, companions left out, majority category and
+instrument per folder with the tier that answered — but every folder,
+acked ones included and marked, and every file in each with its own
+category · instrument, its own why where it differs from the folder's,
+and where it lands. The *dump · what isn't matched and why* chip on the
+Plan screen downloads it; `mtunes plan dump <view>` prints it. Header
+carries the view, build time, app version and annotations head, so a
+dump says which lexicon it was read against. Not gated yet: a normal
+user never needs it, and it moves behind a developer toggle when one
+exists. `plan.BuildDump` + `Dump.WriteText`; TestReviewSurface asserts
+the two folders, all three files, the rack folder absent, and the acked
+folder kept and marked.
+
 ## v0.9.39 — 2026-09-02 (a rack is never a decision)
 
 Jonathan, Dr Sample From Mars: "`Ableton/Dr Sample From Mars

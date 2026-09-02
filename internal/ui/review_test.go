@@ -64,6 +64,8 @@ func TestReviewSurface(t *testing.T) {
 		switch {
 		case strings.HasPrefix(url, "/api/plan/queues"):
 			s.queues(w, req)
+		case strings.HasPrefix(url, "/api/plan/dump"):
+			s.dump(w, req)
 		case strings.HasPrefix(url, "/api/plan/tree"):
 			s.tree(w, req)
 		case strings.HasPrefix(url, "/api/plan/folder"):
@@ -111,6 +113,33 @@ func TestReviewSurface(t *testing.T) {
 	}
 	if r1["folder"] != "A/P1/Kicks" || r1["kind"] != "uncategorized" || r1["instrument"] != "kick" || r1["why"] == nil {
 		t.Errorf("row 1: %v", r1)
+	}
+	// the dump is the queues with nothing left out: every folder, every file, the why
+	dj := call(http.MethodGet, "/api/plan/dump?view=v&format=json", "")
+	folders := dj["folders"].([]any)
+	if len(folders) != 2 || dj["files"].(float64) != 3 {
+		t.Fatalf("dump folders (the Racks folder must not be one): %v", dj)
+	}
+	f0 := folders[0].(map[string]any)
+	if fs := f0["files"].([]any); f0["folder"] != "A/P1/Noise" || len(fs) != 2 || fs[0].(map[string]any)["name"] != "take 1.wav" {
+		t.Errorf("dump folder 0 carries every file: %v", f0)
+	}
+	{
+		w := httptest.NewRecorder()
+		s.dump(w, httptest.NewRequest(http.MethodGet, "/api/plan/dump?view=v", nil))
+		txt := w.Body.String()
+		for _, want := range []string{"## unsorted · src: A/P1/Noise · 2 files", "  take 2.wav  — · —", "nothing spoke",
+			"## uncategorized · src: A/P1/Kicks · 1 file", `instruments.toml "kick"`, "2 folders · 3 files need a decision: uncategorized 1 · unsorted 2"} {
+			if !strings.Contains(txt, want) {
+				t.Errorf("dump text lacks %q:\n%s", want, txt)
+			}
+		}
+		if strings.Contains(txt, "Racks") {
+			t.Errorf("dump text must not list the rack folder:\n%s", txt)
+		}
+		if cd := w.Header().Get("Content-Disposition"); !strings.HasPrefix(cd, `attachment; filename="plan-dump-v-`) {
+			t.Errorf("dump is a download: %q", cd)
+		}
 	}
 	tr := call(http.MethodGet, "/api/plan/tree?view=v", "")
 	names := map[string]bool{}
@@ -164,6 +193,10 @@ func TestReviewSurface(t *testing.T) {
 	q = call(http.MethodGet, "/api/plan/queues?view=v&acked=1", "")
 	if rows := q["rows"].([]any); len(rows) != 1 || rows[0].(map[string]any)["acked"] != true {
 		t.Errorf("acked=1 shows it flagged: %v", rows)
+	}
+	dj = call(http.MethodGet, "/api/plan/dump?view=v&format=json", "")
+	if folders := dj["folders"].([]any); len(folders) != 1 || folders[0].(map[string]any)["acked"] != true {
+		t.Errorf("the dump keeps an acked folder, marked: %v", folders)
 	}
 }
 
