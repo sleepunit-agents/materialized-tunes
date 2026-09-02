@@ -1827,10 +1827,31 @@ async function loadPlanReview() {
       const q = new URLSearchParams({ view: S.view });
       if (pl.kind) q.set('kind', pl.kind);
       pl.q = await api('/api/plan/queues?' + q);
+      if (planGone(pl.q)) return;
     } else {
       pl.tree = await api('/api/plan/tree?' + new URLSearchParams({ view: S.view, prefix: pl.prefix }));
+      if (planGone(pl.tree)) return;
     }
+    pl.regen = 0;
   } finally { pl.busy = false; render(); }
+}
+
+/* The server drops every built plan the moment the files under it move —
+   a rescan, an annotation write, the launch re-derive — and the plan's
+   sub-endpoints (queues, tree, folder) then answer 409 "no plan built"
+   until the next POST /api/plan. That is timing, not a fault: forget what
+   was drawn from the old plan and let the next render build a fresh one.
+   Returns true when the answer was that gap. Bounded: after a few
+   consecutive rebuilds the message is shown instead, so a workspace that
+   keeps moving underneath can't spin the plan forever. */
+function planGone(r) {
+  if (!(r && r.error && /no plan built/i.test(r.error))) return false;
+  const pl = S.pl;
+  pl.regen = (pl.regen || 0) + 1;
+  if (pl.regen > 3) return false;
+  S.pf = null; pl.q = null; pl.tree = null; pl.sel = null; pl.file = null; pl.files = null; pl.form = null; pl.radius = null;
+  pl.msg = 'the plan was rebuilt underneath — reloading';
+  return true;
 }
 
 async function openQueueRow(i) {
@@ -1841,7 +1862,12 @@ async function openQueueRow(i) {
   pl.form = { location: row.location, path: row.folder, facet: row.kind === 'uncategorized' ? 'category' : 'instrument',
     value: '', mode: row.kind === 'unsorted' ? 'default' : 'pin', note: '', local: false, word: '' };
   render();
-  pl.files = await api('/api/plan/folder?' + new URLSearchParams({ view: S.view, location: row.location, folder: row.folder }));
+  const r = await api('/api/plan/folder?' + new URLSearchParams({ view: S.view, location: row.location, folder: row.folder }));
+  if (pl.sel !== row) return; // the user moved on while it loaded
+  if (planGone(r)) { render(); return; }
+  // an answer without a list (an error body, an older server) is drawn as
+  // an empty folder with the reason, never handed to .map
+  pl.files = r && Array.isArray(r.files) ? r : { files: [], error: (r && r.error) || 'folder answered without a file list' };
   render();
 }
 
@@ -2072,7 +2098,7 @@ function renderPlan() {
       </div>`).join('') + (pl.q.total_rows > rows.length ? `<div style="font:400 10.5px var(--mono);color:var(--fg-faint);padding:8px 10px">… ${n(pl.q.total_rows - rows.length)} more folders — decide these first</div>` : '')
       : `<div style="font:400 11.5px var(--sans);color:var(--fg-faint);padding:24px 10px">${(S.pf && S.pf.error) ? 'plan failed: ' + esc(S.pf.error) : (pl.q && pl.q.error) ? esc(pl.q.error) : (pl.busy || S.pfBusy) ? 'building the plan…' : 'nothing waiting — every file the layout reads has a place'}</div>`;
   } else {
-    const t = pl.tree;
+    const t = pl.tree && Array.isArray(pl.tree.dirs) && Array.isArray(pl.tree.files) ? pl.tree : null;
     const parts = pl.prefix ? pl.prefix.split('/') : [];
     const crumb = `<div class="crumb"><span data-act="pl-crumb" data-p="">${esc(S.view)}</span>${parts.map((p, i) => ` / <span data-act="pl-crumb" data-p="${esc(parts.slice(0, i + 1).join('/'))}">${esc(p)}</span>`).join('')}${t ? ` <span style="color:var(--fg-faint)">· ${n(t.total)} files</span>` : ''}</div>`;
     list = crumb + (t ? (t.dirs.map(d => `<div class="pl-dir" data-act="pl-dir" data-name="${esc(d.name)}"><span>${esc(d.name)}/</span><span style="color:var(--fg-faint)">${n(d.count)}</span></div>`).join('')
@@ -2081,20 +2107,20 @@ function renderPlan() {
           <span class="nm" title="${esc(f.source_path)}">${esc(f.name)}</span>
           <span style="color:var(--fg-faint)">${esc(f.instrument || '—')}</span><span style="color:var(--fg-faint)">${esc(f.category || '—')}</span>
         </div>`).join('') + (t.total > t.dirs.reduce((a, d) => a + d.count, 0) + t.files.length ? `<div style="font:400 10.5px var(--mono);color:var(--fg-faint);padding:8px 4px">… more files at this level</div>` : ''))
-      : `<div style="font:400 11.5px var(--sans);color:var(--fg-faint);padding:24px 10px">building the plan…</div>`);
+      : `<div style="font:400 11.5px var(--sans);color:var(--fg-faint);padding:24px 10px">${(S.pf && S.pf.error) ? 'plan failed: ' + esc(S.pf.error) : (pl.tree && pl.tree.error) ? esc(pl.tree.error) : 'building the plan…'}</div>`);
   }
 
   let panel = '';
   if (pl.sel) {
     const r = pl.sel;
-    const files = pl.files ? pl.files.files : [];
+    const files = (pl.files && pl.files.files) || [];
     panel = `<div style="font:600 12px var(--sans)">${esc(r.folder.split('/').pop())} <span style="font:400 10.5px var(--mono);color:var(--fg-faint)">· ${esc(r.pack_path)} · ${n(r.count)} files</span></div>
       <div style="font:400 11px var(--sans);color:var(--fg-dim)">${esc(KIND_ASK[r.kind] || '')}</div>
       ${whyPanel({ category: r.category, instrument: r.instrument, family: r.family, why: r.why })}
       <div class="pl-files" data-scroll>${files.map((f, i) => `<div class="pl-file ${pl.file === f ? 'on' : ''}" data-act="pl-qfile" data-i="${i}">
           <span class="play-btn" data-act="pl-play" data-path="${esc(f.source_path)}" data-loc="${esc(f.location)}">${S.player && S.player.path === f.source_path && S.player.playing ? '❚❚' : '▶'}</span>
           <span class="nm" title="${esc(f.source_path)}">${esc(f.name)}</span><span class="fm">${esc(f.instrument || '—')} · ${esc(f.category || '—')}</span>
-        </div>`).join('') || `<div style="padding:8px;font:400 10.5px var(--mono);color:var(--fg-faint)">${pl.files ? 'no files' : 'loading…'}</div>`}</div>
+        </div>`).join('') || `<div style="padding:8px;font:400 10.5px var(--mono);color:var(--fg-faint)">${pl.files ? esc(pl.files.error || 'no files') : 'loading…'}</div>`}</div>
       ${pl.file ? whyPanel(pl.file) : ''}
       ${renderPlanForm()}`;
   } else if (pl.file) {
@@ -2304,8 +2330,8 @@ function wire() {
       if (act === 'pl-tab') { S.pl.tab = el.dataset.k; S.pl.sel = null; S.pl.file = null; S.pl.form = null; S.pl.q = null; S.pl.tree = null; render(); }
       if (act === 'pl-kind') { S.pl.kind = el.dataset.k; S.pl.q = null; S.pl.sel = null; S.pl.form = null; render(); }
       if (act === 'pl-row') { openQueueRow(+el.dataset.i); }
-      if (act === 'pl-qfile') { e.stopPropagation(); S.pl.file = S.pl.files.files[+el.dataset.i]; render(); }
-      if (act === 'pl-file') { openTreeFile(S.pl.tree.files[+el.dataset.i]); }
+      if (act === 'pl-qfile') { e.stopPropagation(); const f = ((S.pl.files && S.pl.files.files) || [])[+el.dataset.i]; if (f) { S.pl.file = f; render(); } }
+      if (act === 'pl-file') { const f = ((S.pl.tree && S.pl.tree.files) || [])[+el.dataset.i]; if (f) openTreeFile(f); }
       if (act === 'pl-play') { e.stopPropagation(); playFile(el.dataset.path, el.dataset.path.split('/').pop(), 0, el.dataset.loc); }
       if (act === 'pl-dir') { S.pl.prefix = S.pl.prefix ? S.pl.prefix + '/' + el.dataset.name : el.dataset.name; S.pl.tree = null; S.pl.file = null; S.pl.form = null; render(); }
       if (act === 'pl-crumb') { S.pl.prefix = el.dataset.p; S.pl.tree = null; S.pl.file = null; S.pl.form = null; render(); }

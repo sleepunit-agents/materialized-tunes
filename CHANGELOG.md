@@ -7,6 +7,42 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.33 — 2026-09-02 (a plan that vanishes underneath the Plan screen is reloaded, not a crash)
+
+Jonathan, on v0.9.31, with a screenshot: the Plan screen dead under a
+banner — `TypeError: Cannot read properties of undefined (reading 'map')`
+in `renderPlan`, thrown from the update chip's five-minute poll.
+
+The mechanism, reproduced headlessly: the server drops every built plan
+the moment the files under it move (`freshInputs` — a rescan, an
+annotation write, the launch re-derive that v0.9.30 stopped from doing it
+seven times), and the plan's sub-endpoints then answer 409 `no plan
+built for "v" yet` until the next `POST /api/plan`. `openQueueRow` stored
+that answer as if it were the folder listing — `pl.files = {error}` — and
+the next render of any kind, here the update poll, reached
+`pl.files.files.map` and died. The Plan screen stayed dead until F5
+because nothing ever cleared the bad value.
+
+Now (`app.js`):
+
+- **a 409 from queues / tree / folder means "rebuild", not "render this".**
+  `planGone` forgets the pre-flight and everything drawn from the old
+  plan; the next render sees nothing loaded and builds a fresh one, the
+  same path the screen takes on first visit. Bounded to three consecutive
+  rebuilds so a workspace that keeps moving underneath shows the message
+  instead of spinning.
+- **an answer without a list is drawn as an empty list with the reason.**
+  Folder and tree renders take `files`/`dirs` only when they are arrays;
+  a row or file click on a listing that is no longer there is ignored
+  rather than indexed.
+- **a folder answer that arrives after the user moved on is dropped**
+  (`pl.sel` changed while it loaded).
+
+Verified in a headless browser against a fixture: build plan → move an
+annotation file → plan another recipe (evicts the first) → click a queue
+row. Old build: the banner in the screenshot, stuck. New build: no page
+error, the queue re-plans, the second click lists the folder's two files.
+
 ## v0.9.32 — 2026-09-02 (covers are thumbnails, served from disk; the slot is never empty)
 
 "It takes a surprisingly long time to load in the album images for the
