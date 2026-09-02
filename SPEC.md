@@ -1604,7 +1604,8 @@ locally — slug and dir come from the catalog.
   which is right for *Sub-Urban*-style breaks and wrong for a synth pack
   whose Leads folder holds a labelled kick loop. Kind B above is mostly
   defaults, and a tool that can only pin would force mixed folders.
-- `observed = <date>` and `note = "…"` on `[[dir]]` and `[[instrument]]`
+- `observed = <date>` (quoted `"YYYY-MM-DD"` or a bare TOML date — both
+  decode, v0.9.34) and `note = "…"` on `[[dir]]` and `[[instrument]]`
   entries — provenance, same as `[vendor] observed`. A user's assertion
   from their own copy *is* the repo's "verified against a real copy" bar.
 

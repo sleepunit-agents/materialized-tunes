@@ -7,9 +7,11 @@ package annotations
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/bmatcuk/doublestar/v4"
@@ -171,9 +173,31 @@ type Dir struct {
 // of any export — their own opinion, never the repo's; upstream lint
 // rejects it, so it cannot leak. Shared by [[dir]] and [[instrument]].
 type Provenance struct {
-	Observed string `toml:"observed" json:"observed,omitempty"` // YYYY-MM-DD
+	Observed Date   `toml:"observed" json:"observed,omitempty"`
 	Note     string `toml:"note" json:"note,omitempty"`
 	Local    bool   `toml:"local" json:"local,omitempty"`
+}
+
+// Date is a YYYY-MM-DD provenance stamp. Hand-written TOML carries it
+// either quoted ("2026-09-01" — what the correction tool writes and what
+// SCHEMA shows) or bare (2026-09-01 — what [pack] / [acquisition]
+// observed take, and what a hand following them writes). Both decode to
+// the string form; before this, one bare date on a [[dir]] or
+// [[instrument]] entry failed the decode of the whole vendor file and
+// every classification under it.
+type Date string
+
+// UnmarshalTOML accepts a TOML string or a TOML date.
+func (d *Date) UnmarshalTOML(v any) error {
+	switch t := v.(type) {
+	case string:
+		*d = Date(t)
+	case time.Time:
+		*d = Date(t.Format("2006-01-02"))
+	default:
+		return fmt.Errorf("observed: want a date or \"YYYY-MM-DD\", got %T", v)
+	}
+	return nil
 }
 
 // Load reads every vendor under each root and merges them in order:

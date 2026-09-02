@@ -7,6 +7,32 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.34 — 2026-09-02 (a bare date on an entry no longer takes the vendor down)
+
+Jonathan, on v0.9.33, with a screenshot of Setup asking what
+`WAV/3PulseWaves` holds: "I thought we saw this one had an adg or
+whatever that told us where it went?" It does — the document tier
+(v0.9.24) read `Presets/Basics/3PulseWaves.adg` — but "Basics" names no
+instrument in the lexicon, so the rack was heard and said nothing. The
+fix is annotation, not code: the Samples From Mars vendor file now reads
+`basics` / `basic waveforms` as the catch-all synth (MS10 and WASP file
+their raw pulse/saw/square racks under `Presets/Basics/`, Soviet Synths
+under `Presets/06. Basic Waveforms/`; 18 racks; "Basic Sub" is
+whole-word safe). Those multisamples land in `Synth/Multisamples/<pack>/`
+after the next annotations pull and rescan.
+
+Writing that entry surfaced a real defect: the upstream lint (L7)
+demanded a bare TOML date on `observed`, while SCHEMA's example, the
+correction tool's writes and this decoder all took a string — and a
+bare date failed the decode of the **whole vendor file**, every
+classification under it with it. Both sides now take either form:
+
+- **`observed` on `[[dir]]` / `[[instrument]]` decodes from a TOML
+  string or a TOML date** (`annotations.Date`); the corrections tool
+  keeps writing the quoted form. Test covers both, and refuses an
+  integer.
+- lint L7 upstream accepts `"YYYY-MM-DD"` as well as the bare date.
+
 ## v0.9.33 — 2026-09-02 (a plan that vanishes underneath the Plan screen is reloaded, not a crash)
 
 Jonathan, on v0.9.31, with a screenshot: the Plan screen dead under a

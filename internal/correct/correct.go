@@ -184,7 +184,7 @@ func (c Correction) validate() error {
 // dirEntry is the [[dir]] entry a category / instrument / role correction writes.
 func (c Correction) dirEntry(inPack string) annotations.Dir {
 	d := annotations.Dir{Path: inPack}
-	d.Observed, d.Note, d.Local = time.Now().Format("2006-01-02"), c.Note, c.Local
+	d.Observed, d.Note, d.Local = annotations.Date(time.Now().Format("2006-01-02")), c.Note, c.Local
 	switch {
 	case c.Facet == "category" && c.Mode == "default":
 		d.DefaultCategory = c.Value
@@ -203,7 +203,7 @@ func (c Correction) dirEntry(inPack string) annotations.Dir {
 // instrumentEntry is the pack [[instrument]] block an alias correction writes.
 func (c Correction) instrumentEntry() annotations.Instrument {
 	ins := annotations.Instrument{ID: c.Value, Aliases: []string{strings.TrimSpace(c.Word)}, Scope: "pack"}
-	ins.Observed, ins.Note, ins.Local = time.Now().Format("2006-01-02"), c.Note, c.Local
+	ins.Observed, ins.Note, ins.Local = annotations.Date(time.Now().Format("2006-01-02")), c.Note, c.Local
 	return ins
 }
 
@@ -506,7 +506,7 @@ func writeEntry(ws *workspace.Workspace, t Target, c Correction) error {
 				aliases, _ := m["aliases"].([]any)
 				aliases = append(aliases, ins.Aliases[0])
 				m["aliases"] = aliases
-				m["observed"], m["note"] = ins.Observed, orKeep(m["note"], ins.Note)
+				m["observed"], m["note"] = string(ins.Observed), orKeep(m["note"], ins.Note)
 				if ins.Local {
 					m["local"] = true
 				}
@@ -514,7 +514,7 @@ func writeEntry(ws *workspace.Workspace, t Target, c Correction) error {
 			}
 		}
 		if !merged {
-			e := map[string]any{"id": ins.ID, "aliases": []any{ins.Aliases[0]}, "observed": ins.Observed}
+			e := map[string]any{"id": ins.ID, "aliases": []any{ins.Aliases[0]}, "observed": string(ins.Observed)}
 			if ins.Note != "" {
 				e["note"] = ins.Note
 			}
@@ -564,7 +564,7 @@ func writeEntry(ws *workspace.Workspace, t Target, c Correction) error {
 				delete(entry, k)
 			}
 		}
-		entry["observed"] = d.Observed
+		entry["observed"] = string(d.Observed)
 		if d.Note != "" {
 			entry["note"] = d.Note
 		}
