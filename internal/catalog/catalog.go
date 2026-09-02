@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/sleepunit-agents/materialized-tunes/internal/ableton"
@@ -29,8 +30,76 @@ type Entry struct {
 	ScannedAt time.Time    `json:"scanned_at"`
 }
 
-// Load reads a catalog file into a path-keyed map. A missing file is an
-// empty catalog, not an error.
+// Load returns a catalog as a path-keyed map. A missing file is an empty
+// catalog, not an error.
+//
+// Decoded catalogs are shared process-wide: one decode per catalog file
+// version, however many readers ask. Every surface that touches a
+// location — the summary, the library, a plan's inputs, a harvest, the
+// sample lists — used to decode the JSONL from disk on every call, and an
+// archive drive's catalog is hundreds of megabytes of Live-set refs; the
+// Plan screen sat on "loading catalogs 4/7" every visit while the launch
+// re-harvest was bumping the inputs stamp underneath it (2026-09-02). The
+// map is validated against the file's size and mtime on each ask and
+// dropped by Write, so a rescan or an outside rewrite is seen. Callers
+// must treat the map as read-only — it is the same map everyone holds.
+func Load(path string) (map[string]Entry, error) {
+	st, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return map[string]Entry{}, nil
+		}
+		return nil, err
+	}
+	shared.mu.Lock()
+	c := shared.m[path]
+	if c == nil {
+		c = &cached{}
+		shared.m[path] = c
+	}
+	shared.mu.Unlock()
+
+	// one decode at a time per path: concurrent readers of a cold catalog
+	// wait for the first instead of each decoding it
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.entries != nil && c.size == st.Size() && c.mtime.Equal(st.ModTime()) {
+		return c.entries, nil
+	}
+	entries, err := read(path)
+	if err != nil {
+		return nil, err
+	}
+	// the file may have been replaced while we read; only remember a
+	// decode whose stamp still matches, so the next ask re-reads
+	if after, err := os.Stat(path); err == nil && after.Size() == st.Size() && after.ModTime().Equal(st.ModTime()) {
+		c.size, c.mtime, c.entries = st.Size(), st.ModTime(), entries
+	}
+	return entries, nil
+}
+
+type cached struct {
+	mu      sync.Mutex
+	size    int64
+	mtime   time.Time
+	entries map[string]Entry
+}
+
+var shared = struct {
+	mu sync.Mutex
+	m  map[string]*cached
+}{m: map[string]*cached{}}
+
+// Invalidate forgets the shared decode of path. Write calls it; a writer
+// that bypasses Write (a test, an outside tool) needs only to change the
+// file's size or mtime.
+func Invalidate(path string) {
+	shared.mu.Lock()
+	delete(shared.m, path)
+	shared.mu.Unlock()
+}
+
+// read decodes a catalog file.
 //
 // Lines are read with a streaming decoder, not a line scanner: a Live
 // set's entry carries every sample it references, and on an archive
@@ -38,7 +107,7 @@ type Entry struct {
 // line cap turned one such document into "token too long" for the whole
 // location — every reader of that catalog failed, and the app opened to
 // an empty window (2026-09-02).
-func Load(path string) (map[string]Entry, error) {
+func read(path string) (map[string]Entry, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -96,5 +165,9 @@ func Write(path string, entries map[string]Entry) error {
 		os.Remove(tmp)
 		return err
 	}
-	return os.Rename(tmp, path)
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	Invalidate(path)
+	return nil
 }

@@ -14,8 +14,10 @@ package harvest
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -425,12 +427,55 @@ func writeMeta(ws *workspace.Workspace, lc workspace.LocationConfig, out []Meta)
 		os.Remove(tmp)
 		return err
 	}
-	if err := os.Rename(tmp, path); err != nil {
+	// A re-derive that changed nothing leaves the file alone: the plan's
+	// inputs stamp is size+mtime of every file it reads, and a launch
+	// re-harvest that rewrote seven identical caches dropped seven cached
+	// plans in a row (2026-09-02). Same bytes, same file.
+	if sameBytes(tmp, path) {
+		os.Remove(tmp)
+	} else if err := os.Rename(tmp, path); err != nil {
 		os.Remove(tmp)
 		return err
 	}
-	os.WriteFile(filepath.Join(dir, ".format"), []byte(MetaStamp()), 0o644)
+	stampPath := filepath.Join(dir, ".format")
+	if cur, err := os.ReadFile(stampPath); err != nil || string(cur) != MetaStamp() {
+		os.WriteFile(stampPath, []byte(MetaStamp()), 0o644)
+	}
 	return nil
+}
+
+// sameBytes reports whether two files hold identical content.
+func sameBytes(a, b string) bool {
+	sa, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	sb, err := os.Stat(b)
+	if err != nil || sa.Size() != sb.Size() {
+		return false
+	}
+	fa, err := os.Open(a)
+	if err != nil {
+		return false
+	}
+	defer fa.Close()
+	fb, err := os.Open(b)
+	if err != nil {
+		return false
+	}
+	defer fb.Close()
+	ra, rb := bufio.NewReaderSize(fa, 1<<20), bufio.NewReaderSize(fb, 1<<20)
+	ba, bb := make([]byte, 1<<16), make([]byte, 1<<16)
+	for {
+		na, ea := io.ReadFull(ra, ba)
+		nb, eb := io.ReadFull(rb, bb)
+		if na != nb || !bytes.Equal(ba[:na], bb[:nb]) {
+			return false
+		}
+		if ea != nil || eb != nil {
+			return ea == eb || (ea == io.EOF && eb == io.EOF)
+		}
+	}
 }
 
 // Explainer answers "why did this file land there" for one location:

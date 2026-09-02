@@ -3,8 +3,10 @@ package catalog
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sleepunit-agents/materialized-tunes/internal/ableton"
 )
@@ -53,3 +55,41 @@ func TestLoadBadLine(t *testing.T) {
 }
 
 func writeRaw(p, s string) error { return os.WriteFile(p, []byte(s), 0o644) }
+
+// One decode per catalog file version, shared by every reader; a Write
+// or an outside rewrite is seen on the next Load.
+func TestLoadShared(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "catalog.jsonl")
+	if err := Write(p, map[string]Entry{"a.wav": {Path: "a.wav", Size: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	one, _ := Load(p)
+	two, _ := Load(p)
+	if reflect.ValueOf(one).Pointer() != reflect.ValueOf(two).Pointer() {
+		t.Fatal("a second Load must hand back the shared decode")
+	}
+	// Write drops the shared decode
+	if err := Write(p, map[string]Entry{"a.wav": {Path: "a.wav", Size: 1}, "b.wav": {Path: "b.wav", Size: 2}}); err != nil {
+		t.Fatal(err)
+	}
+	if three, _ := Load(p); len(three) != 2 {
+		t.Fatalf("after Write: %d entries", len(three))
+	}
+	// an outside rewrite of the same byte length is seen through its mtime
+	if err := writeRaw(p, "{\"path\":\"c.wav\",\"size\":1}\n{\"path\":\"d.wav\",\"size\":2}\n"); err != nil {
+		t.Fatal(err)
+	}
+	past := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(p, past, past); err != nil {
+		t.Fatal(err)
+	}
+	four, _ := Load(p)
+	if _, ok := four["c.wav"]; !ok || len(four) != 2 {
+		t.Fatalf("outside rewrite not seen: %v", four)
+	}
+	// gone: an empty catalog, and the stale decode stays out of the way
+	os.Remove(p)
+	if five, _ := Load(p); len(five) != 0 {
+		t.Fatalf("removed catalog must read empty, got %d", len(five))
+	}
+}

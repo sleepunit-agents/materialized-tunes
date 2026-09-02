@@ -7,6 +7,44 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.30 — 2026-09-02 (a catalog is decoded once, not per screen)
+
+"Library is quick on launch now, but if I go to recipe or plan or
+anything it's loading catalog 4/7 or whatever. The SFM one."
+
+Every reader of a location decoded its catalog JSONL from disk on every
+call: the launch summary, the library, a plan's inputs, a harvest, the
+sample lists. The archive drive's catalog carries every Live set's
+sample refs, so it is the one that takes seconds to decode — and the
+Plan screen was decoding it on every visit. Two things compounded: the
+plan cache keys on a stamp of every file it reads (catalogs, the meta
+caches, the annotations), and the launch re-derive (v0.9.27) rewrites
+one meta cache per location as it walks them, even when the bytes come
+out identical. Each rewrite moved the stamp, each moved stamp dropped
+the cached plan, each dropped plan decoded all seven catalogs again —
+and the harvest was decoding the same catalogs itself in parallel.
+
+- **One decode per catalog file version, process-wide.** `catalog.Load`
+  keeps the decoded map and hands the same map to every reader, checked
+  against the file's size and mtime on each ask, dropped by `Write`.
+  Concurrent first readers of a cold catalog wait for one decode instead
+  of each running their own. Everything that reads a location — summary,
+  packs, samples, plan inputs, harvest, the explainer, the resolver — got
+  faster without changing. The map is shared, so readers treat it as
+  read-only (none mutated it before; the contract is now written down).
+- **A re-derive that changed nothing leaves the file alone.** The
+  harvest writes its meta cache to a scratch file and compares before
+  renaming over the old one; identical bytes, same file, same mtime. The
+  `.format` build stamp is rewritten only when it differs. A launch on a
+  new build now moves the plan stamp once (the stamp) plus once per
+  location whose classifications actually changed — not seven times
+  regardless.
+
+Plan and Recipe after this: first visit after launch decodes what the
+launch re-harvest hasn't already (usually nothing); every visit after
+answers from the cached artifact. "loading catalogs" appears when a
+catalog on disk really changed — a rescan — and nowhere else.
+
 ## v0.9.29 — 2026-09-02 (a redraw no longer throws away where you were)
 
 "Lots of shit scrolls back to the top for no sane reason. Like if I click
