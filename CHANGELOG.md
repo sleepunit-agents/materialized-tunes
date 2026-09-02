@@ -7,6 +7,49 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.35 — 2026-09-02 (a drum loop is a break; the picker names each instrument once)
+
+Jonathan, on v0.9.34, with the Plan queue for a new pack: a hundred files
+named `NN_RA_Drum_Loop_124_{Full,NoKick,Stripped,Toploop}` sitting under
+drums · loops — "all of those are clearly drum loops" — and `break` twice
+in the instrument dropdown. Both are the same fact seen from two sides:
+the lexicon carried no entry for the phrase *drum loop*, and it carries
+some ids more than once.
+
+**The phrase.** "Drum loop" is a break by its commonest name, and the
+lexicon had never been told: `break` knew "breakbeat", "drum break",
+"drum groove", "beat loop" — not the two words vendors actually write.
+"Drum" alone is the drums catch-all, so every such file dissolved into
+Drums/_General. The fix is annotation, not code (sample-vendor-annotations
+`instruments.toml`): a third `break` entry carries `drum loop` /
+`drum loops` / `drumloop`, and its *position* is the rule — below every
+named piece and the fill (`FF_CP_124_drum_loop_venice_shaker` stays a
+shaker, `Drum Loop Fill 03` a fill), below percussion's catch-all (a
+Percussion folder inside a Drum Loops tree still says more than the
+tree; `_Perc` on a drum-loop stem is its percussion layer), and above
+`drums`, the only word it displaces. Probed with the real harvester over
+the 165,490-file house listing: 1,806 files move, every one of them
+drums · loops → break · loops (Zero-G Jungle Warfare 2/3 `Drum Loops/`,
+Loopmasters and Sample Magic inside the Octatrack factory content, SFM
+CR78 and SK1 `Drum Loops 120 BPM/`); nothing else shifts. The 64
+`drum loop` paths that stay put are SFM Modular Drum Loops' `06. Tops/`
+— "tops" is a layer, kept out of the lexicon on purpose (v0.9.13).
+
+**The picker.** The lexicon repeats an id to rank a second set of words
+lower (`break` now three times: "breakbeat" high, "drum loop" just above
+the catch-all, "beat"/"groove" last). `/api/lexicon` handed the pickers
+every entry, so the dropdown listed break as many times as the file did.
+It now offers each id once, under its first entry, the way categories
+already were. A `[[dir]]` pin or a correction naming `break` was never
+affected — only the menu.
+
+Tests: `TestDrumLoopIsABreak` (phrase alone, glued, folder alone, piece
+in the same segment, piece on the stem vs the folder, one-shot gate,
+bare "drum" still the catch-all); `TestLexiconOffersEachIdOnce`. The
+existing `AU_PC_94_drum_loop_full_cp` case now expects break — the
+assertion it makes (a trailing genre/pack code is not a clap) is
+unchanged.
+
 ## v0.9.34 — 2026-09-02 (a bare date on an entry no longer takes the vendor down)
 
 Jonathan, on v0.9.33, with a screenshot of Setup asking what

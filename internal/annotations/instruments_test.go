@@ -42,6 +42,12 @@ family = "percussion"
 aliases = ["shaker", "shakers"]
 
 [[instrument]]
+id = "break"
+family = "drums"
+aliases = ["drum loop", "drum loops", "drumloop"]
+category = "loops"
+
+[[instrument]]
 id = "drums"
 family = "drums"
 aliases = ["drum", "drums", "kit", "kits"]
@@ -107,7 +113,7 @@ func TestInstrumentResolve(t *testing.T) {
 		// codes: a two-letter abbreviation is also a Splice pack code or a
 		// genre tag, so it speaks for a segment only when no word does
 		{"pack code beside a word is not a clap", "FF_CP_124_drum_loop_venice_shaker", []string{"Loops"}, "shaker"},
-		{"genre tag beside a word is not a clap", "AU_PC_94_drum_loop_full_cp", []string{"Loops"}, "drums"},
+		{"genre tag beside a word is not a clap", "AU_PC_94_drum_loop_full_cp", []string{"Loops"}, "break"},
 		{"code beside another family's word", "AU_PC_94_bass_loop_cp", nil, "bass"},
 		// but a name that says nothing longer still means the machine code,
 		// and it ranks as its instrument against the folder's catch-all
@@ -237,6 +243,37 @@ func TestInstrumentCategoryGate(t *testing.T) {
 	}
 	if got, _ := lx.ResolveIn("loops", "BRK 01", []string{"Misc"}, vendor); got != "break" {
 		t.Errorf("vendor alias of a gated id on a loop: got %q, want break", got)
+	}
+}
+
+// "Drum loop" is a break by its commonest name, carried by a second break
+// entry ranked just above the drums catch-all: below every named piece, so
+// a piece named anywhere on the path still wins, and above "drum" alone,
+// the only word it displaces. (Jonathan, "01_RA_Drum_Loop_124_Full" filed
+// as drums · loops, 2026-09-02.)
+func TestDrumLoopIsABreak(t *testing.T) {
+	lx := testLex(t)
+	cases := []struct {
+		name, category, stem string
+		dirs                 []string
+		want                 string
+	}{
+		{"the phrase alone", "loops", "01_RA_Drum_Loop_124_Full", nil, "break"},
+		{"glued", "loops", "DrumLoop_07", []string{"Loops"}, "break"},
+		{"the folder alone", "loops", "Groove 01", []string{"Drum Loops"}, "break"},
+		{"a piece in the same segment wins", "loops", "FF_CP_124_drum_loop_venice_shaker", nil, "shaker"},
+		{"a piece on the stem beats the folder", "loops", "Shaker 03", []string{"Drum Loops"}, "shaker"},
+		{"a drum piece too", "loops", "Drum Loop Kick 02", nil, "kick"},
+		{"a one-shot cannot be a break", "one-shots", "Drum Loop Hit 02", nil, "drums"},
+		{"drum alone is still the catch-all", "loops", "Drum 02", nil, "drums"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, _ := lx.ResolveIn(c.category, c.stem, c.dirs, nil)
+			if got != c.want {
+				t.Errorf("ResolveIn(%q, %q, %v) = %q, want %q", c.category, c.stem, c.dirs, got, c.want)
+			}
+		})
 	}
 }
 

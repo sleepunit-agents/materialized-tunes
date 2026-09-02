@@ -322,12 +322,21 @@ func (s *Server) lexicon(w http.ResponseWriter, _ *http.Request) {
 		Family  string `json:"family"`
 		Display string `json:"display,omitempty"`
 	}
+	// One id, several entries: the lexicon repeats an id to rank a second
+	// set of words lower ("break" carries "drum loop" and "beat" far below
+	// "breakbeat"). The picker offers each id once, under its first entry,
+	// or the dropdown listed break three times.
 	var instruments []ins
+	seen := map[string]bool{}
 	for _, i := range lx.Instruments {
+		if seen[i.ID] {
+			continue
+		}
+		seen[i.ID] = true
 		instruments = append(instruments, ins{i.ID, i.Family, i.Display})
 	}
 	var cats []string
-	seen := map[string]bool{}
+	seen = map[string]bool{}
 	for _, c := range cx.Categories { // one id, several grammar entries
 		if !seen[c.ID] {
 			seen[c.ID] = true

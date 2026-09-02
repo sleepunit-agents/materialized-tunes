@@ -157,3 +157,38 @@ func TestReviewSurface(t *testing.T) {
 		t.Errorf("acked=1 shows it flagged: %v", rows)
 	}
 }
+
+// The lexicon repeats an id to rank a second set of words lower (break
+// carries "drum loop" and "beat" below "breakbeat"); the picker offers each
+// id once, under its first entry, or the dropdown listed break three times.
+func TestLexiconOffersEachIdOnce(t *testing.T) {
+	dir := t.TempDir()
+	ws, err := workspace.Init(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.MkdirAll(filepath.Join(dir, "annotations"), 0o755)
+	os.WriteFile(filepath.Join(dir, "annotations", "instruments.toml"), []byte(
+		"[[instrument]]\nid=\"break\"\nfamily=\"drums\"\naliases=[\"break\"]\ncategory=\"loops\"\n"+
+			"[[instrument]]\nid=\"kick\"\nfamily=\"drums\"\naliases=[\"kick\"]\n"+
+			"[[instrument]]\nid=\"break\"\nfamily=\"drums\"\naliases=[\"drum loop\"]\ncategory=\"loops\"\n"+
+			"[[instrument]]\nid=\"drums\"\nfamily=\"drums\"\naliases=[\"drum\"]\n"+
+			"[[instrument]]\nid=\"break\"\nfamily=\"drums\"\naliases=[\"beat\"]\ncategory=\"loops\"\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "annotations", "categories.toml"), []byte("[[category]]\nid=\"loops\"\naliases=[\"loop\"]\n"), 0o644)
+	s := &Server{ws: ws}
+	w := httptest.NewRecorder()
+	s.lexicon(w, httptest.NewRequest(http.MethodGet, "/api/lexicon", nil))
+	var got struct {
+		Instruments []struct{ ID string } `json:"instruments"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, i := range got.Instruments {
+		ids = append(ids, i.ID)
+	}
+	if want := "break kick drums"; strings.Join(ids, " ") != want {
+		t.Errorf("lexicon instruments = %v, want %q", ids, want)
+	}
+}
