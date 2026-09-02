@@ -7,6 +7,46 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.29 — 2026-09-02 (a redraw no longer throws away where you were)
+
+"Lots of shit scrolls back to the top for no sane reason. Like if I click
+play on a sample when cataloging stuff, that list scrolls back to the
+top. But specifically right now, as I try to scroll down my library, I
+keep getting tossed to the top. It eventually stopped, but it took
+fucking forever."
+
+One cause under every instance: the frontend has always redrawn the
+whole page from a string (`#app.innerHTML = …`) on every state change,
+and a rebuilt scroller starts at scroll position zero. A play click
+redraws. A toast timing out redraws. Setup redraws every 0.7 s while any
+scan runs — an archive-drive rescan is minutes of being yanked to the
+top every 0.7 s, which is the "took forever" and the "eventually
+stopped". Nothing about the redraw was the user's doing, so nothing
+about it should cost the user their place.
+
+- **A render keeps every scroller where it was.** Before the rebuild the
+  live scroll position of the main pane and every inner list (plan
+  queues, file lists, issue lists) is recorded under a key that survives
+  the rebuild; after it, put back. Scroll events on the way (captured at
+  `#app`) keep the same map current, so leaving a view and coming back
+  lands where you left — pack detail → Library returns to the same row.
+  Only a *different* view starts at the top: the main pane carries its
+  view in `data-view` (library / samples / discover / a pack and folder /
+  each screen), so Library, a pack, and Setup each keep their own place.
+- **A render keeps the focused field and its caret.** Typing in the
+  correction form, the search box, the recipe filter while a poll lands
+  no longer loses the cursor. `applyFilters` and `renderPreservingSearch`
+  did this by hand for two fields; it is now every field.
+- **Setup redraws during a scan only when a row actually moved**, and a
+  scan poll that fails (server busy under a big harvest) keeps polling
+  instead of dying with a banner.
+
+Verified headlessly against a 160-pack fixture: Library at 1500 px stays
+at 1500 across a render and across a ten-render storm while scrolling
+(old build: 0); search keeps focus and caret at 2; Setup opens at the
+top and Library returns to 900; a 120-file pack scrolled to the bottom
+stays at the bottom after a play click (old build: top of the list).
+
 ## v0.9.28 — 2026-09-02 (a big Live set no longer blanks the app; every build keeps a log)
 
 Jonathan rescanned his archive drive on v0.9.27 — it finished — and the

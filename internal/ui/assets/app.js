@@ -301,6 +301,66 @@ function render() {
   try { renderInner(); } catch (e) { fatal(`rendering the ${S.screen} screen`, e); }
 }
 
+/* ---------- what a rebuild must not lose ----------
+   Every render rebuilds #app from a string, and a rebuilt scroller starts
+   at the top. A scan poll, a play click, a toast timing out — none of
+   those is a reason to lose the user's place, and for a while they all
+   did ("as I try to scroll down my library, I keep getting tossed to the
+   top"). So: remember where every scroller inside #app was, by a key
+   that survives the rebuild; put it back after; give the focused field
+   its caret back. Only a different view starts at the top — the main
+   scroller carries its view in data-view, so Library and pack detail and
+   Setup each keep their own place. */
+const scrolled = new Map();  // scroll key → {top, left}
+function scrollKey(el) {
+  const parts = [];
+  for (let e = el; e && e !== $app; e = e.parentElement) {
+    if (e.dataset && e.dataset.view) { parts.push('view=' + e.dataset.view); break; }
+    let i = 0;
+    for (let sib = e.previousElementSibling; sib; sib = sib.previousElementSibling) if (sib.tagName === e.tagName) i++;
+    parts.push(`${e.tagName}${e.id ? '#' + e.id : ''}${e.classList.length ? '.' + e.classList[0] : ''}[${i}]`);
+  }
+  return parts.join('/');
+}
+$app.addEventListener('scroll', (e) => {
+  const el = e.target;
+  if (!(el instanceof Element)) return;
+  scrolled.set(scrollKey(el), { top: el.scrollTop, left: el.scrollLeft });
+}, true);
+const scrollers = () => $app.querySelectorAll('.main, [data-scroll]');
+// Scroll events land a frame late; a render in the middle of a wheel gesture
+// would otherwise put back last frame's position. Read the live value first.
+function snapshotScroll() {
+  for (const el of scrollers()) if (el.scrollTop || el.scrollLeft) scrolled.set(scrollKey(el), { top: el.scrollTop, left: el.scrollLeft });
+}
+function restoreScroll() {
+  if (!scrolled.size) return;
+  for (const el of scrollers()) {
+    const at = scrolled.get(scrollKey(el));
+    if (at) { el.scrollTop = at.top; el.scrollLeft = at.left; }
+  }
+}
+function viewKey() {
+  if (S.screen !== 'library') return S.screen;
+  if (S.packOpen) return `pack:${S.packOpen.location}/${S.packOpen.dir}/${S.pdFolder}`;
+  if (S.discover) return 'discover';
+  return sampleMode() ? 'samples' : 'library';
+}
+function focusSnapshot() {
+  const a = document.activeElement;
+  if (!a || !a.id || !$app.contains(a) || !/INPUT|TEXTAREA|SELECT/.test(a.tagName)) return null;
+  let start = null, end = null;
+  try { start = a.selectionStart; end = a.selectionEnd; } catch (e) { /* not a text field */ }
+  return { id: a.id, start, end };
+}
+function focusRestore(f) {
+  if (!f) return;
+  const el = document.getElementById(f.id);
+  if (!el || document.activeElement === el) return;
+  el.focus({ preventScroll: true });
+  if (f.start != null && el.setSelectionRange) { try { el.setSelectionRange(f.start, f.end ?? f.start); } catch (e) { /* number inputs refuse */ } }
+}
+
 // What launch could not read, on screen. A catalog that fails to load is
 // a location that would otherwise silently vanish from every screen; a
 // launch request that failed is why the library is empty. The log path
@@ -316,16 +376,20 @@ function renderInner() {
   const main = S.booting
     ? `<div style="padding:40px 24px;font:400 12px var(--mono);color:var(--fg-faint)">reading the catalog…</div>`
     : screens[S.screen]();
+  const focus = focusSnapshot();
+  snapshotScroll();
   $app.innerHTML = `
     ${titlebar()}
     ${tabbar()}
     ${bootBanner()}
-    <div class="main">${main}</div>
+    <div class="main" data-view="${esc(viewKey())}">${main}</div>
     ${addToPicker()}
     ${dirPicker()}
     ${statusbar()}
   `;
   wire();
+  restoreScroll();
+  focusRestore(focus);
   document.querySelector('.pd-row.playing')?.scrollIntoView({ block: 'nearest' });
 }
 
@@ -1057,15 +1121,21 @@ function recipeEdit(promise, toast) {
   });
 }
 
+let scansSeen = '';
 async function pollScans() {
-  S.scans = await api('/api/scan') || {};
-  const busy = Object.values(S.scans).some(s => s.status === 'running');
-  if (S.screen === 'sources') {
-    if (busy) render();
-    else if (S._wasBusy) { await loadSources(); await loadPacks(); render(); }
-  }
-  S._wasBusy = busy;
-  setTimeout(pollScans, busy ? 700 : 4000);
+  try {
+    S.scans = await api('/api/scan') || {};
+    const busy = Object.values(S.scans).some(s => s.status === 'running');
+    const seen = JSON.stringify(S.scans);
+    if (S.screen === 'sources') {
+      // a running scan redraws the rows only when a row actually moved
+      if (busy) { if (seen !== scansSeen) render(); }
+      else if (S._wasBusy) { await loadSources(); await loadPacks(); render(); }
+    }
+    scansSeen = seen;
+    S._wasBusy = busy;
+    setTimeout(pollScans, busy ? 700 : 4000);
+  } catch (e) { setTimeout(pollScans, 4000); } // server busy or gone; keep polling, keep quiet
 }
 
 async function startScan(name) {
@@ -1473,7 +1543,7 @@ function renderRecipe() {
         <div style="flex:1"></div>
         <span style="color:${over > 0 ? 'var(--err)' : 'var(--green)'}">${over > 0 ? fmtB(over) + ' over' : fmtB(usable - onDisk) + ' free'}</span>
       </div>
-      <div class="issues">${issues}</div>
+      <div class="issues" data-scroll>${issues}</div>
       <div class="mat-btn" data-act="go-plan">PLAN → ${n(S.pf.files ?? 0)} FILES${(pf.plan && (pf.plan.unsorted || pf.plan.uncategorized || pf.plan.general)) ? ` · ${n((pf.plan.unsorted||0) + (pf.plan.uncategorized||0) + (pf.plan.general||0))} NEED A DECISION` : ''}</div>
       <div style="font:400 10px var(--mono);color:var(--fg-faint);margin-top:8px;text-align:center">see where every file lands and fix what's wrong — materialize is the plan's exit</div>`;
   } else {
@@ -1852,7 +1922,7 @@ function renderVerdict() {
       <div style="flex:1"></div>
       <span style="font:700 12px var(--mono);color:${fitColor}">${fitLabel}</span>
     </div>
-    ${issues ? `<div class="issues" style="max-height:160px;overflow:auto">${issues}</div>` : ''}
+    ${issues ? `<div class="issues" data-scroll style="max-height:160px;overflow:auto">${issues}</div>` : ''}
     <div class="mat-btn ${!fits || errors.length ? 'blocked' : ''}" style="margin:0" data-act="go-run">MATERIALIZE — ${n(pf.files ?? 0)} FILES</div>
     ${pf.migrate ? `<div class="mat-btn ${errors.length ? 'blocked' : ''}" style="margin:0" data-act="go-migrate">MIGRATE — MOVE ${n(pf.migrate.moves + pf.migrate.companions)} FILES INTO THE NEW LAYOUT</div>
     <div style="font:400 10px var(--mono);color:var(--fg-faint);text-align:center">renames the last materialize in place — nothing re-rendered, no duplicates, emptied folders removed</div>` : ''}
@@ -1908,7 +1978,7 @@ function renderPlan() {
     panel = `<div style="font:600 12px var(--sans)">${esc(r.folder.split('/').pop())} <span style="font:400 10.5px var(--mono);color:var(--fg-faint)">· ${esc(r.pack_path)} · ${n(r.count)} files</span></div>
       <div style="font:400 11px var(--sans);color:var(--fg-dim)">${esc(KIND_ASK[r.kind] || '')}</div>
       ${whyPanel({ category: r.category, instrument: r.instrument, family: r.family, why: r.why })}
-      <div class="pl-files">${files.map((f, i) => `<div class="pl-file ${pl.file === f ? 'on' : ''}" data-act="pl-qfile" data-i="${i}">
+      <div class="pl-files" data-scroll>${files.map((f, i) => `<div class="pl-file ${pl.file === f ? 'on' : ''}" data-act="pl-qfile" data-i="${i}">
           <span class="play-btn" data-act="pl-play" data-path="${esc(f.source_path)}" data-loc="${esc(f.location)}">${S.player && S.player.path === f.source_path && S.player.playing ? '❚❚' : '▶'}</span>
           <span class="nm" title="${esc(f.source_path)}">${esc(f.name)}</span><span class="fm">${esc(f.instrument || '—')} · ${esc(f.category || '—')}</span>
         </div>`).join('') || `<div style="padding:8px;font:400 10.5px var(--mono);color:var(--fg-faint)">${pl.files ? 'no files' : 'loading…'}</div>`}</div>
@@ -1930,7 +2000,7 @@ function renderPlan() {
         <div style="font:400 10.5px var(--sans);color:var(--fg-faint)">${esc(pl.local.dir)}</div>
         ${renderReconcile()}` : ''}`;
   }
-  return `<div class="pl-wrap">${head ? `<div class="pl-list">${head}${list}</div>` : ''}<div class="pl-panel">${panel}</div></div>`;
+  return `<div class="pl-wrap">${head ? `<div class="pl-list" data-scroll>${head}${list}</div>` : ''}<div class="pl-panel" data-scroll>${panel}</div></div>`;
 }
 
 /* ---------- events ---------- */
