@@ -189,3 +189,101 @@ func TestRecipeSetDeviceAndStorage(t *testing.T) {
 		t.Errorf("a refused edit must leave device = op1, got %q", v.Device)
 	}
 }
+
+// The Edit form saves the recipe head in one write — every scalar plus
+// the [companions] override — and the file it leaves is one the loader
+// reads back with exactly those values, with the rule blocks and the
+// hand-written comments untouched.
+func TestRecipeSetOptionsRoundTrip(t *testing.T) {
+	recipe := `# push — hand-tuned, keep the comments
+name    = "push"
+device  = "push3"
+storage = "cargo"
+# the target is a staging folder
+target  = "~/stage"
+limit   = 40
+
+# racks ride along on this one
+[companions]
+types = ["adg"]
+
+# added from the library: Grit
+[[include]]
+location = "splice"
+glob     = "Grit/**"
+as       = "SPLICE/Grit"
+`
+	s, path := editServer(t, recipe)
+	for _, d := range []string{"devices", "storage"} {
+		os.MkdirAll(filepath.Join(s.ws.Root, d), 0o755)
+	}
+	os.WriteFile(filepath.Join(s.ws.Root, "devices", "push3.toml"), []byte("name = \"push3\"\n"), 0o644)
+	os.WriteFile(filepath.Join(s.ws.Root, "devices", "op1.toml"), []byte("name = \"op1\"\n"), 0o644)
+	os.WriteFile(filepath.Join(s.ws.Root, "storage", "cargo.toml"), []byte("name = \"cargo\"\n"), 0o644)
+
+	// Override every knob, replace the companions block.
+	edit(t, s, map[string]any{"action": "set-options", "name": "push", "device": "op1", "storage": "cargo",
+		"target": "", "layout": "{family}/{pack}/{file}", "limit": 0, "format_tree": "keep", "dedup": "content",
+		"cuts": "all", "vendor_prep": "keep",
+		"companions": map[string]any{"types": []string{"ADG", ".als"}, "anchor": "user-library", "user_library_prefix": "/Samples/Push/"}})
+	v, err := view.LoadRaw(s.ws.Root, "push")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Device != "op1" || v.Storage != "cargo" || v.Target != "" || v.Layout != "{family}/{pack}/{file}" || v.Limit != 0 ||
+		v.FormatTree != "keep" || v.Dedup != "content" || v.Cuts != "all" || v.VendorPrep != "keep" {
+		t.Errorf("head after save: %+v", *v)
+	}
+	if v.Companions == nil || strings.Join(v.Companions.Types, ",") != "adg,als" || v.Companions.Anchor != "user-library" || v.Companions.UserLibraryPrefix != "Samples/Push" {
+		t.Errorf("companions after save: %+v", v.Companions)
+	}
+	b, _ := os.ReadFile(path)
+	src := string(b)
+	for _, want := range []string{"# push — hand-tuned, keep the comments", "# added from the library: Grit", "as       = \"SPLICE/Grit\""} {
+		if !strings.Contains(src, want) {
+			t.Errorf("lost %q:\n%s", want, src)
+		}
+	}
+	if strings.Contains(src, "limit") || strings.Contains(src, "target") && !strings.Contains(src, "# the target") {
+		t.Errorf("a knob set back to its default must lose its line:\n%s", src)
+	}
+	if strings.Count(src, "[companions]") != 1 || strings.Index(src, "[companions]") > strings.Index(src, "[[include]]") {
+		t.Errorf("one [companions] block, ahead of the rules:\n%s", src)
+	}
+
+	// Back to "the device decides": the block goes, nothing else moves.
+	edit(t, s, map[string]any{"action": "set-options", "name": "push", "device": "op1", "storage": "cargo",
+		"layout": "{family}/{pack}/{file}", "format_tree": "keep", "dedup": "content", "cuts": "all", "vendor_prep": "keep", "companions": nil})
+	v, err = view.LoadRaw(s.ws.Root, "push")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Companions != nil {
+		t.Errorf("companions should be nil after inherit, got %+v", v.Companions)
+	}
+	if len(v.Include) != 1 || v.Dedup != "content" {
+		t.Errorf("inherit must only remove the block: %+v", *v)
+	}
+	if b, _ := os.ReadFile(path); strings.Contains(string(b), "[companions]") || !strings.Contains(string(b), "\n\n# added from the library: Grit") {
+		t.Errorf("block removal must leave the rules, their comment, and one blank line above:\n%s", b)
+	}
+
+	// Refusals leave the file alone.
+	for _, bad := range []map[string]any{
+		{"action": "set-options", "name": "push", "device": "op1", "storage": "cargo", "format_tree": "sideways"},
+		{"action": "set-options", "name": "push", "device": "op1", "storage": "cargo", "companions": map[string]any{"types": []string{"alp"}}},
+		{"action": "set-options", "name": "push", "device": "ghost", "storage": "cargo"},
+		{"action": "set-options", "name": "push", "device": "op1", "storage": "cargo", "layout": "{nonsense}/{file}"},
+		{"action": "set-options", "name": "push", "device": "op1", "storage": "cargo", "limit": -3},
+	} {
+		bb, _ := json.Marshal(bad)
+		w := httptest.NewRecorder()
+		s.viewWrite(w, httptest.NewRequest(http.MethodPost, "/api/view", strings.NewReader(string(bb))))
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%v → %d, want 400: %s", bad, w.Code, w.Body.String())
+		}
+	}
+	if v2, _ := view.LoadRaw(s.ws.Root, "push"); v2.FormatTree != "keep" || v2.Companions != nil {
+		t.Errorf("a refused save must not write: %+v", *v2)
+	}
+}

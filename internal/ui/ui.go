@@ -247,13 +247,22 @@ func (s *Server) discover(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) views(w http.ResponseWriter, _ *http.Request) {
+	// The recipe's head, whole: every scalar the Edit form shows plus the
+	// [companions] override (absent = the device decides). The rule list
+	// is a count here; the vendor picker reads the rules from preflight.
 	type vw struct {
-		Name    string `json:"name"`
-		Device  string `json:"device"`
-		Storage string `json:"storage"`
-		Target  string `json:"target,omitempty"`
-		Layout  string `json:"layout,omitempty"`
-		Rules   int    `json:"rules"`
+		Name       string              `json:"name"`
+		Device     string              `json:"device"`
+		Storage    string              `json:"storage"`
+		Target     string              `json:"target,omitempty"`
+		Layout     string              `json:"layout,omitempty"`
+		Limit      int                 `json:"limit,omitempty"`
+		FormatTree string              `json:"format_tree,omitempty"`
+		Dedup      string              `json:"dedup,omitempty"`
+		Cuts       string              `json:"cuts,omitempty"`
+		VendorPrep string              `json:"vendor_prep,omitempty"`
+		Companions *profile.Companions `json:"companions,omitempty"`
+		Rules      int                 `json:"rules"`
 	}
 	var out []vw
 	files, _ := filepath.Glob(filepath.Join(s.ws.Root, "views", "*.toml"))
@@ -263,7 +272,9 @@ func (s *Server) views(w http.ResponseWriter, _ *http.Request) {
 		if err != nil {
 			continue
 		}
-		out = append(out, vw{Name: name, Device: v.Device, Storage: v.Storage, Target: v.Target, Layout: v.Layout, Rules: len(v.Include)})
+		out = append(out, vw{Name: name, Device: v.Device, Storage: v.Storage, Target: v.Target, Layout: v.Layout,
+			Limit: v.Limit, FormatTree: v.FormatTree, Dedup: v.Dedup, Cuts: v.Cuts, VendorPrep: v.VendorPrep,
+			Companions: v.Companions, Rules: len(v.Include)})
 	}
 	jsonOut(w, out)
 }

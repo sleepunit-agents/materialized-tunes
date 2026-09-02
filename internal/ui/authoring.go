@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -31,6 +32,16 @@ func (s *Server) viewWrite(w http.ResponseWriter, r *http.Request) {
 		Storage string `json:"storage"`
 		Target  string `json:"target"`
 		Layout  string `json:"layout"` // set-layout: a template (view.ParseLayout) or "" for mirror
+		// set-options: the recipe head whole, from the Edit form. Every
+		// scalar is written (empty = back to its default, the line goes);
+		// Companions nil = the device's block decides (the recipe's own
+		// [companions] table is removed), non-nil = this recipe's override.
+		Limit      int                 `json:"limit"`
+		FormatTree string              `json:"format_tree"`
+		Dedup      string              `json:"dedup"`
+		Cuts       string              `json:"cuts"`
+		VendorPrep string              `json:"vendor_prep"`
+		Companions *profile.Companions `json:"companions"`
 		// add-rule
 		Location string `json:"location"`
 		Glob     string `json:"glob"`
@@ -263,6 +274,73 @@ func (s *Server) viewWrite(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+	// set-options: the Edit form's save. One write for the whole head, so
+	// a form is one gesture and one toast — not seven change events each
+	// racing a preflight. Validation happens before a byte is written: the
+	// profiles must exist, the enums must be the ones the loader accepts,
+	// and a companions override must normalize — the same check the device
+	// profile gets — so the round-trip at the bottom is a belt, not the
+	// only brace.
+	case "set-options":
+		if req.Device == "" || req.Storage == "" {
+			jsonErr(w, 400, fmt.Errorf("device and storage are required"))
+			return
+		}
+		for _, pr := range [][3]string{{"device", req.Device, "devices"}, {"storage", req.Storage, "storage"}} {
+			if _, err := os.Stat(filepath.Join(s.ws.Root, pr[2], pr[1]+".toml")); err != nil {
+				jsonErr(w, 400, fmt.Errorf("no %s profile %q — add it on Setup first", pr[0], pr[1]))
+				return
+			}
+		}
+		if _, err := view.ParseLayout(req.Layout); err != nil {
+			jsonErr(w, 400, err)
+			return
+		}
+		if req.Limit < 0 {
+			jsonErr(w, 400, fmt.Errorf("limit must be 0 (no limit) or a positive count"))
+			return
+		}
+		for _, e := range []struct {
+			key, val string
+			ok       []string
+		}{
+			{"format_tree", req.FormatTree, []string{"", "strip", "keep"}},
+			{"dedup", req.Dedup, []string{"", "content"}},
+			{"cuts", req.Cuts, []string{"", "best", "all"}},
+			{"vendor_prep", req.VendorPrep, []string{"", "skip", "keep"}},
+		} {
+			if !slices.Contains(e.ok, e.val) {
+				jsonErr(w, 400, fmt.Errorf("%s must be one of %s", e.key, strings.Join(e.ok[1:], ", ")))
+				return
+			}
+		}
+		if req.Companions != nil {
+			if err := req.Companions.Normalize(); err != nil {
+				jsonErr(w, 400, err)
+				return
+			}
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			jsonErr(w, 404, err)
+			return
+		}
+		src := string(data)
+		src = setScalar(src, "device", req.Device)
+		src = setScalar(src, "storage", req.Storage)
+		src = setScalar(src, "target", strings.TrimSpace(req.Target))
+		src = setScalar(src, "layout", strings.TrimSpace(req.Layout))
+		src = setScalarRaw(src, "limit", req.Limit)
+		src = setScalar(src, "format_tree", req.FormatTree)
+		src = setScalar(src, "dedup", req.Dedup)
+		src = setScalar(src, "cuts", req.Cuts)
+		src = setScalar(src, "vendor_prep", req.VendorPrep)
+		src = setTable(src, "[companions]", companionsTable(req.Companions))
+		if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+			jsonErr(w, 500, err)
+			return
+		}
+
 	case "set-layout":
 		if _, err := view.ParseLayout(req.Layout); err != nil {
 			jsonErr(w, 400, err)
@@ -483,17 +561,34 @@ func removeBlock(src, header string, n int) (string, error) {
 	return out, nil
 }
 
-// setScalar rewrites a top-level key in place, or inserts it after the
-// last top-level scalar if it isn't there yet.
+// setScalar rewrites a top-level string key in place, or inserts it after
+// the last top-level scalar if it isn't there yet. Empty removes the line.
 func setScalar(src, key, val string) string {
+	if val == "" {
+		return setLine(src, key, "")
+	}
+	return setLine(src, key, fmt.Sprintf("%-7s = %q", key, val))
+}
+
+// setScalarRaw is setScalar for an unquoted value (an integer). Zero
+// removes the line: the loader's default IS zero, and a recipe should not
+// carry a `limit = 0` nobody wrote.
+func setScalarRaw(src, key string, val int) string {
+	if val == 0 {
+		return setLine(src, key, "")
+	}
+	return setLine(src, key, fmt.Sprintf("%-7s = %d", key, val))
+}
+
+// setLine is the one editor under both: replace the key's line where it
+// stands, remove it when line is empty, or insert it after the last
+// top-level scalar (before the first table) when it isn't there yet.
+func setLine(src, key, line string) string {
 	re := regexp.MustCompile(`(?m)^` + key + `\s*=.*$`)
 	if re.MatchString(src) {
-		if val == "" {
-			return re.ReplaceAllString(src, "")
-		}
-		return re.ReplaceAllString(src, fmt.Sprintf("%-7s = %q", key, val))
+		return re.ReplaceAllString(src, line)
 	}
-	if val == "" {
+	if line == "" {
 		return src
 	}
 	lines := strings.Split(src, "\n")
@@ -507,9 +602,83 @@ func setScalar(src, key, val string) string {
 		}
 	}
 	out := append([]string{}, lines[:insert]...)
-	out = append(out, fmt.Sprintf("%-7s = %q", key, val))
+	out = append(out, line)
 	out = append(out, lines[insert:]...)
 	return strings.Join(out, "\n")
+}
+
+// companionsTable renders a recipe's [companions] override as TOML lines
+// (without the header), or nothing for "the device decides".
+func companionsTable(c *profile.Companions) []string {
+	if c == nil {
+		return nil
+	}
+	q := make([]string, len(c.Types))
+	for i, t := range c.Types {
+		q[i] = fmt.Sprintf("%q", t)
+	}
+	lines := []string{fmt.Sprintf("types  = [%s]", strings.Join(q, ", "))}
+	if len(c.Types) > 0 {
+		lines = append(lines, fmt.Sprintf("anchor = %q", c.Anchor))
+		if c.Anchor == "user-library" {
+			lines = append(lines, fmt.Sprintf("user_library_prefix = %q", c.UserLibraryPrefix))
+		}
+	}
+	return lines
+}
+
+// setTable replaces a single-instance table (`[companions]`) whole: the
+// existing block goes — with the comment lines attached above it, since
+// they described what is being replaced — and, when body is non-nil, a
+// fresh one is written before the first [[include]] so the head of the
+// file stays the head. nil body = remove only. Everything else in the
+// file is untouched, which is the authoring promise (§17); the one blank
+// line between the scalars and the first table is the only whitespace
+// this normalizes.
+func setTable(src, header string, body []string) string {
+	if strings.Contains(src, header) {
+		if out, err := removeBlock(src, header, 0); err == nil {
+			src = out
+		}
+	}
+	lines := strings.Split(src, "\n")
+	at := len(lines)
+	for i, l := range lines {
+		if strings.HasPrefix(strings.TrimSpace(l), "[") {
+			at = i
+			// a comment run directly above the next block introduces it —
+			// put ours above that, not between the comment and its block
+			for at > 0 && strings.HasPrefix(strings.TrimSpace(lines[at-1]), "#") {
+				at--
+			}
+			break
+		}
+	}
+	// head = the scalars, tail = the first table on; the gap between them
+	// is rewritten to exactly one blank line whether we insert or removed
+	head := lines[:at]
+	for len(head) > 0 && strings.TrimSpace(head[len(head)-1]) == "" {
+		head = head[:len(head)-1]
+	}
+	tail := lines[at:]
+	for len(tail) > 0 && strings.TrimSpace(tail[0]) == "" {
+		tail = tail[1:]
+	}
+	out := append([]string{}, head...)
+	if body != nil {
+		out = append(out, "")
+		out = append(out, header)
+		out = append(out, body...)
+	}
+	if len(tail) > 0 {
+		out = append(out, "")
+		out = append(out, tail...)
+	}
+	res := strings.Join(out, "\n")
+	if !strings.HasSuffix(res, "\n") {
+		res += "\n"
+	}
+	return res
 }
 
 // ---- device + storage profiles -----------------------------------------

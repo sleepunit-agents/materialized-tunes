@@ -40,6 +40,41 @@ type Companions struct {
 	UserLibraryPrefix string   `toml:"user_library_prefix" json:"user_library_prefix,omitempty"`
 }
 
+// Normalize validates a [companions] block and fills its defaults in
+// place: types lower-cased and stripped of their dot, anchor defaulting to
+// user-library when any type is on, the User Library prefix defaulting to
+// "Samples" and kept slash-clean. One definition, because the block lives
+// in two files — a device profile carries the default and a recipe may
+// carry an override (view.View.Companions) — and both must accept exactly
+// the same thing.
+func (c *Companions) Normalize() error {
+	for i, t := range c.Types {
+		t = strings.ToLower(strings.TrimPrefix(strings.TrimSpace(t), "."))
+		c.Types[i] = t
+		switch t {
+		case "adg", "adv", "als":
+		case "alp":
+			return fmt.Errorf("companions.types: .alp is a pack installer, not a document — install it in Live")
+		default:
+			return fmt.Errorf("companions.types: unknown type %q (adg, adv, als)", t)
+		}
+	}
+	switch c.Anchor {
+	case "":
+		if len(c.Types) > 0 {
+			c.Anchor = "user-library"
+		}
+	case "user-library", "document":
+	default:
+		return fmt.Errorf("companions.anchor must be user-library or document")
+	}
+	if c.Anchor == "user-library" && c.UserLibraryPrefix == "" {
+		c.UserLibraryPrefix = "Samples"
+	}
+	c.UserLibraryPrefix = strings.Trim(strings.ReplaceAll(c.UserLibraryPrefix, "\\", "/"), "/")
+	return nil
+}
+
 // Companion reports whether a path's extension is a companion type for
 // this device.
 func (d *Device) Companion(p string) bool {
@@ -156,30 +191,9 @@ func LoadDevice(workspaceRoot, name string) (*Device, error) {
 	default:
 		return nil, fmt.Errorf("device %s: audio.dual_mono must be keep or fold", name)
 	}
-	for i, t := range d.Companions.Types {
-		t = strings.ToLower(strings.TrimPrefix(t, "."))
-		d.Companions.Types[i] = t
-		switch t {
-		case "adg", "adv", "als":
-		case "alp":
-			return nil, fmt.Errorf("device %s: companions.types: .alp is a pack installer, not a document — install it in Live", name)
-		default:
-			return nil, fmt.Errorf("device %s: companions.types: unknown type %q (adg, adv, als)", name, t)
-		}
+	if err := d.Companions.Normalize(); err != nil {
+		return nil, fmt.Errorf("device %s: %w", name, err)
 	}
-	switch d.Companions.Anchor {
-	case "":
-		if len(d.Companions.Types) > 0 {
-			d.Companions.Anchor = "user-library"
-		}
-	case "user-library", "document":
-	default:
-		return nil, fmt.Errorf("device %s: companions.anchor must be user-library or document", name)
-	}
-	if d.Companions.Anchor == "user-library" && d.Companions.UserLibraryPrefix == "" {
-		d.Companions.UserLibraryPrefix = "Samples"
-	}
-	d.Companions.UserLibraryPrefix = strings.Trim(strings.ReplaceAll(d.Companions.UserLibraryPrefix, "\\", "/"), "/")
 	switch d.Naming.Rename {
 	case "", "distinguishing-first":
 	default:

@@ -30,7 +30,7 @@ const S = {
   run: { status: 'idle' }, runLog: ['[idle] no run started this session'],
   selCard: 0, locks: [], diff: null, diffBusy: false,
   locations: [], suggestions: [], scans: {}, addForm: null,
-  storages: [], presets: [], volumes: [], devForm: null, stoForm: null, newRecipe: null, addTo: null, dirPick: null, renaming: false,
+  storages: [], presets: [], volumes: [], devForm: null, stoForm: null, newRecipe: null, addTo: null, dirPick: null, recipeForm: null,
   packOpen: null, pd: null, pdFolder: '', pdDesc: '', descOpen: false,
   // cross-pack sample filters: any of these set switches the Library from
   // pack cards to sample rows. Packs stay the default unit; this is the
@@ -1371,22 +1371,17 @@ function renderStorages() {
 
 /* ---------- recipe ---------- */
 
-// Layout picker: presets come from the server (view.LayoutPresets) so the
-// list lives in one place; the recipe stores only the template string, so
-// a hand-written template shows as "custom" and stays editable.
-function layoutPick(pf, vmeta) {
-  const presets = (pf && pf.layouts) || [];
-  if (!presets.length) return '';
-  const cur = vmeta.layout || '';
-  if (S.layoutEdit) {
-    return `${inp('lay-tpl', '{family}/{instrument}/{category}/{pack}/{file}', cur, '360px')}
-      <span class="restore-btn" data-act="lay-cancel">cancel</span>
-      <span class="mat-btn" style="margin:0;padding:4px 12px;font-size:11px" data-act="lay-save">set layout</span>`;
-  }
-  const known = presets.some(p => p.template === cur);
-  const opts = presets.map(p => `<option value="${esc(p.template)}" ${p.template === cur ? 'selected' : ''}>${esc(p.label)}</option>`).join('')
-    + `<option value="__custom" ${!known ? 'selected' : ''}>${!known ? 'custom: ' + esc(cur) : 'custom template…'}</option>`;
-  return `<select id="layout-pick" title="how output folders are laid out — every file's path comes from this" style="font:500 11.5px var(--mono);color:var(--fg-dim);background:var(--bg-raise);border:1px solid var(--bord-raise);border-radius:4px;padding:3px 8px;max-width:300px">${opts}</select>`;
+// The recipe head is LOCKED: it reads back what the file says, and the one
+// way to change any of it is `edit`, which opens a form over every knob
+// the file has — device, storage, target, layout, limit, format tree,
+// dedup, cuts, vendor prep, Ableton racks — and saves it in ONE write.
+// Before v0.9.31 the head was a strip of live selects, each writing TOML
+// on change, and the racks knob was not on the recipe at all.
+
+function layoutLabel(pf, tpl) {
+  if (!tpl) return 'mirror the source';
+  const p = ((pf && pf.layouts) || []).find(x => x.template === tpl);
+  return p ? p.label : tpl;
 }
 
 function layoutHint(pf, vmeta) {
@@ -1397,19 +1392,134 @@ function layoutHint(pf, vmeta) {
   return ex ? ` <span style="color:var(--fg-ghost)">Layout → <span style="font-family:var(--mono)">${esc(ex)}</span></span>` : '';
 }
 
-async function setLayout(tpl) {
-  const ok = await viewAction({ action: 'set-layout', name: S.view, layout: tpl });
-  if (ok) { S.pf = null; loadPreflight(); } else render();
+// What the device profile does about Ableton documents when the recipe
+// stays silent — the recipe's "device default" is this, by name.
+function deviceRacksDefault(devName) {
+  const d = S.devices.find(x => x.name === devName);
+  if (!d || !d.form) return 'no such device profile';
+  return d.form.companions ? `ride along → User Library/${d.form.user_library_prefix || 'Samples'}` : 'dropped';
 }
 
-// The recipe's device and storage, as selects over the profiles on Setup.
-// A recipe whose profile has since been deleted still shows its name so
-// the mismatch is visible rather than silently picking the first one.
-function recipeProfilePick(id, what, profiles, cur) {
-  const names = profiles.map(p => p.name);
-  if (cur && !names.includes(cur)) names.push(cur);
-  const opts = names.map(nm => `<option value="${esc(nm)}" ${nm === cur ? 'selected' : ''}>${esc(nm)}</option>`).join('');
-  return `<select id="${id}" title="the ${what} this recipe materializes for — profiles live on Setup" style="font:500 11.5px var(--mono);color:var(--fg-dim);background:var(--bg-raise);border:1px solid var(--bord-raise);border-radius:4px;padding:3px 8px;max-width:180px">${opts}</select>`;
+function racksSummary(vmeta) {
+  const c = vmeta.companions;
+  if (!c) return `device default (${deviceRacksDefault(vmeta.device)})`;
+  if (!c.types || !c.types.length) return 'dropped for this recipe';
+  const where = c.anchor === 'document' ? 'paths relative to the document' : `→ User Library/${c.user_library_prefix || 'Samples'}`;
+  return `${c.types.map(t => '.' + t).join(' ')} ride along ${where}`;
+}
+
+// The locked head: one line, every knob, nothing clickable.
+function recipeSummary(pf, vmeta) {
+  const seg = (k, v, title) => `<span title="${esc(title || '')}" style="white-space:nowrap"><span style="color:var(--fg-ghost)">${k}</span> ${esc(v)}</span>`;
+  const parts = [
+    seg('device', vmeta.device || '?', 'the device profile this recipe materializes for (profiles live on Setup)'),
+    seg('storage', vmeta.storage || '?', 'the storage profile pre-flight checks fit against'),
+    seg('target', vmeta.target || 'not set', 'the folder materialize writes into — set here, or it asks'),
+    seg('layout', layoutLabel(pf, vmeta.layout), 'how output folders are laid out — every file\'s path comes from this'),
+    seg('racks', racksSummary(vmeta), 'Ableton .adg/.adv/.als riding along, their sample refs rewritten to where the samples land'),
+  ];
+  if (vmeta.limit) parts.push(seg('limit', n(vmeta.limit) + ' files', 'only the first N eligible files by output path'));
+  if (vmeta.format_tree === 'keep') parts.push(seg('format tree', 'kept', 'the vendor\'s parallel-format level stays in output paths'));
+  if (vmeta.dedup === 'content') parts.push(seg('dedup', 'content', 'byte-identical sources render once'));
+  if (vmeta.cuts === 'all') parts.push(seg('cuts', 'all', 'every format cut of a sample renders'));
+  if (vmeta.vendor_prep === 'keep') parts.push(seg('vendor prep', 'kept', 'a re-export vendor\'s per-sampler trees render too'));
+  return `<div style="display:flex;flex-wrap:wrap;gap:3px 14px;font:400 11px var(--mono);color:var(--fg-dim);margin:2px 0 6px">${parts.join('')}</div>`;
+}
+
+// Opens the form from the recipe as the server last read it.
+function openRecipeForm(vmeta) {
+  const c = vmeta.companions;
+  S.recipeForm = {
+    name: S.view, device: vmeta.device || '', storage: vmeta.storage || '', target: vmeta.target || '',
+    layout: vmeta.layout || '', custom: false, limit: vmeta.limit || 0,
+    format_tree: vmeta.format_tree || '', dedup: vmeta.dedup || '', cuts: vmeta.cuts || '', vendor_prep: vmeta.vendor_prep || '',
+    comp: !c ? '' : (c.types && c.types.length ? 'on' : 'off'),
+    types: c && c.types && c.types.length ? c.types.slice() : ['adg', 'adv', 'als'],
+    anchor: (c && c.anchor) || 'user-library',
+    ulp: (c && c.user_library_prefix) || '',
+  };
+}
+
+// Pulls the form's fields out of the DOM into S.recipeForm — before any
+// re-render (a toggle that shows or hides fields) and at save, so nothing
+// typed is lost to a rebuild.
+function readRecipeForm() {
+  const f = S.recipeForm;
+  if (!f) return f;
+  const g = id => document.getElementById(id);
+  const v = (id, cur) => { const el = g(id); return el ? el.value : cur; };
+  f.name = (v('rf-name', f.name) || '').trim();
+  f.device = v('rf-device', f.device); f.storage = v('rf-storage', f.storage);
+  f.target = (v('rf-target', f.target) || '').trim();
+  const lp = g('rf-layout');
+  if (lp) {
+    f.custom = lp.value === '__custom';
+    f.layout = f.custom ? (v('rf-layout-tpl', f.layout) || '').trim() : lp.value;
+  }
+  f.limit = parseInt(v('rf-limit', f.limit), 10) || 0;
+  f.format_tree = v('rf-ft', f.format_tree); f.dedup = v('rf-dedup', f.dedup); f.cuts = v('rf-cuts', f.cuts); f.vendor_prep = v('rf-vp', f.vendor_prep);
+  f.comp = v('rf-comp', f.comp);
+  if (g('rf-ct-adg')) f.types = ['adg', 'adv', 'als'].filter(t => g('rf-ct-' + t)?.checked);
+  f.anchor = v('rf-anchor', f.anchor); f.ulp = (v('rf-ulp', f.ulp) || '').trim();
+  return f;
+}
+
+function recipeForm(pf) {
+  const f = S.recipeForm;
+  const presets = (pf && pf.layouts) || [];
+  const isCustom = f.custom || (!!f.layout && !presets.some(p => p.template === f.layout));
+  const layOpts = [['', 'mirror the source (no template)']].concat(presets.map(p => [p.template, p.label])).concat([['__custom', 'custom template…']]);
+  const withCur = (opts, cur) => (cur && !opts.some(o => o[0] === cur)) ? opts.concat([[cur, cur + ' (no profile on Setup)']]) : opts;
+  const devOpts = withCur(S.devices.map(d => [d.name, d.name]), f.device);
+  const stoOpts = withCur(S.storages.map(x => [x.name, x.name]), f.storage);
+  const lab = (t, title) => `<span style="font:400 10.5px var(--sans);color:var(--fg-faint);white-space:nowrap" title="${esc(title || '')}">${t}</span>`;
+  const row = (...cells) => `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">${cells.join('')}</div>`;
+  const ex = presets.find(p => p.template === f.layout);
+  const racks = f.comp !== 'on' ? '' : row(
+    lab('types', 'which Live documents ride: drum racks, presets, sets'),
+    ...['adg', 'adv', 'als'].map(t => `<label style="font:400 11px var(--sans);color:var(--fg-dim);display:flex;align-items:center;gap:4px"><input type="checkbox" id="rf-ct-${t}" ${f.types.includes(t) ? 'checked' : ''}> .${t}</label>`),
+    lab('paths', 'how the rewritten sample paths inside each document resolve on the machine that opens it'),
+    sel('rf-anchor', [['user-library', 'relative to the Live User Library'], ['document', 'relative to the document']], f.anchor, '240px'),
+    f.anchor === 'document' ? '' : lab('→ User Library /', 'The folder inside the Live User Library that the target IS — Samples if the target is <User Library>/Samples. Wrong here = racks that open with missing samples.') + inp('rf-ulp', 'Samples', f.ulp, '160px'));
+  return `<div style="background:var(--bg-card);border:1px solid var(--bord-hover);border-radius:6px;padding:13px;display:flex;flex-direction:column;gap:9px;margin:4px 0 12px;max-width:900px">
+    <span style="font:600 12.5px var(--sans)">Edit ${esc(S.view)}</span>
+    ${row(lab('name'), inp('rf-name', 'letters, digits, - _', f.name, '170px'),
+      lab('device', 'the device profile this recipe materializes for — profiles live on Setup'), sel('rf-device', devOpts, f.device, '150px'),
+      lab('storage', 'the storage profile pre-flight checks fit against'), sel('rf-storage', stoOpts, f.storage, '150px'))}
+    ${row(lab('target', 'the folder materialize writes into — the recipe name is NOT added'), inp('rf-target', 'optional — materialize asks otherwise', f.target), `<span class="restore-btn" data-act="rf-browse" title="browse for a folder">browse…</span>`)}
+    ${row(lab('layout', 'how output folders are laid out — every file\'s path comes from this'), sel('rf-layout', layOpts, isCustom ? '__custom' : f.layout, '270px'),
+      isCustom ? inp('rf-layout-tpl', '{family}/{instrument}/{category}/{pack}/{file}', f.layout, '360px')
+               : (ex ? `<span style="font:400 10.5px var(--mono);color:var(--fg-ghost)">${esc(ex.example)}</span>` : ''))}
+    ${row(lab('limit', 'keep only the first N eligible files by output path — 0 = all'), inp('rf-limit', '0 = all', f.limit || '', '80px'),
+      lab('format tree', 'a vendor\'s parallel-format level (SFM\'s WAV/, Polyend\'s "24 bit stereo") in output paths'), sel('rf-ft', [['', 'strip (default)'], ['keep', 'keep']], f.format_tree, '130px'),
+      lab('dedup', 'byte-identical sources: every one renders, or once at the first output path'), sel('rf-dedup', [['', 'every file'], ['content', 'identical bytes once']], f.dedup, '170px'),
+      lab('cuts', 'a sample shipped under several format trees: the cut this device takes best, or all of them'), sel('rf-cuts', [['', 'best cut (default)'], ['all', 'every cut']], f.cuts, '150px'),
+      lab('vendor prep', 'a re-export vendor\'s per-sampler trees (Battery/, Maschine/, Kontakt/…)'), sel('rf-vp', [['', 'skip (default)'], ['keep', 'keep']], f.vendor_prep, '130px'))}
+    ${row(lab('Ableton racks', 'Live documents (.adg .adv .als) riding along with their sample refs rewritten to where the samples land — the device profile sets the default, the recipe can say otherwise'),
+      sel('rf-comp', [['', `device default — ${deviceRacksDefault(f.device)}`], ['on', 'ride along, refs rewritten'], ['off', 'drop them']], f.comp, '340px'))}
+    ${racks}
+    ${row('<div style="flex:1"></div>', `<span class="restore-btn" data-act="rf-cancel">cancel</span>`, `<span class="mat-btn" style="margin:0;padding:6px 16px;font-size:11px" data-act="rf-save">save recipe</span>`)}
+    <div style="font:400 10px var(--sans);color:var(--fg-faint)">Saving rewrites these keys in the recipe's TOML and leaves everything else — rules, excludes, your comments — exactly as written. A knob at its default loses its line.</div>
+  </div>`;
+}
+
+async function saveRecipeForm() {
+  const f = readRecipeForm();
+  if (!f) return;
+  if (!f.name) { S.toast = 'a recipe needs a name'; render(); return; }
+  if (f.name !== S.view) {
+    if (!await viewAction({ action: 'rename', name: S.view, new_name: f.name })) return;
+    S.view = f.name;
+  }
+  const companions = f.comp === '' ? null
+    : f.comp === 'off' ? { types: [] }
+    : { types: f.types, anchor: f.anchor, user_library_prefix: f.anchor === 'document' ? '' : f.ulp };
+  const ok = await viewAction({ action: 'set-options', name: S.view, device: f.device, storage: f.storage, target: f.target,
+    layout: f.layout, limit: f.limit, format_tree: f.format_tree, dedup: f.dedup, cuts: f.cuts, vendor_prep: f.vendor_prep, companions });
+  if (!ok) return; // the server's reason is the toast; the form stays open with what was typed
+  S.recipeForm = null; S.pf = null; S.disabled = new Set();
+  S.toast = `${S.view} saved`; setTimeout(() => { S.toast = ''; render(); }, 3000);
+  loadPreflight();
 }
 
 function renderRecipe() {
@@ -1438,14 +1548,11 @@ function renderRecipe() {
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
       <span style="font:600 14px var(--sans)">Recipe</span>
       <select id="view-pick" style="font:500 11.5px var(--mono);color:var(--fg-dim);background:var(--bg-raise);border:1px solid var(--bord-raise);border-radius:4px;padding:3px 8px">${viewOpts}</select>
-      ${pf ? recipeProfilePick('rc-device', 'device', S.devices, pf.device) + recipeProfilePick('rc-storage', 'storage', S.storages, pf.storage) : ''}
-      <span class="rtag" data-act="set-target" title="choose the folder this recipe materializes into">${vmeta.target ? esc(vmeta.target) : '+ set target'}</span>
-      ${layoutPick(pf, vmeta)}
-      ${S.renaming ? `${inp('rn-name', 'new name', S.view, '160px')}<span class="restore-btn" data-act="rename-cancel">cancel</span><span class="mat-btn" style="margin:0;padding:4px 12px;font-size:11px" data-act="rename-save">rename</span>`
-        : `<span class="restore-btn" data-act="rename-start" title="rename this recipe">rename</span>`}
+      ${S.view && !S.recipeForm && !nr ? `<span class="restore-btn" data-act="recipe-edit" title="change what this recipe is for — device, storage, target, layout, racks, and the rest">edit</span>` : ''}
       <div style="flex:1"></div>
-      <span class="restore-btn" data-act="recipe-new">+ new recipe</span>
+      ${S.recipeForm ? '' : `<span class="restore-btn" data-act="recipe-new">+ new recipe</span>`}
     </div>
+    ${S.recipeForm ? recipeForm(pf) : (S.view && !nr ? recipeSummary(pf, vmeta) : '')}
     <div style="font:400 11px var(--sans);color:var(--fg-faint);margin-bottom:2px">One row per vendor: check it to take everything they made, open ▸ to pick packs. Rules are written for you.${layoutHint(pf, vmeta)}</div>
     ${nrForm}`;
 
@@ -2097,26 +2204,16 @@ function wire() {
         const i = +el.dataset.i;
         viewAction({ action:'remove-rule', name: S.view, index: i }).then(ok => { if (ok) { S.disabled = new Set(); loadPreflight(); } });
       }
-      if (act === 'set-target') {
-        const cur = (S.views.find(v=>v.name===S.view)||{}).target || '';
-        openDirPicker('Materialize target for ' + S.view, cur, val => viewAction({ action:'set-target', name: S.view, target: val }).then(ok => ok && loadPreflight()));
+      if (act === 'recipe-edit') { openRecipeForm(S.views.find(v => v.name === S.view) || {}); render(); }
+      if (act === 'rf-cancel') { S.recipeForm = null; render(); }
+      if (act === 'rf-save') saveRecipeForm();
+      if (act === 'rf-browse') {
+        const f = readRecipeForm();
+        openDirPicker('Materialize target for ' + S.view, f.target, val => { f.target = val; render(); });
       }
       if (act === 'nr-browse') {
         const box = document.getElementById('nr-target');
         openDirPicker('Target folder for the new recipe', box.value, val => { S.newRecipe.target = val; render(); document.getElementById('nr-target').value = val; });
-      }
-      if (act === 'rename-start') { S.renaming = true; render(); document.getElementById('rn-name')?.select(); }
-      if (act === 'lay-cancel') { S.layoutEdit = false; render(); }
-      if (act === 'lay-save') {
-        const tpl = (document.getElementById('lay-tpl').value || '').trim();
-        S.layoutEdit = false;
-        setLayout(tpl); // "" = back to mirror; a bad template comes back as a toast from the server
-      }
-      if (act === 'rename-cancel') { S.renaming = false; render(); }
-      if (act === 'rename-save') {
-        const nn = document.getElementById('rn-name').value.trim();
-        if (!nn || nn === S.view) { S.renaming = false; render(); return; }
-        viewAction({ action:'rename', name: S.view, new_name: nn }).then(ok => { if (ok) { S.view = nn; S.renaming = false; S.pf = null; S.toast = `renamed to ${nn}`; loadPreflight(); setTimeout(()=>{S.toast='';render();}, 3000); } });
       }
       if (act === 'dp-cancel') { S.dirPick = null; render(); }
       if (act === 'dp-go') { dirPickGo(el.dataset.path); }
@@ -2297,19 +2394,16 @@ function wire() {
   const pv = document.getElementById('pl-value');
   if (pv) pv.addEventListener('change', () => { readForm(); S.pl.radius = null; });
   const vp = document.getElementById('view-pick');
-  if (vp) vp.addEventListener('change', () => { S.view = vp.value; S.disabled = new Set(); S.pf = null; loadPreflight(); });
-  for (const [id, action, key] of [['rc-device', 'set-device', 'device'], ['rc-storage', 'set-storage', 'storage']]) {
+  if (vp) vp.addEventListener('change', () => { S.view = vp.value; S.recipeForm = null; S.disabled = new Set(); S.pf = null; loadPreflight(); });
+  // Edit form toggles that show or hide fields: read what's typed, redraw.
+  for (const id of ['rf-layout', 'rf-comp', 'rf-device', 'rf-anchor']) {
     const el = document.getElementById(id);
-    if (el) el.addEventListener('change', async () => {
-      const ok = await viewAction({ action, name: S.view, [key]: el.value });
-      if (ok) { S.pf = null; S.views = await api('/api/views') || S.views; loadPreflight(); } else render();
+    if (el) el.addEventListener('change', () => {
+      const f = readRecipeForm();
+      render();
+      if (id === 'rf-layout' && f.custom) document.getElementById('rf-layout-tpl')?.select();
     });
   }
-  const lp = document.getElementById('layout-pick');
-  if (lp) lp.addEventListener('change', () => {
-    if (lp.value !== '__custom') { setLayout(lp.value); return; }
-    S.layoutEdit = true; render(); document.getElementById('lay-tpl')?.select();
-  });
 }
 
 let searchTimer = null;
@@ -2337,7 +2431,7 @@ window.addEventListener('keydown', (e) => {
   if (e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) {
     if (e.key === 'Escape') e.target.blur();
     if (e.key === 'Enter' && e.target.id === 'dp-path') dirPickGo(e.target.value);
-    if (e.key === 'Enter' && e.target.id === 'rn-name') document.querySelector('[data-act="rename-save"]')?.click();
+    if (e.key === 'Enter' && e.target.tagName === 'INPUT' && /^rf-/.test(e.target.id)) document.querySelector('[data-act="rf-save"]')?.click();
     return;
   }
   const map = { 1: 'library', 2: 'recipe', 3: 'plan', 4: 'run', 5: 'cards', 6: 'sources' };

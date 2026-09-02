@@ -389,6 +389,14 @@ with **edit** and saving rewrites its `.toml` whole from the form
 (v0.9.25). The subfolder is the one claim only the user can make: get it
 wrong and every rewritten rack opens with missing samples.
 
+The device's block is the *default*. A recipe can carry its own
+`[companions]` (§6) and override it whole for that recipe — a Push recipe
+that wants the racks on a device profile that drops them, or a
+hardware-only recipe on a Live device. Absent = the device decides;
+present with `types = []` = dropped for this recipe. The override is
+folded into the loaded device once, in `plan.Build`, so plan, materialize,
+the lock and migrate all see one effective device (v0.9.31).
+
 - **Scan** reads every document whole (they are small) and records the
   sample references it carries in the catalog entry (`doc.refs`, as
   written: relative path, absolute path, name), or `doc_err` when the
@@ -753,6 +761,14 @@ glob = "**/*.asd"                 # Drop the Ableton line when companions (§4.4
 - `dedup = "content"` renders byte-identical sources once (first output
   path in sort order; deterministic, pinned). Opt-in, because a DAW kit
   folder wants its members even when they duplicate the one-shots folder.
+- `[companions]` (view-level, optional; shipped 2026-09-02, v0.9.31)
+  overrides the device's block (§4.4) for this recipe, whole: same keys
+  (`types`, `anchor`, `user_library_prefix`), same validation, same
+  defaults once present (`anchor` → `user-library`, prefix → `Samples`).
+  Absent = the device decides. `types = []` = the documents are dropped
+  even on a device that carries them. The Recipe screen's Edit form shows
+  it as **Ableton racks**: *device default (what the device does)* /
+  *ride along* / *drop them*.
 - `[loudness]` overrides the device's normalization default for this recipe
   (§4.5) `[proposed 2026-08-19]`.
 ## 7. Plan (pre-flight)
@@ -1321,6 +1337,20 @@ Because checking and unchecking now edit the recipe directly, the old
 preview-only rule toggles are gone; `/api/preflight` keeps its `disabled`
 parameter for callers that want a dry run.
 
+**The head is locked; Edit is a form (2026-09-02, v0.9.31).** Above the
+vendor rows the recipe's head — device, storage, target, layout, racks,
+and whichever of limit / format tree / dedup / cuts / vendor prep is off
+its default — is a read-only line. It used to be a strip of live selects,
+each writing the TOML on change, and the two knobs that had no UI at all
+(`limit`, and the whole `[companions]` story) were reachable only by hand.
+Now **edit** opens one form over every key the file has, including a
+rename, and **save recipe** is one write (`set-options`): validated before
+a byte lands (profiles must exist, enums must be the loader's, a racks
+override must normalize), refused whole with the reason as the toast and
+the form left open with what was typed. The vendor rows stay live — they
+*are* the picker, and a click there is the selection changing, not the
+recipe's identity.
+
 ## 16. Desktop shell (Wails)
 
 `cmd/mtunes-desktop` wraps the identical embedded UI in a native window:
@@ -1349,7 +1379,11 @@ files are generated wholesale.
   vendor" lands as a single block), remove-rule, remove-rules (several
   in one write, so a caller never reasons about indexes shifting),
   add-exclude / remove-exclude (by glob, idempotent), set-target,
-  set-layout (a preset or a hand-typed template, validated first). The
+  set-layout (a preset or a hand-typed template, validated first),
+  set-options (the head whole, from the Edit form: device, storage,
+  target, layout, limit, format_tree, dedup, cuts, vendor_prep and the
+  `[companions]` override — each scalar rewritten in place or removed at
+  its default, the table replaced whole ahead of the first rule). The
   Recipe screen (§15.1) drives all of these; the Library keeps its own
   add gesture — a pack card's `+`, or "add to recipe" in the detail
   view, which adds *the folder you're looking at* (so "just the acid

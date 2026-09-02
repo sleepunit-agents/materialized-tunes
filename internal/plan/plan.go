@@ -166,6 +166,17 @@ type Overlap struct {
 	Files    int    `json:"files"` // sources picked by both
 }
 
+// applyRecipeOverrides folds the recipe's per-recipe say over device
+// defaults into the loaded device — the one place it happens, so
+// materialize (which reads p.Device), the lock (which records it) and
+// migrate (which replays the lock) never each re-derive it. Today that is
+// the [companions] block; [loudness] will land here too.
+func applyRecipeOverrides(v *view.View, dev *profile.Device) {
+	if v.Companions != nil {
+		dev.Companions = *v.Companions
+	}
+}
+
 type Plan struct {
 	View    *view.View       `json:"view"`
 	Device  *profile.Device  `json:"device"`
@@ -349,6 +360,7 @@ func BuildWith(ws *workspace.Workspace, v *view.View, opt Options) (*Plan, error
 	if err != nil {
 		return nil, err
 	}
+	applyRecipeOverrides(v, dev)
 	sto, err := profile.LoadStorage(ws.Root, v.Storage)
 	if err != nil {
 		return nil, err

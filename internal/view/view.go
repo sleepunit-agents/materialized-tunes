@@ -10,6 +10,8 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/bmatcuk/doublestar/v4"
+
+	"github.com/sleepunit-agents/materialized-tunes/internal/profile"
 )
 
 type View struct {
@@ -57,6 +59,17 @@ type View struct {
 	// ParseLayout's doc, e.g. "{family}/{instrument}/{category}/{pack}/{file}".
 	// When set, the template decides every output path and `as` is ignored.
 	Layout string `toml:"layout" json:"layout,omitempty"`
+
+	// Companions: this recipe's say over the Ableton documents (.adg /
+	// .adv / .als) that ride along with the samples. Absent (nil) = the
+	// device profile's [companions] block decides, which is the default
+	// for every recipe on that device. Present = this recipe overrides it
+	// whole — an empty `types` drops the documents even on a device that
+	// carries them, and a recipe for a device that drops them can carry
+	// them with its own anchor and User Library prefix. The override is
+	// applied once, where the plan loads the device, so plan, materialize,
+	// the lock and migrate all see one effective device.
+	Companions *profile.Companions `toml:"companions" json:"companions,omitempty"`
 
 	Include []Include `toml:"include" json:"include"`
 	Exclude []Exclude `toml:"exclude" json:"exclude,omitempty"`
@@ -130,6 +143,11 @@ func LoadRaw(workspaceRoot, name string) (*View, error) {
 	}
 	if _, err := ParseLayout(v.Layout); err != nil {
 		return nil, fmt.Errorf("view %s: %w", name, err)
+	}
+	if v.Companions != nil {
+		if err := v.Companions.Normalize(); err != nil {
+			return nil, fmt.Errorf("view %s: %w", name, err)
+		}
 	}
 	for i, inc := range v.Include {
 		if inc.Location == "" || inc.Glob == "" {

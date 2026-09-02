@@ -7,6 +7,50 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.31 — 2026-09-02 (the recipe head is locked; edit is a form; racks are a recipe's call)
+
+"I still don't see how to edit a recipe. I can change a bunch of
+settings right on the page, but nothing related to the companion files.
+Also that UX is kind of clunky — the recipe should be more or less locked
+unless I hit edit, and then a form with these options."
+
+Two things were true. The Recipe head was a strip of live selects —
+device, storage, a target tag, a layout picker, rename — each writing the
+TOML the moment it changed, on the way to the vendor list. And the
+Ableton-documents knob was not on the recipe at all: `[companions]` lived
+only on the device profile, so "this recipe carries the racks, that one
+doesn't" meant two device profiles for one Push. `limit`, `format_tree`,
+`dedup`, `cuts` and `vendor_prep` had no UI whatsoever.
+
+- **A recipe can carry `[companions]`** (SPEC §6, §4.4) and override the
+  device's block whole: absent = the device decides, `types = []` = drop
+  them for this recipe, otherwise this recipe's types / anchor / User
+  Library prefix. Applied once where the plan loads the device
+  (`plan.applyRecipeOverrides`), so materialize, the lock and migrate
+  see one effective device. Validation is one definition,
+  `profile.Companions.Normalize`, shared by the device loader and the
+  recipe loader.
+- **The head is read-only.** One line: device · storage · target ·
+  layout · racks, plus limit / format tree / dedup / cuts / vendor prep
+  only when off their default. Nothing on it is clickable.
+- **`edit` opens one form** over every key the file has — name (a
+  rename), device, storage, target with browse, layout as preset or
+  custom template, limit, format tree, dedup, cuts, vendor prep, and
+  Ableton racks as *device default (says what the device does)* / *ride
+  along* (types, path anchor, User Library subfolder) / *drop them*.
+  **save recipe** is one write, `set-options`: profiles must exist,
+  enums must be the loader's, a racks override must normalize — refused
+  whole with the reason as the toast and the form left open with what
+  was typed. Enter in any field saves; cancel drops the edit.
+- **What it writes:** each scalar in place or removed at its default (a
+  recipe never carries a `limit = 0` nobody wrote), the `[companions]`
+  table replaced whole and placed ahead of the first `[[include]]`;
+  rules, excludes and hand comments untouched (verified on a commented
+  recipe). `/api/views` now returns the whole head so the form opens
+  from the file, not from memory.
+- The vendor rows stay live. They are the picker (§15.1); a click there
+  is the selection changing, not the recipe's identity.
+
 ## v0.9.30 — 2026-09-02 (a catalog is decoded once, not per screen)
 
 "Library is quick on launch now, but if I go to recipe or plan or
