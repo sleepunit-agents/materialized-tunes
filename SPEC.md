@@ -1050,7 +1050,10 @@ trust order:
    so `04. Rimshot/Rimshot TOM 31.wav` reads as a rimshot while
    `Drums/Kick 01.wav` stays a kick. Normalizing opens a boundary where a
    letter meets a digit, so the take number vendors glue on (`808_Kick02`,
-   `BD3`) doesn't hide the word. An entry may carry `category` (break =
+   `BD3`) doesn't hide the word, and where lower case meets upper, so a
+   camel-cased name (`StringsLowGlide`, `FAI_CrispShaker_13`, `SDJupiterEnv01`)
+   reads as its words — a run of capitals stays one word up to the last
+   (`FMBell` is FM Bell). An entry may carry `category` (break =
    loops): on a file already known to be something else that word is a
    title, not a label — a kit called "Beat" holds kicks — and it speaks
    only for its family through the catch-all (`Drums/_General`), after

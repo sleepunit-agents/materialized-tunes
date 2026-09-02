@@ -204,6 +204,8 @@ var (
 	nonWordRe     = regexp.MustCompile(`[^a-z0-9]+`)
 	letterDigitRe = regexp.MustCompile(`([a-z])([0-9])`)
 	digitLetterRe = regexp.MustCompile(`([0-9])([a-z])`)
+	camelRe       = regexp.MustCompile(`([a-z])([A-Z])`)
+	acronymRe     = regexp.MustCompile(`([A-Z]+)([A-Z][a-z])`)
 )
 
 // Normalize turns a path segment or filename stem into the form the lexicon
@@ -214,8 +216,20 @@ var (
 // sees "kick02" sees no kick at all — the folder word then decides, and a
 // kit called "Beat" filed its kicks as breaks. Aliases pass through the
 // same function, so "80s", "8bit" and "TR808" still meet themselves.
+//
+// Camel case is opened the same way, before lowercasing loses it: vendors
+// glue words as readily as numbers — SFM's VP330 names every patch folder
+// "StringsLowGlide" / "EnsembleMaleVibe1", Loopmasters writes
+// "FAI_CrispShaker_13", Polyend "CowBell" — and 37,844 stems in the house
+// listing carry a lower-to-upper boundary. A run of capitals stays one
+// word up to the last, which starts the next ("FMBell" is FM Bell, "SDSV"
+// is SDSV); an all-caps or all-lowercase segment is untouched, so "BD",
+// "SS" and "hihat" read as before (2026-09-02).
 func Normalize(s string) string {
-	s = strings.ToLower(strings.TrimSpace(s))
+	s = strings.TrimSpace(s)
+	s = camelRe.ReplaceAllString(s, "$1 $2")
+	s = acronymRe.ReplaceAllString(s, "$1 $2")
+	s = strings.ToLower(s)
 	s = orderPrefixRe.ReplaceAllString(s, "")
 	s = nonWordRe.ReplaceAllString(s, " ")
 	s = letterDigitRe.ReplaceAllString(s, "$1 $2")

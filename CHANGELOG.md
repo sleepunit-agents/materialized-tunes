@@ -7,6 +7,42 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.37 — 2026-09-02 (camel case is words too)
+
+Jonathan, from the leftover list after the fx/tops/clav passes:
+"StringsLow and StringsLowGlide from sfm vp330 from mars are both just
+genericly strings" — and the same folder held EnsembleMaleVibe1,
+LovelyHorns, BirdOrgans, MetalocalypseLead, AurynPad, none of them read.
+
+**The normalizer opened a boundary between a letter and a digit and not
+between a lower-case letter and a capital**, so every camel-cased name
+was one long word to the lexicon. The house listing carries 37,844 of
+them: SFM names every VP330 / SK1 / Wasp / 2600 / SYS100M patch folder
+that way (`StringsLowGlide`, `JazzOrgan`, `EnvelopeAcid`, `TheClap`),
+its MPC preset trees glue the code to the machine (`SDJupiterEnv01`,
+`KickDX-4`, `CowbellProto11`), Loopmasters writes `FAI_CrispShaker_13`.
+`Normalize` now splits `aB` and `ABc` (a run of capitals stays one word
+up to the last, which starts the next: `FMBell` → FM Bell, `SDSV` stays)
+before lowercasing; all-caps and all-lower segments are untouched, so
+`BD`, `SS`, `hihat` read exactly as before, and aliases — all lower case
+— meet themselves.
+
+Probed over the 165,490-file house listing with sample-vendor-annotations
+at the same commit: 4,584 files move on this change alone, and read
+through by folder every one is a name the vendor wrote — 722 ARP 2600
+patches from `arp` (the maker's name, now avoided in the lexicon) to
+bass, 291 Wasp `EnvelopeAcid` to acid, 259 SH-101 `HalfSub_tri` to sub,
+249 pads, 218 leads, 210 SK1 `Vox` patches to vocal, 126 SK1 organs, 98
+Jupiter Drums `SD…` presets to snare, 96 `KickDX` to kick. The residue
+is under thirty files (`KeysUnlock` in Found Sounds reads keys; `It'sBeat`
+is a 2600 patch that reads Drums/_General; `SDSxV` splits to SD Sx V and
+its three tom multisamples read snare) — pins if they bug anyone.
+
+Ships with sample-vendor-annotations' same-day pass (timbale / tabla /
+udu / sidestick / snap / synth-vox; bell and pattern re-ranked; MR10 and
+Dr Bohm loop folders): 8,679 files move in total, nothing outside the
+intended folders.
+
 ## v0.9.36 — 2026-09-02 (fx is a family, not a category; a multisample is one name over many pitches)
 
 Jonathan, on the Plan queue's "loop or one-shot?" picker: "it's offering
