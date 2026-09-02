@@ -1047,7 +1047,7 @@ function renderSources() {
           ${l.stale ? '<span class="badge subset" style="color:var(--warn);border-color:rgba(224,182,79,.35)">stale</span>' : ''}
         </div>
         <span style="font:400 10.5px var(--mono);color:var(--fg-faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(l.root)}</span>
-        <span style="font:400 10.5px var(--mono);color:var(--fg-faint)">${n(l.files)} files · scanned ${esc(when)}</span>
+        <span style="font:400 10.5px var(--mono);color:var(--fg-faint)">${n(l.files)} files${l.docs ? ' · ' + n(l.docs) + ' Live documents' : ''} · scanned ${esc(when)}</span>
       </div>
       <select data-act="rescan" data-l="${esc(l.name)}" style="font:500 10.5px var(--mono);color:var(--fg-dim);background:var(--bg-raise);border:1px solid var(--bord-raise);border-radius:4px;padding:3px 6px">
         ${RESCANS.map(([v, lbl]) => `<option value="${v}" ${(l.rescan || 'manual') === v ? 'selected' : ''}>${lbl}</option>`).join('')}

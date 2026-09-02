@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -176,6 +178,7 @@ func (s *Server) locations(w http.ResponseWriter, r *http.Request) {
 	type loc struct {
 		workspace.LocationConfig
 		Files    int    `json:"files"`
+		Docs     int    `json:"docs"`              // Live documents (.adg/.adv/.als) whose refs the catalog carries
 		Scanned  string `json:"scanned,omitempty"` // last catalog write, RFC3339
 		Stale    bool   `json:"stale"`             // past its rescan cadence
 		Scanning bool   `json:"scanning"`
@@ -197,8 +200,8 @@ func (s *Server) locations(w http.ResponseWriter, r *http.Request) {
 		} else {
 			l.Stale = true
 		}
-		if entries, err := loadCatalogCount(s.ws.CatalogPath(lc.Name)); err == nil {
-			l.Files = entries
+		if entries, docs, err := loadCatalogCount(s.ws.CatalogPath(lc.Name)); err == nil {
+			l.Files, l.Docs = entries, docs
 		}
 		out = append(out, l)
 	}
@@ -216,26 +219,25 @@ func isStale(rescan string, last time.Time) bool {
 	return time.Since(last) > d
 }
 
-func loadCatalogCount(path string) (int, error) {
+// loadCatalogCount counts the catalog's entries and, among them, the Live
+// documents whose sample refs were read — the number that says whether
+// racks are in play for the document tier and companions, so Setup can
+// show it instead of the user inferring it from a Plan why-line.
+func loadCatalogCount(path string) (files, docs int, err error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	defer f.Close()
-	buf := make([]byte, 32*1024)
-	count := 0
-	for {
-		n, err := f.Read(buf)
-		for _, b := range buf[:n] {
-			if b == '\n' {
-				count++
-			}
-		}
-		if err != nil {
-			break
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for sc.Scan() {
+		files++
+		if bytes.Contains(sc.Bytes(), []byte(`"doc":{`)) {
+			docs++
 		}
 	}
-	return count, nil
+	return files, docs, sc.Err()
 }
 
 func (s *Server) addLocation(w http.ResponseWriter, r *http.Request) {
@@ -372,6 +374,9 @@ func (s *Server) startScan(name string) error {
 				s.mu.Lock()
 				st.Result = fmt.Sprintf("%d files: %d added, %d changed, %d removed, %d unchanged",
 					res.Total, res.Added, res.Changed, res.Removed, res.Unchanged)
+				if res.Docs > 0 {
+					st.Result += fmt.Sprintf(", %d Live documents read", res.Docs)
+				}
 				if annSync.Note != "" {
 					st.Result = annSync.Note + " · " + st.Result
 				}

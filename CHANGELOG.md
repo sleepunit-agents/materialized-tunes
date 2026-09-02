@@ -7,6 +7,20 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.26 — 2026-09-01 (Setup says whether the racks were read)
+
+Jonathan's screenshot: SuperPulse on Plan, `instrument — · nothing
+spoke`, exactly the state the v0.9.24 document tier is meant to end —
+and nothing in the UI to say whether it had run. Scan counted the Live
+documents it read but only the CLI printed the number. Now each location
+row on Setup reads `N files · M Live documents · scanned …`, counted
+from the catalog itself (entries carrying `doc`, not `doc_err`), so
+"did the racks land" is a glance, not a why-line; the UI scan result
+carries the same count. If the row says no documents after a rescan,
+the tree has no `.adg`/`.adv`/`.als` the scan could open — and if it
+says documents but SuperPulse still says nothing spoke, the refs didn't
+resolve, which is the case I asked to see.
+
 ## v0.9.25 — 2026-09-01 (turn companions on from the UI)
 
 Jonathan: "do I have the ability to turn this stuff on the ui?" Partly,
