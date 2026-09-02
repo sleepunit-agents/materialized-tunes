@@ -1143,16 +1143,17 @@ function renderDevices() {
   const d = S.devForm;
   const list = S.devices.map(x => `<div style="display:flex;align-items:center;gap:10px;background:var(--bg-card);border:1px solid var(--bord-card);border-radius:6px;padding:9px 12px">
       <span style="font:600 12px var(--sans);min-width:130px">${esc(x.name)}</span>
-      <span style="font:400 10.5px var(--mono);color:var(--fg-faint);flex:1">${esc(x.sub)}</span>
+      <span style="font:400 10.5px var(--mono);color:var(--fg-faint);flex:1">${esc(x.sub)}${x.form?.companions ? ` · racks → User Library/${esc(x.form.user_library_prefix || 'Samples')}` : ''}</span>
+      ${d ? '' : `<span class="restore-btn" data-act="dev-edit" data-d="${esc(x.name)}">edit</span>`}
     </div>`).join('');
   const form = !d ? '' : `
     <div style="background:var(--bg-card);border:1px solid var(--bord-hover);border-radius:6px;padding:13px;display:flex;flex-direction:column;gap:9px">
       <div style="display:flex;gap:8px;align-items:center">
-        <span style="font:600 12.5px var(--sans);flex:1">New device</span>
-        ${sel('dv-preset', [['', 'start from preset…']].concat(S.presets.map(p => [p.id, p.label])), d.preset)}
+        <span style="font:600 12.5px var(--sans);flex:1">${d.editing ? `Edit ${esc(d.name)}` : 'New device'}</span>
+        ${d.editing ? '' : sel('dv-preset', [['', 'start from preset…']].concat(S.presets.map(p => [p.id, p.label])), d.preset)}
       </div>
       <div style="display:flex;gap:8px">
-        ${inp('dv-name', 'name (lowercase)', d.name)}
+        ${d.editing ? `<input id="dv-name" value="${esc(d.name)}" disabled style="flex:1;font:400 11px var(--mono);background:var(--bg-raise);border:1px solid var(--bord-raise);border-radius:4px;padding:6px 8px;color:var(--fg-faint)">` : inp('dv-name', 'name (lowercase)', d.name)}
         ${sel('dv-depth', [[16, '16-bit'], [24, '24-bit']], d.bit_depth, '110px')}
         ${sel('dv-rate', [[44100, '44.1 kHz'], [48000, '48 kHz']], d.sample_rate, '110px')}
         ${sel('dv-ch', [['stereo', 'stereo-preserving'], ['mono', 'mono (fold)']], d.channels, '160px')}
@@ -1173,14 +1174,18 @@ function renderDevices() {
         <label style="font:400 11px var(--sans);color:var(--fg-dim);display:flex;align-items:center;gap:5px">
           <input type="checkbox" id="dv-san" ${d.sanitize ? 'checked' : ''}> sanitize names (# & ')
         </label>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
         <label style="font:400 11px var(--sans);color:var(--fg-dim);display:flex;align-items:center;gap:5px" title="Ableton racks/presets/sets (.adg .adv .als) ride along with their sample refs rewritten to the materialized paths — for a target inside the Live User Library">
           <input type="checkbox" id="dv-comp" ${d.companions ? 'checked' : ''}> Ableton racks (.adg/.adv/.als)
         </label>
+        <span style="font:400 11px var(--sans);color:var(--fg-faint)" title="The rewritten sample paths are relative to the Live User Library. This is the folder inside it the recipe target is — Samples if the target is <User Library>/Samples. Wrong here = racks that open with missing samples.">→ User Library /</span>
+        ${inp('dv-ulp', 'Samples', d.user_library_prefix || '', '200px')}
         <div style="flex:1"></div>
         <span class="restore-btn" data-act="dev-cancel">cancel</span>
-        <span class="mat-btn" style="margin:0;padding:6px 16px;font-size:11px" data-act="dev-save">create device</span>
+        <span class="mat-btn" style="margin:0;padding:6px 16px;font-size:11px" data-act="dev-save">${d.editing ? 'save device' : 'create device'}</span>
       </div>
-      <div style="font:400 10px var(--sans);color:var(--fg-faint)">Presets are starting points from published specs — check them against your manual. Everything here is editable, and the .toml is yours to hand-edit after.</div>
+      <div style="font:400 10px var(--sans);color:var(--fg-faint)">${d.editing ? 'Saving rewrites the whole .toml from this form — anything hand-added that the form does not show is dropped.' : 'Presets are starting points from published specs — check them against your manual. Everything here is editable, and the .toml is yours to hand-edit after.'}</div>
     </div>`;
   return `<div style="font:600 9px var(--sans);color:var(--fg-faint);letter-spacing:.1em;padding:14px 2px 2px;display:flex;align-items:center;gap:10px">
       DEVICES <div style="flex:1"></div>${d ? '' : '<span class="restore-btn" data-act="dev-new">+ add device</span>'}
@@ -1892,6 +1897,10 @@ function wire() {
       if (act === 'ann-update') updateAnnotations();
       if (act === 'upd-apply') applyUpdate();
       if (act === 'dev-new') { S.devForm = { bit_depth: 16, sample_rate: 44100, channels: 'stereo', mode: 'card', layout: 'mirror', sanitize: true }; S.toast=''; render(); }
+      if (act === 'dev-edit') {
+        const x = S.devices.find(v => v.name === el.dataset.d);
+        if (x && x.form) { S.devForm = Object.assign({}, x.form, { name: x.name, editing: true }); S.toast = ''; render(); }
+      }
       if (act === 'dev-cancel') { S.devForm = null; render(); }
       if (act === 'dev-save') {
         const g = id => document.getElementById(id).value;
@@ -1901,6 +1910,9 @@ function wire() {
           max_filename_length: parseInt(g('dv-maxname')) || 0, sanitize: document.getElementById('dv-san').checked,
           display_length: parseInt(g('dv-display')) || 0,
           companions: document.getElementById('dv-comp').checked,
+          user_library_prefix: g('dv-ulp').trim(),
+          downmix: S.devForm.downmix || '', max_path_length: S.devForm.max_path_length || 0,
+          overwrite: !!S.devForm.editing,
           rename: (document.getElementById('dv-rename').checked && parseInt(g('dv-display')) > 0) ? 'distinguishing-first' : '' };
         api('/api/device', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) })
           .then(async r => { if (r.error) { S.toast = r.error; render(); return; }

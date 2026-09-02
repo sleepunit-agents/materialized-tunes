@@ -172,8 +172,9 @@ func (s *Server) summary(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) devices(w http.ResponseWriter, _ *http.Request) {
 	type dev struct {
-		Name string `json:"name"`
-		Sub  string `json:"sub"`
+		Name string     `json:"name"`
+		Sub  string     `json:"sub"`
+		Form deviceForm `json:"form"` // what the Setup form needs to reopen it
 	}
 	var out []dev
 	files, _ := filepath.Glob(filepath.Join(s.ws.Root, "devices", "*.toml"))
@@ -193,7 +194,7 @@ func (s *Server) devices(w http.ResponseWriter, _ *http.Request) {
 		if d.Delivery.Layout == "flatten" {
 			sub += " · flat"
 		}
-		out = append(out, dev{Name: name, Sub: sub})
+		out = append(out, dev{Name: name, Sub: sub, Form: formOf(d)})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	jsonOut(w, out)

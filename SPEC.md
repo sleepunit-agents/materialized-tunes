@@ -383,6 +383,12 @@ anchor = "user-library"           # | "document"
 user_library_prefix = "Samples"   # where the recipe target sits inside the Live User Library
 ```
 
+In the UI (Setup → devices) the block is the **Ableton racks** checkbox
+plus the **User Library /** subfolder beside it; an existing device opens
+with **edit** and saving rewrites its `.toml` whole from the form
+(v0.9.25). The subfolder is the one claim only the user can make: get it
+wrong and every rewritten rack opens with missing samples.
+
 - **Scan** reads every document whole (they are small) and records the
   sample references it carries in the catalog entry (`doc.refs`, as
   written: relative path, absolute path, name), or `doc_err` when the

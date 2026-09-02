@@ -7,6 +7,27 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.25 — 2026-09-01 (turn companions on from the UI)
+
+Jonathan: "do I have the ability to turn this stuff on the ui?" Partly,
+and the partly was ours: the device form had the **Ableton racks**
+checkbox but was create-only — no way to open the Push profile he
+already had — and it wrote `user_library_prefix = "Samples"` unasked,
+which is only right when the recipe target is literally `<User
+Library>/Samples`. Now `/api/devices` hands each device back in form
+shape, the list has **edit**, saving an existing device rewrites its
+`.toml` from the form (with overwrite; the header and the form say so),
+and the subfolder is a field beside the checkbox — normalised
+(backslashes, stray slashes), `..` refused, empty means `Samples`.
+
+Same conversation, two things worth writing down that were already true:
+the harvest runs at **scan** over the whole location — the recipe and
+materialize never gate it, so the Library step's instrument facets are
+the tagging whether or not a file ever ships; and the `**/Ableton*/**`
+exclude in the example recipe decides only whether racks *ride along*,
+never what gets classified. The v0.9.24 document tier does need one
+**rescan** of the location, because scan is what reads the racks' refs.
+
 ## v0.9.24 — 2026-09-01 (a rack's folder labels its samples)
 
 Jonathan, on learning that Samples From Mars files `SuperPulse.adg`

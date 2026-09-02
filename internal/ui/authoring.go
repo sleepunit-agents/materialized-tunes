@@ -516,26 +516,49 @@ func (s *Server) presets(w http.ResponseWriter, _ *http.Request) {
 	jsonOut(w, devicePresets)
 }
 
-func (s *Server) deviceWrite(w http.ResponseWriter, r *http.Request) {
-	var d struct {
-		Name        string  `json:"name"`
-		BitDepth    int     `json:"bit_depth"`
-		SampleRate  int     `json:"sample_rate"`
-		Channels    string  `json:"channels"`
-		Downmix     string  `json:"downmix"`
-		MaxDuration float64 `json:"max_duration_seconds"`
-		Filesystem  string  `json:"filesystem"`
-		Mode        string  `json:"mode"`
-		Layout      string  `json:"layout"`
-		MaxFiles    int     `json:"max_files_per_dir"`
-		MaxName     int     `json:"max_filename_length"`
-		MaxPath     int     `json:"max_path_length"`
-		Sanitize    bool    `json:"sanitize"`
-		DisplayLen  int     `json:"display_length"`
-		Rename      string  `json:"rename"`
-		Companions  bool    `json:"companions"`
-		Overwrite   bool    `json:"overwrite"`
+// deviceForm is the Setup form's view of a device profile: the fields the
+// form edits, in the form's own vocabulary. It goes out with every device
+// on /api/devices so an existing profile can be reopened and re-saved
+// (the whole .toml is rewritten from it — hand-added comments do not
+// survive an edit, and the file's header says so).
+type deviceForm struct {
+	Name        string  `json:"name"`
+	BitDepth    int     `json:"bit_depth"`
+	SampleRate  int     `json:"sample_rate"`
+	Channels    string  `json:"channels"`
+	Downmix     string  `json:"downmix"`
+	MaxDuration float64 `json:"max_duration_seconds"`
+	Filesystem  string  `json:"filesystem"`
+	Mode        string  `json:"mode"`
+	Layout      string  `json:"layout"`
+	MaxFiles    int     `json:"max_files_per_dir"`
+	MaxName     int     `json:"max_filename_length"`
+	MaxPath     int     `json:"max_path_length"`
+	Sanitize    bool    `json:"sanitize"`
+	DisplayLen  int     `json:"display_length"`
+	Rename      string  `json:"rename"`
+	Companions  bool    `json:"companions"`
+	// UserLibraryPrefix: where the recipe target sits inside the Live User
+	// Library — the [companions] anchor. "Samples" when unset.
+	UserLibraryPrefix string `json:"user_library_prefix"`
+	Overwrite         bool   `json:"overwrite"`
+}
+
+// formOf maps a loaded profile back onto the form.
+func formOf(d *profile.Device) deviceForm {
+	return deviceForm{
+		Name: d.Name, BitDepth: d.Audio.BitDepth, SampleRate: d.Audio.SampleRate, Channels: d.Audio.Channels,
+		Downmix: d.Audio.Downmix, MaxDuration: d.Audio.MaxDurationSeconds, Filesystem: d.Filesystem.Type,
+		Mode: d.Delivery.Mode, Layout: d.Delivery.Layout,
+		MaxFiles: d.Naming.MaxFilesPerDir, MaxName: d.Naming.MaxFilenameLength, MaxPath: d.Naming.MaxPathLength,
+		Sanitize:   d.Naming.AllowedChars != "" || len(d.Naming.Sanitize) > 0,
+		DisplayLen: d.Naming.DisplayLength, Rename: d.Naming.Rename,
+		Companions: len(d.Companions.Types) > 0, UserLibraryPrefix: d.Companions.UserLibraryPrefix,
 	}
+}
+
+func (s *Server) deviceWrite(w http.ResponseWriter, r *http.Request) {
+	var d deviceForm
 	if err := json.NewDecoder(r.Body).Decode(&d); err != nil {
 		jsonErr(w, 400, err)
 		return
@@ -544,14 +567,26 @@ func (s *Server) deviceWrite(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, 400, fmt.Errorf("device name must be lowercase letters, digits, - or _"))
 		return
 	}
+	d.UserLibraryPrefix = strings.Trim(strings.ReplaceAll(strings.TrimSpace(d.UserLibraryPrefix), "\\", "/"), "/")
+	if d.UserLibraryPrefix == "" {
+		d.UserLibraryPrefix = "Samples"
+	}
+	if d.Companions {
+		for _, seg := range strings.Split(d.UserLibraryPrefix, "/") {
+			if seg == "" || seg == "." || seg == ".." {
+				jsonErr(w, 400, fmt.Errorf("User Library subfolder must be a folder path inside the library, like Samples or Samples/mtunes"))
+				return
+			}
+		}
+	}
 	path := filepath.Join(s.ws.Root, "devices", d.Name+".toml")
 	if _, err := os.Stat(path); err == nil && !d.Overwrite {
 		jsonErr(w, 409, fmt.Errorf("device %q already exists", d.Name))
 		return
 	}
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "# %s — created in the mtunes UI. Every value here is a claim\n", d.Name)
-	sb.WriteString("# about what the hardware accepts; check it against the manual.\n")
+	fmt.Fprintf(&sb, "# %s — written by the mtunes UI (Setup → devices → edit rewrites it whole).\n", d.Name)
+	sb.WriteString("# Every value here is a claim about what the hardware accepts; check it against the manual.\n")
 	fmt.Fprintf(&sb, "name = %q\n\n[audio]\nformat      = \"wav\"\n", d.Name)
 	fmt.Fprintf(&sb, "bit_depth   = %d\nsample_rate = %d\nchannels    = %q\n", d.BitDepth, d.SampleRate, d.Channels)
 	if d.Downmix != "" {
@@ -591,7 +626,7 @@ func (s *Server) deviceWrite(w http.ResponseWriter, r *http.Request) {
 		sb.WriteString("\n# Ableton documents ride along with their sample refs rewritten to where the\n")
 		sb.WriteString("# samples landed. anchor = \"user-library\" assumes the recipe target is\n")
 		sb.WriteString("# <User Library>/<user_library_prefix> — racks then resolve on Push too.\n")
-		sb.WriteString("[companions]\ntypes  = [\"adg\", \"adv\", \"als\"]\nanchor = \"user-library\"\nuser_library_prefix = \"Samples\"\n")
+		fmt.Fprintf(&sb, "[companions]\ntypes  = [\"adg\", \"adv\", \"als\"]\nanchor = \"user-library\"\nuser_library_prefix = %q\n", d.UserLibraryPrefix)
 	}
 	if err := os.WriteFile(path, []byte(sb.String()), 0o644); err != nil {
 		jsonErr(w, 500, err)
