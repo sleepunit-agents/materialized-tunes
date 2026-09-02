@@ -7,6 +7,31 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.39 — 2026-09-02 (a rack is never a decision)
+
+Jonathan, Dr Sample From Mars: "`Ableton/Dr Sample From Mars
+Project/Presets/07. Textures` <- this is asking loop or one shot, but
+everything is an adg". The ten Textures racks inherit their record from
+the sixteen chops each references (§6, the two-thirds vote), and 144 of
+the 160 chops under `WAV/07. Textures` carried no kind word — so the
+racks inherited the silence, landed in `_Unsorted`, and the Plan queued
+the *rack* folder with a "loop or one-shot?" it could never act on: a
+`[[dir]] category` on a folder of documents changes nothing, because a
+document has no harvested facts of its own to pin.
+
+**Companions leave the decision surface.** `recount` skips them for the
+unsorted / uncategorized / general counters (the "N need a decision"
+badge), and `/api/plan/queues` skips them when grouping rows and when
+picking a row's *why*. `Kind` still says where a document went, the tree
+still shows it there, and the vendor-prep / blind-document warnings are
+unchanged. The question is asked once, on the sample folder; the answer
+carries every rack over those samples with it (TestReviewSurface: a
+rack over the uncategorized Kicks is not a row, and follows the kicks to
+One-Shots after the correction). sample-vendor-annotations gives the
+Textures folder `default_category = "one-shots"` (ten SP-303 texture
+kits of sixteen numbered chops; "01. Break" keeps loops by its own
+word) — probed over the house listing, exactly 143 files move.
+
 ## v0.9.38 — 2026-09-02 (the format level is not always at pack root)
 
 Jonathan, in Modular Creations From Mars: "under the loops, it has some

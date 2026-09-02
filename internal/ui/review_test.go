@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sleepunit-agents/materialized-tunes/internal/ableton"
 	"github.com/sleepunit-agents/materialized-tunes/internal/audio"
 	"github.com/sleepunit-agents/materialized-tunes/internal/catalog"
 	"github.com/sleepunit-agents/materialized-tunes/internal/workspace"
@@ -42,13 +43,18 @@ func TestReviewSurface(t *testing.T) {
 		mk("A/P1/Noise/take 1.wav", "1"), mk("A/P1/Noise/take 2.wav", "2"), // nothing → unsorted
 		mk("A/P1/Kicks/Kick 01.wav", "3"),   // instrument, no kind → uncategorized
 		mk("A/P1/Loops/Kick Loop.wav", "4"), // placed
+		// a rack over the uncategorized kicks inherits their gap, but the
+		// question is the Kicks folder's, never the Racks folder's
+		{Path: "A/P1/Racks/Kit.adg", SHA256: "5", Size: 1000, ScannedAt: time.Now(),
+			Doc: &ableton.Doc{Refs: []ableton.Ref{{Rel: "../Kicks/Kick 01.wav", Name: "Kick 01.wav", Type: "3"}}}},
 	} {
 		cat[e.Path] = e
 	}
 	if err := catalog.Write(ws.CatalogPath("src"), cat); err != nil {
 		t.Fatal(err)
 	}
-	write("views/v.toml", "name=\"v\"\ndevice=\"octatrack\"\nstorage=\"octatrack-cf\"\nlayout=\"{family}/{instrument}/{category}/{pack}/{file}\"\n[[include]]\nlocation=\"src\"\nglob=\"**\"\n")
+	write("devices/live.toml", "name = \"live\"\n[audio]\nformat = \"wav\"\nbit_depth = 16\nsample_rate = 48000\nchannels = \"mono\"\nmax_duration_seconds = 5.0\n[delivery]\nmode = \"staged\"\n[companions]\ntypes = [\"adg\"]\n")
+	write("views/v.toml", "name=\"v\"\ndevice=\"live\"\nstorage=\"octatrack-cf\"\nlayout=\"{family}/{instrument}/{category}/{pack}/{file}\"\n[[include]]\nlocation=\"src\"\nglob=\"**\"\n")
 	ws, _ = workspace.Load(dir)
 	s := &Server{ws: ws, plans: map[string]*planArtifact{}}
 
@@ -94,7 +100,10 @@ func TestReviewSurface(t *testing.T) {
 	q := call(http.MethodGet, "/api/plan/queues?view=v", "")
 	rows := q["rows"].([]any)
 	if len(rows) != 2 {
-		t.Fatalf("queue rows: %v", rows)
+		t.Fatalf("queue rows (the Racks folder must not be one): %v", rows)
+	}
+	if pl := q["kinds"].(map[string]any); pl["uncategorized"].(float64) != 1 {
+		t.Errorf("kind totals count samples only: %v", pl)
 	}
 	r0, r1 := rows[0].(map[string]any), rows[1].(map[string]any)
 	if r0["folder"] != "A/P1/Noise" || r0["kind"] != "unsorted" || r0["count"].(float64) != 2 || r0["pack_path"] != "A/P1" {
@@ -108,7 +117,7 @@ func TestReviewSurface(t *testing.T) {
 	for _, d := range tr["dirs"].([]any) {
 		names[d.(map[string]any)["name"].(string)] = true
 	}
-	if !names["Drums"] || !names["_Unsorted"] || tr["total"].(float64) != 4 {
+	if !names["Drums"] || !names["_Unsorted"] || tr["total"].(float64) != 5 {
 		t.Errorf("tree root: %v", tr)
 	}
 	tr = call(http.MethodGet, "/api/plan/tree?view=v&prefix=Drums/Kick/Loops/P1", "")
@@ -142,8 +151,8 @@ func TestReviewSurface(t *testing.T) {
 		t.Errorf("Kicks must have left the queue: %v", rows)
 	}
 	tr = call(http.MethodGet, "/api/plan/tree?view=v&prefix=Drums/Kick/One-Shots/P1", "")
-	if tr["total"].(float64) != 1 {
-		t.Errorf("the corrected file lands in One-Shots: %v", tr)
+	if tr["total"].(float64) != 2 { // the kick, and the rack that followed it
+		t.Errorf("the corrected file lands in One-Shots and its rack follows: %v", tr)
 	}
 
 	// kind C: leave it — the ack takes the row out without inventing a label

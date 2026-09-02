@@ -86,6 +86,12 @@ glob="**"
 	if p.Companions != 3 {
 		t.Errorf("companions = %d, want 3", p.Companions)
 	}
+	// Blind.adg sits under _Unsorted, but a document is never a decision
+	// of its own: the counters the UI turns into "N need a decision"
+	// describe samples only.
+	if p.Unsorted != 0 || p.Uncategorized != 0 || p.General != 0 {
+		t.Errorf("companions must not count as decisions: unsorted=%d uncategorized=%d general=%d", p.Unsorted, p.Uncategorized, p.General)
+	}
 	if len(p.Errors) != 0 {
 		t.Errorf("errors: %v", p.Errors)
 	}

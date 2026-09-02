@@ -1481,7 +1481,11 @@ one action vocabulary:
   one decision per folder, never per file. Each row shows the folder, the
   file count, a few filenames, the facets that did resolve, and an audition
   button (`/api/preview` already streams audio; playing a file to a human
-  is not the audio analysis §11.4 refused).
+  is not the audio analysis §11.4 refused). Companion documents never
+  queue and never count as decisions *(v0.9.39)*: a rack inherits its
+  record from the samples it references (§6), so a folder of `.adg` has
+  nothing a `[[dir]]` pin could change — the question belongs to the
+  sample folder, and answering it there carries the rack along.
 - **Tree** — the destination tree as it will be written, walkable, with
   every file's *why* one click away. This is where misfiles are found
   ("Groove Therapy Pad in Drums/Break") — they are confident, so no queue

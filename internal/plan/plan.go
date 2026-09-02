@@ -1189,6 +1189,14 @@ func (p *Plan) recount() {
 		if e.DualMono {
 			p.DualMonoFolded++
 		}
+		if e.Companion {
+			// A document lands where its samples landed; it has no facts
+			// of its own to correct. Where it fell to _Unsorted, the
+			// decision is on the sample folder (already counted) or the
+			// vote genuinely split — either way, not a question to ask
+			// about the rack. Kind still says where it went.
+			continue
+		}
 		if e.placed&placeUnsorted != 0 {
 			p.Unsorted++
 			if unsortedEx == "" {

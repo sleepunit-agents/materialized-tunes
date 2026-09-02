@@ -87,7 +87,10 @@ func (s *Server) queues(w http.ResponseWriter, r *http.Request) {
 	acks := correct.Acks(s.ws)
 	kindTotals := map[string]int{}
 	for _, e := range a.Plan.Entries {
-		if e.Kind == "" {
+		if e.Kind == "" || e.Companion {
+			// A rack inherits its record from the samples it references;
+			// a folder of .adg has nothing a [[dir]] pin could change, so
+			// the question belongs on the sample folder, never here.
 			continue
 		}
 		kindTotals[e.Kind]++
@@ -142,7 +145,7 @@ func (s *Server) queues(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		for _, e := range a.Plan.Entries {
-			if e.Kind == "" || e.Location != rw.Location || path.Dir(e.SourcePath) != rw.Folder {
+			if e.Kind == "" || e.Companion || e.Location != rw.Location || path.Dir(e.SourcePath) != rw.Folder {
 				continue
 			}
 			m := s.inputs.Meta(e.Location)[e.SourcePath]
