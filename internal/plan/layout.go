@@ -225,7 +225,7 @@ func (ly *layouter) placeMeta(loc, srcPath string, meta harvest.Meta, hasMeta bo
 		}
 		vals[view.TokCategory] = displayName(m.Category)
 		catchAll = m.Instrument != "" && m.Instrument == m.Family
-		isFX = m.Category == "fx" || m.Family == "fx"
+		isFX = m.Family == "fx"
 	}
 	pl := placement{parents: inPack[:len(inPack)-1]}
 	if isFX && ly.lay.NeedsMeta() {
@@ -233,11 +233,14 @@ func (ly *layouter) placeMeta(loc, srcPath string, meta harvest.Meta, hasMeta bo
 		// in the FX tree, not in Woodwind/Flute/ where someone hunting a
 		// flute finds it. Inside, the same flat-family rule as everywhere
 		// else decides the split: fx marked flat in instruments.toml means
-		// just loop vs one-shot; otherwise {instrument} is what the sound
-		// is when the label says (Riser, Foley, Flute; _General when it
-		// only said "fx"). {category} is loop vs one-shot either way
-		// (_Unsorted when "fx" was the only category signal, since "fx"
-		// carries no loop-ness).
+		// just loop vs one-shot vs multisample; otherwise {instrument} is
+		// what the sound is when the label says (Riser, Foley, Flute;
+		// _General when it only said "fx"). {category} is the kind of
+		// recording either way, read exactly as for any other family —
+		// "fx" stopped being a category on 2026-09-02 (it said what, not
+		// how, and as a non-empty category it kept the multisample shape
+		// from speaking on SFM's WAV/FX patches), so an FX file with no
+		// kind is _Unsorted for the same reason a flute with none is.
 		if ly.lay.Uses(view.TokFamily) {
 			vals[view.TokFamily] = "FX"
 			switch {
@@ -247,7 +250,7 @@ func (ly *layouter) placeMeta(loc, srcPath string, meta harvest.Meta, hasMeta bo
 				vals[view.TokInstrument] = GeneralDir
 				pl.general = ly.lay.Uses(view.TokInstrument)
 			}
-			if meta.Category == "" || meta.Category == "fx" {
+			if meta.Category == "" {
 				vals[view.TokCategory] = UnsortedDir
 				pl.uncategorized = ly.lay.Uses(view.TokCategory)
 			}

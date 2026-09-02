@@ -62,10 +62,31 @@ func TestHarvest(t *testing.T) {
 		mk("Samples From Mars/101 From Mars/WAV/Bass/3_FishFriend_SH101_D#-2-U65Z.wav", "ms4"),
 		mk("Samples From Mars/101 From Mars/WAV/Bass/4_FishFriend_SH101_E-2-XEVR.wav", "ms5"),
 		mk("Samples From Mars/101 From Mars/WAV/Bass/12_BigSub1_SH101_D1_C2IQ.wav", "ms6"),
+		mk("Samples From Mars/101 From Mars/WAV/Bass/5_FishFriend_SH101_F-2-K2LP.wav", "ms7"), // FishFriend's sixth note: one name spans six, the dir is a multisample
 		// looks notey but isn't: lowercase take names, too few pitches
 		mk("Nobody/Pack2/kits dir/kit_a_1.wav", "k1"),
 		mk("Nobody/Pack2/kits dir/kit_a_2.wav", "k2"),
 		mk("Nobody/Pack2/kits dir/kit_b_1.wav", "k3"),
+		// one-shots with flavours: six pitches, six NAMES — no one patch
+		// spans the keyboard, so the folder is not a multisample
+		mk("Nobody/Pack3/Synths/Alpha Bass C1.wav", "fl1"),
+		mk("Nobody/Pack3/Synths/Beta Bass G0.wav", "fl2"),
+		mk("Nobody/Pack3/Synths/Gamma Bass D#1.wav", "fl3"),
+		mk("Nobody/Pack3/Synths/Delta Bass F2.wav", "fl4"),
+		mk("Nobody/Pack3/Synths/Epsilon Bass A1.wav", "fl5"),
+		mk("Nobody/Pack3/Synths/Zeta Bass B2.wav", "fl6"),
+		mk("Nobody/Pack3/Synths/Eta Bass E1.wav", "fl7"),
+		// one name, six pitches, round-robin takes: a multisample even
+		// though half the files repeat a note (SFM DX100 "_0001" grammar)
+		mk("Nobody/Pack4/Bells/60_TBells_DX100_C3.wav", "rr1"),
+		mk("Nobody/Pack4/Bells/60_TBells_DX100_C3_0001.wav", "rr2"),
+		mk("Nobody/Pack4/Bells/61_TBells_DX100_C#3.wav", "rr3"),
+		mk("Nobody/Pack4/Bells/61_TBells_DX100_C#3_0001.wav", "rr4"),
+		mk("Nobody/Pack4/Bells/62_TBells_DX100_D3.wav", "rr5"),
+		mk("Nobody/Pack4/Bells/62_TBells_DX100_D3_0001.wav", "rr6"),
+		mk("Nobody/Pack4/Bells/63_TBells_DX100_D#3.wav", "rr7"),
+		mk("Nobody/Pack4/Bells/64_TBells_DX100_E3.wav", "rr8"),
+		mk("Nobody/Pack4/Bells/65_TBells_DX100_F3.wav", "rr9"),
 	} {
 		cat[e.Path] = e
 	}
@@ -77,8 +98,8 @@ func TestHarvest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Files != 16 {
-		t.Errorf("files with metadata = %d, want 16", res.Files)
+	if res.Files != 33 { // 16 + ms7 + the 7 flavoured hits (bass) + the 9 bell takes
+		t.Errorf("files with metadata = %d, want 33", res.Files)
 	}
 	got := map[string]Meta{}
 	f, _ := os.Open(filepath.Join(dir, "annotations-cache", "meta", "src.jsonl"))
@@ -113,6 +134,13 @@ func TestHarvest(t *testing.T) {
 	check("ms6", "", 0, "multisamples")              // …and the C2 in the random suffix didn't fool it
 	if _, ok := got["k1"]; ok {
 		t.Error("k1: lowercase take names must not read as a multisample dir")
+	}
+	if m := got["fl1"]; m.Category != "" {
+		t.Errorf("fl1: seven differently-named hits that carry keys read as %q, want no category (flavours, not a multisample)", m.Category)
+	}
+	check("rr1", "C3", 0, "multisamples") // one name over six pitches, round-robin takes and all
+	if m := got["rr2"]; m.Category != "multisamples" {
+		t.Errorf("rr2: the _0001 take of a multisample read as %q, want multisamples", m.Category)
 	}
 	if m := got["s11"]; m.Instrument != "break" || m.Family != "drums" || m.Category != "loops" {
 		// a jungle groove named after its source must not read as sub bass

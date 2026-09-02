@@ -766,41 +766,78 @@ func (h *harvester) docInstrument(p, category string, overrides []annotations.In
 // "…_B-2"). SFM's synth packs spread these over instrument-named dirs
 // ("Leads", "Bass", "05. Synth") with no category word anywhere, so the
 // shape of the directory is the only signal there is. Deliberately
-// conservative — at least 6 files carrying notes, 6 distinct notes, and
-// noted files in the majority — so a stray "Sub C1.wav" beside twenty
-// kicks claims nothing. Used as the last category tier, after every
-// explicit label has had its say.
+// conservative — at least 6 files carrying notes, noted files in the
+// majority, and ONE NAME spanning at least 6 distinct notes — so a stray
+// "Sub C1.wav" beside twenty kicks claims nothing, and neither does a
+// folder of differently-named hits that each happen to carry a key:
+// "2600 Dirtier C1", "BassStation Overtone G0", "Sub Smooth C1" are
+// one-shots with flavours, not an instrument (SFM Vinyl Synths, Tape
+// Fragments, Trumpet Fragments — Jonathan, "foo A#, foo C and foo D# is
+// just one shots with flavors", 2026-09-02). A multisample is one name
+// over many pitches; round-robins ("_0001") and velocity words are
+// dimensions inside it, which is why the name is read as the stem
+// BEFORE the note with digits and punctuation dropped ("60_TBells_DX100_"
+// and "61_TBells_DX100_" are both "tbellsdx"; 101's random "-Z4QB" tails
+// sit after the note and never enter it). Used as the last category
+// tier, after every explicit label has had its say.
 func multisampleDirs(paths []string) map[string]bool {
 	type stat struct {
 		total, noted int
-		notes        map[string]bool
+		names        map[string]map[string]bool // name → notes it spans
 	}
 	stats := map[string]*stat{}
 	for _, p := range paths {
 		dir := path.Dir(p)
 		st := stats[dir]
 		if st == nil {
-			st = &stat{notes: map[string]bool{}}
+			st = &stat{names: map[string]map[string]bool{}}
 			stats[dir] = st
 		}
 		st.total++
 		base := path.Base(p)
 		stem := strings.TrimSuffix(base, filepath.Ext(base))
-		ms := msNoteRe.FindAllStringSubmatch(stem, -1)
+		ms := msNoteRe.FindAllStringSubmatchIndex(stem, -1)
 		if len(ms) == 0 {
 			continue
 		}
 		last := ms[len(ms)-1] // the pitch is the trailing token by convention
+		note := stem[last[2]:last[3]] + stem[last[4]:last[5]]
+		name := msName(stem[:last[2]])
+		if name == "" {
+			name = msName(stem[last[5]:])
+		}
 		st.noted++
-		st.notes[last[1]+last[2]] = true
+		if st.names[name] == nil {
+			st.names[name] = map[string]bool{}
+		}
+		st.names[name][note] = true
 	}
 	out := map[string]bool{}
 	for dir, st := range stats {
-		if st.noted >= 6 && len(st.notes) >= 6 && st.noted*2 >= st.total {
-			out[dir] = true
+		if st.noted < 6 || st.noted*2 < st.total {
+			continue
+		}
+		for _, notes := range st.names {
+			if len(notes) >= 6 {
+				out[dir] = true
+				break
+			}
 		}
 	}
 	return out
+}
+
+// msName is the multisample tier's idea of a file's name: the letters of
+// the given stem fragment, lowercased — take numbers, MIDI-note prefixes
+// and separators drop so every note of one patch reads as one name.
+func msName(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		if r >= 'a' && r <= 'z' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 func harvestBPM(base string, dirs []string, v *annotations.Vendor) int {

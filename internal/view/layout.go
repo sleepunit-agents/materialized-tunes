@@ -30,12 +30,13 @@ import (
 // the shared lexicon marks flat (instruments.toml [[family]] flat = true —
 // bass, synth, …) don't split by instrument: their {instrument} level
 // drops, or renders the family name when the template has no {family}.
-// A file known to be FX (category or family "fx") never lands in an
-// instrument tree: {family} renders as FX and the levels inside follow
-// the same flat-family rule — when fx is flat the tree is just loop vs
-// one-shot; otherwise {instrument} is what the sound is (Riser, Foley,
-// Flute; _General when unlabeled). {category} is loop vs one-shot either
-// way (_Unsorted when the only category signal was "fx"). A template
+// A file known to be FX (family "fx") never lands in an instrument
+// tree: {family} renders as FX and the levels inside follow the same
+// flat-family rule — when fx is flat the tree is just the kind (loop /
+// one-shot / multisample); otherwise {instrument} is what the sound is
+// (Riser, Foley, Flute; _General when unlabeled). {category} is the
+// kind either way, _Unsorted when nothing said it — fx is a family,
+// not a category (the category id was retired 2026-09-02). A template
 // without {family} consolidates flat: its first taxonomy level renders
 // as FX and the deeper ones drop.
 type Layout struct {

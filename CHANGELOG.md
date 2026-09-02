@@ -7,6 +7,63 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.36 — 2026-09-02 (fx is a family, not a category; a multisample is one name over many pitches)
+
+Jonathan, on the Plan queue's "loop or one-shot?" picker: "it's offering
+fx as a choice. loop, oneshot, multisample, fx. fx can be a loop or
+oneshot right? or even a multisample." And on the multisample tier:
+"if it's foo A#, foo C and foo D#, that's just one shots with flavors,
+not a multisample."
+
+**fx was two facets wearing one word.** Category says *how* a thing was
+recorded — a hit, a phrase, a keyboard's worth of notes — and fx says
+*what* it is, which is the `fx` family in `instruments.toml` and always
+was. `categories.toml` carried an `fx` id as well, so any FX folder word
+set the category to a non-answer that was nevertheless non-empty, and
+every later tier stayed quiet. That is exactly SFM's grammar: each synth
+pack has a `WAV/FX/` folder of chromatic patches (101 *BigSub1*,
+*HoldAndSampleMe*; SYS100M, OB, Voyetra by the hundreds) and files racks
+under `Presets/FX/` (DX100 *Tubular Bells* — every semitone C0–C7, three
+takes each, the clearest multisample in the pack). All of it read
+category=fx, landed in FX/_General/_Unsorted, and asked the picker the
+question the folder had already answered. The category id is retired in
+sample-vendor-annotations (as `kits` was on 08-30): the four vendors'
+`[[category]] fx` rules go, the twelve pack `[[dir]] category = "fx"`
+pins become `instrument = "fx"` pins (same statement, right facet), the
+lint refuses a category id `categories.toml` doesn't know on vendor rules
+and dir pins alike, and riser / downlifter / impact / transition /
+spinback join the one-shots words (events by construction, like a chop
+or a flam; *sweep* deliberately not — Junos ships a pad patch called
+Sweep across the keyboard, and a word here beats the shape). Here,
+`plan/layout.go` reads FX-ness from the family alone and treats an FX
+file with no kind exactly like a flute with none; `/api/lexicon` needed
+no change — the picker lists what `categories.toml` has, so it now
+offers loops / one-shots / multisamples.
+
+**The multisample tier now wants one name.** It asked for six noted
+files, six distinct notes and noted files in the majority; a folder of
+sixty differently-named bass hits that each carry the key they were
+played at passed. Now one *name* — the stem before the note, letters
+only, so `60_TBells_DX100_C3` and its `_0001` take are the same name —
+must span six notes. Round-robins and velocity layers are dimensions
+inside a multisample, not evidence against one; three flavours of a
+patch never were one.
+
+**Probed over the house listing (167,652 audio files, racks name-joined
+to their WAV folders where the names agree):** 8,425 files move in
+canonical trees, nothing outside the intended packs. fx → multisamples
+6,779 (SFM WAV/FX patches; DX100 Tubular Bells to Keys/Bell/Multisamples;
+S612 Synths/FX 287 under the parent's pin). fx → one-shots 867 (Emulator
+08. FX, Found Sounds FX Textures, Polyend Heights and Collapse, Junos 06.
+FX via a new pack default, 101's *Various One Shots* rack finally heard).
+multisamples → one-shots 253: SFM Vinyl Synths, Tape Fragments, Trumpet
+Fragments — the flavours, now with `default_category = "one-shots"` on
+their WAV dirs. fx → nothing 353 (Databenders MISC, Blu Mar Ten FX, Origin
+Sound SFX): the honest answer, and the queue's question now means it.
+Plus 170 files in 101's *Keys and Pads* gain keys from a new folder
+default (the 13 racks under Presets/Keys say the same per patch; Jonathan:
+"just making that generic keys is probably right").
+
 ## v0.9.35 — 2026-09-02 (a drum loop is a break; the picker names each instrument once)
 
 Jonathan, on v0.9.34, with the Plan queue for a new pack: a hundred files

@@ -766,9 +766,9 @@ func TestLayoutTemplate(t *testing.T) {
 		wavEntry("Grit/one_shots/rim_alt/Rim 01.wav", 1, 48000, 16, 4800),     // same name, other folder → disambiguated
 		wavEntry("Tech Funk/hits/TFH_Rim_A.wav", 1, 48000, 16, 4800),          // no category signal → _Unsorted category folder
 		wavEntry("Tech Funk/loops/TFH_Loop_124_Gmin.wav", 1, 48000, 16, 4800), // no instrument → _Unsorted
-		wavEntry("Grit/fx/Flute Riser.wav", 1, 48000, 16, 4800),               // category fx → FX/, never Woodwind/; fx is flat + "fx" has no loop-ness → FX/_Unsorted/
+		wavEntry("Grit/fx/Flute Riser.wav", 1, 48000, 16, 4800),               // family fx (a riser) → FX/, never Woodwind/; fx is flat + nothing said the kind → FX/_Unsorted/
 		wavEntry("Grit/foley/Rain Loop.wav", 1, 48000, 16, 4800),              // family fx, flat → FX/Loops/
-		wavEntry("Grit/fx/Weird One.wav", 1, 48000, 16, 4800),                 // fx catch-all all the way down → FX/_Unsorted/
+		wavEntry("Grit/fx/Weird One.wav", 1, 48000, 16, 4800),                 // fx catch-all, no kind → FX/_Unsorted/
 		wavEntry("Grit/bass/Champion Sub.wav", 1, 48000, 16, 4800),            // bass is flat: no Bass/Sub/ level → Bass/One-Shots/
 		wavEntry("Grit/bass/Upright Bass C2.wav", 1, 48000, 16, 4800),         // split=true: the one entry that keeps its level in a flat family
 	}, map[string]string{
@@ -782,9 +782,9 @@ func TestLayoutTemplate(t *testing.T) {
 			`{"path":"Grit/one_shots/rim_alt/Rim 01.wav","category":"one-shots","instrument":"rim","family":"drums"}`,
 			`{"path":"Tech Funk/hits/TFH_Rim_A.wav","instrument":"rim","family":"drums"}`,
 			`{"path":"Tech Funk/loops/TFH_Loop_124_Gmin.wav","category":"loops","bpm":124}`,
-			`{"path":"Grit/fx/Flute Riser.wav","category":"fx","instrument":"flute","family":"woodwind"}`,
+			`{"path":"Grit/fx/Flute Riser.wav","instrument":"riser","family":"fx"}`,
 			`{"path":"Grit/foley/Rain Loop.wav","category":"loops","instrument":"foley","family":"fx"}`,
-			`{"path":"Grit/fx/Weird One.wav","category":"fx","instrument":"fx","family":"fx"}`,
+			`{"path":"Grit/fx/Weird One.wav","instrument":"fx","family":"fx"}`,
 			`{"path":"Grit/bass/Champion Sub.wav","category":"one-shots","instrument":"sub","family":"bass"}`,
 			`{"path":"Grit/bass/Upright Bass C2.wav","category":"one-shots","instrument":"upright-bass","family":"bass"}`,
 		}, "\n") + "\n",
@@ -833,7 +833,7 @@ as="SPLICE"
 	if p.Unsorted != 1 {
 		t.Errorf("unsorted = %d, want 1", p.Unsorted)
 	}
-	if p.Uncategorized != 3 { // TFH_Rim_A + the two FX files whose only category signal was "fx"
+	if p.Uncategorized != 3 { // TFH_Rim_A + the two FX files nothing said the kind of
 		t.Errorf("uncategorized = %d, want 3", p.Uncategorized)
 	}
 	if p.General != 1 { // Drum_Loop (family-level label); flat trees have no _General level
