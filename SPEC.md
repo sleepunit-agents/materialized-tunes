@@ -701,9 +701,13 @@ glob = "**/*.asd"                 # Drop the Ableton line when companions (§4.4
 - Excludes apply across all includes.
 - `format_tree = "strip"` (default) drops the vendor's parallel-format
   level from output paths using annotations (`[formats] canonical_dir` /
-  `parallel_dirs`, or a pack `[[dir]]` with `role = "format-tree"`): `808
-  From Mars/WAV/Kicks/x` → `808 From Mars/Kicks/x`, `ASMR/ASMR 24 bit
-  stereo/y` → `ASMR/y`. Where annotations are silent, a structural rule
+  `parallel_dirs`, or a pack `[[dir]]` with `role = "format-tree"` /
+  `"canonical-audio"` — at any depth since v0.9.38, so a pack whose format
+  level sits under a category dir, `Modular Creations From Mars/1. Modular
+  Loops (120 BPM)/{WAV, Apple Loops, REX2}`, sheds it too; vendor globs are
+  read at pack root only): `808 From Mars/WAV/Kicks/x` → `808 From
+  Mars/Kicks/x`, `ASMR/ASMR 24 bit stereo/y` → `ASMR/y`, `…/1. Modular Loops
+  (120 BPM)/WAV/STO/x` → `…/1. Modular Loops (120 BPM)/STO/x`. Where annotations are silent, a structural rule
   reads the dir's own name: a dir directly under a pack named like the
   pack plus nothing but format words — `Thump/Thump 16 bit mono`,
   `Kit/Kit 16-Bit WAV` — is a tree with no annotation at all, so vendors
@@ -1509,7 +1513,7 @@ annotation shape:
 | B | **Nothing** — no instrument, so a templated layout can't open a top-level folder (`unsorted`, mirror tree under `_Unsorted/`) | "What is this folder, at whatever depth you honestly know — family, instrument, or leave it?" Most of the 32k here are SFM patches named *David Lynch*: category is known (multisamples), family is obvious from the pack, no word says it. | `[[dir]] default_instrument = "synth"` (family catch-all as a fallback, *not* a pin); a real pin only when the folder is uniform |
 | C | **Family only** (`general`, `Drums/_General/`) | "Which instrument?" — often unanswerable (numbered takes) and *leave it* is the honest answer. | `[[dir]] instrument` when there is one; otherwise a local **ack** (§19.5) so the row leaves the queue without inventing a label |
 | D | **Wrong** — placed confidently, misfiled | "What is it actually?" — with the *why* shown, so the fix targets the level that lied: a word that means something else in this pack (Drumtrax's *Bass*), a folder, or a lexicon bug. | pack `[[instrument]] aliases` / `avoid`; `[[dir]]` pin; or a **report** (evidence only, no TOML) when the user says "this is your parser, not my pack" |
-| E | **Not content / wrong boundary** — a nested format tree (`Modular Creations/4. Modular Instruments/Kontakt 5.5`), docs, a dir that is really a pack | "Skip this subtree" / "this is a pack". | `[[dir]] role = "format-tree" \| "docs"`; pack-boundary edits stay out of v1 (grammar is vendor-level and rarely wrong) — and the nested-format-tree case is a consumer bug (roles honoured only at pack root) to fix regardless |
+| E | **Not content / wrong boundary** — a nested format tree (`Modular Creations/4. Modular Instruments/Kontakt 5.5`), docs, a dir that is really a pack | "Skip this subtree" / "this is a pack". | `[[dir]] role = "format-tree" \| "docs"`; pack-boundary edits stay out of v1 (grammar is vendor-level and rarely wrong) — the nested-format-tree case was a consumer bug (roles honoured only at pack root) until v0.9.38, which reads a pack's nested `role` entries at any depth |
 
 Three rules the tool enforces so corrections stay facts:
 

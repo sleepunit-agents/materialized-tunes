@@ -726,9 +726,11 @@ func BuildWith(ws *workspace.Workspace, v *view.View, opt Options) (*Plan, error
 // treeStripper drops a vendor's format-tree level from catalog paths: the
 // segment right after the pack dir when annotations say it is the
 // canonical audio dir or a parallel export ("808 From Mars/WAV/Kicks/x" →
-// "808 From Mars/Kicks/x", "ASMR/ASMR 24 bit stereo/y" → "ASMR/y"). Pack
-// depth follows the location layout; the vendor comes from the location's
-// slug, or from the top dir under vendor-dirs.
+// "808 From Mars/Kicks/x", "ASMR/ASMR 24 bit stereo/y" → "ASMR/y"), or a
+// deeper segment the pack's own [[dir]] map gives a tree role ("Modular
+// Creations/1. Modular Loops (120 BPM)/WAV/STO/x" → ".../1. Modular Loops
+// (120 BPM)/STO/x"). Pack depth follows the location layout; the vendor
+// comes from the location's slug, or from the top dir under vendor-dirs.
 type treeStripper struct {
 	vendorDirs bool
 	fixed      *annotations.Vendor // single-vendor location
@@ -800,14 +802,43 @@ func (st *treeStripper) strip(p string) (out string, t treeInfo, ok bool) {
 		return p, treeInfo{}, false
 	}
 	tree := segs[packIdx+1]
-	stripAt := func(rank int, reexport bool) (string, treeInfo, bool) {
-		kept := append(append([]string{}, segs[:packIdx+1]...), segs[packIdx+2:]...)
-		return strings.Join(kept, "/"), treeInfo{tree, rank, reexport, strings.Join(segs[:packIdx+1], "/")}, true
+	// stripAt removes the segment at index at and reports what it was.
+	stripAt := func(at, rank int, reexport bool) (string, treeInfo, bool) {
+		kept := append(append([]string{}, segs[:at]...), segs[at+1:]...)
+		return strings.Join(kept, "/"), treeInfo{segs[at], rank, reexport, strings.Join(segs[:packIdx+1], "/")}, true
 	}
 	if vendor != nil {
 		pack := vendor.PackByDir(segs[packIdx])
 		if rank, ok := vendor.FormatTreeRank(pack, tree); ok {
-			return stripAt(rank, vendor.ParallelRole == "reexport")
+			return stripAt(packIdx+1, rank, vendor.ParallelRole == "reexport")
+		}
+		// The format level can sit a dir or more DOWN — Modular Creations
+		// From Mars has no WAV at pack root; its "1. Modular Loops (120
+		// BPM)" holds WAV, Apple Loops and REX2 renders of the same loops
+		// — and only the pack's own [[dir]] map can say so. A nested entry
+		// with a tree role is a human statement and is honoured at any
+		// depth; the vendor's globs are deliberately not read below the
+		// top, where a "Presets" folder inside a content tree is content
+		// until someone says otherwise. The dir keeps its place in the
+		// output path: only the tree segment goes.
+		for d := packIdx + 2; d < len(segs)-1; d++ {
+			role, claimed := annotations.PackDirRoleAt(pack, strings.Join(segs[packIdx+1:d+1], "/"))
+			if !claimed {
+				continue
+			}
+			switch role {
+			case "canonical-audio":
+				return stripAt(d, 0, false)
+			case "format-tree":
+				// rank it where the vendor's globs would, else past them
+				// all; never 0 — the entry said this is not the canonical
+				// render, whatever the dir is called
+				rank, ok := vendor.FormatTreeRank(nil, segs[d])
+				if !ok || rank == 0 {
+					rank = len(vendor.ParallelDirs) + 1
+				}
+				return stripAt(d, rank, vendor.ParallelRole == "reexport")
+			}
 		}
 		// the pack's own [[dir]] map spoke and said this dir is not a
 		// tree — a category dir at pack root stays what the human said
@@ -816,7 +847,7 @@ func (st *treeStripper) strip(p string) (out string, t treeInfo, ok bool) {
 		}
 	}
 	if rank, ok := heuristicTreeRank(segs[packIdx], tree); ok {
-		return stripAt(rank, false)
+		return stripAt(packIdx+1, rank, false)
 	}
 	return p, treeInfo{}, false
 }

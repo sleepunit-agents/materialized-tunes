@@ -511,6 +511,34 @@ func PackDirRole(p *Pack, dir string) (role string, claimed bool) {
 	return "", false
 }
 
+// PackDirRoleAt is PackDirRole for a directory below the pack's top
+// level: rel is the dir's in-pack path ("1. Modular Loops (120 BPM)/Apple
+// Loops"), matched whole against each [[dir]] path — case-folded, globs
+// allowed as the harvester allows them. The format level does not always
+// sit at pack root (Modular Creations From Mars keeps WAV / Apple Loops /
+// REX2 one dir down, under its loops dir), and only the pack's own map
+// can say so; consumers that strip format trees read nested roles here
+// and never read the vendor's globs below the top.
+func PackDirRoleAt(p *Pack, rel string) (role string, claimed bool) {
+	if p == nil {
+		return "", false
+	}
+	rel = strings.Trim(rel, "/")
+	for _, d := range p.Dirs {
+		dp := strings.Trim(d.Path, "/")
+		if strings.ContainsAny(dp, "*?[{") {
+			if ok, _ := doublestar.Match(dp, rel); ok {
+				return d.Role, true
+			}
+			continue
+		}
+		if strings.EqualFold(dp, rel) {
+			return d.Role, true
+		}
+	}
+	return "", false
+}
+
 // PackByDir finds the pack annotated for an on-disk directory name.
 func (v *Vendor) PackByDir(dir string) *Pack {
 	for i := range v.Packs {

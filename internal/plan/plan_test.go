@@ -949,3 +949,76 @@ func TestLayoutVendorDirs(t *testing.T) {
 		t.Errorf("stripped = %d, want 2 (a layout always strips, even when the glob reaches into the tree)", p.StrippedFormatTree)
 	}
 }
+
+// TestFormatTreeStripNested: the format level can sit below a category
+// dir at pack root — Modular Creations From Mars has no WAV at the top;
+// its "1. Modular Loops (120 BPM)" holds WAV / Apple Loops / REX2 renders
+// of the same loops — and only the pack's own [[dir]] map can say so. A
+// nested canonical-audio entry strips that segment at rank 0 and the dir
+// above keeps its place; a nested format-tree entry is a parallel export,
+// and for a re-export vendor its files are the vendor's prep, skipped
+// where the canonical render survives — which also lets the pack's
+// top-level format-tree (4. Modular Instruments) finally leave, since
+// the swap now has a canonical tree to swap in. Vendor globs are not read
+// below the top: an unannotated nested dir named like a format stays
+// content.
+func TestFormatTreeStripNested(t *testing.T) {
+	const pack = "Samples From Mars/Modular Creations From Mars/"
+	wav := pack + "1. Modular Loops (120 BPM)/WAV/STO/STO_Loops_A_01_C.wav"
+	aif := pack + "1. Modular Loops (120 BPM)/Apple Loops/STO/STO_Loops_A_01_C.aif"
+	kontakt := pack + "4. Modular Instruments/Kontakt 5.5/Samples/STO_Loops_A_01_C.wav"
+	presets := pack + "2. Modular Drones/Presets/Elements_Drones_01.wav"
+	ws := testWorkspace(t, []catalog.Entry{
+		wavEntry(wav, 1, 48000, 16, 4800),
+		wavEntry(aif, 1, 48000, 16, 4800),
+		wavEntry(kontakt, 1, 48000, 16, 4800),
+		wavEntry(presets, 1, 48000, 16, 4800),
+	}, map[string]string{
+		"annotations/vendors/sfm/vendor.toml": "[vendor]\nname=\"Samples From Mars\"\nslug=\"samples-from-mars\"\n[formats]\ncanonical_dir=\"WAV\"\nparallel_role=\"reexport\"\nparallel_dirs=[\"Presets\", \"Kontakt*\", \"Apple Loops*\"]\n",
+		"annotations/vendors/sfm/packs/modular-creations-from-mars.toml": "[pack]\nname=\"Modular Creations From Mars\"\nslug=\"modular-creations-from-mars\"\ndir=\"Modular Creations From Mars\"\n" +
+			"[[dir]]\npath=\"1. Modular Loops (120 BPM)/WAV\"\nrole=\"canonical-audio\"\n" +
+			"[[dir]]\npath=\"1. Modular Loops (120 BPM)/Apple Loops\"\nrole=\"format-tree\"\n" +
+			"[[dir]]\npath=\"4. Modular Instruments\"\nrole=\"format-tree\"\n",
+	})
+	ws.Config.Locations[0].Layout = "vendor-dirs"
+	if err := ws.SaveConfig(); err != nil {
+		t.Fatal(err)
+	}
+	writeProfile(t, ws, "devices/syntakt.toml", syntaktDevice)
+	writeProfile(t, ws, "storage/sq.toml", `name = "sq"
+kind = "quota"
+capacity_bytes = 33554432
+`)
+	writeView(t, ws, "v", `name="v"
+device="syntakt"
+storage="sq"
+[[include]]
+location="src"
+glob="**"
+`)
+	p, err := Build(ws, "v")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, e := range p.Entries {
+		got[e.SourcePath] = e.OutPath
+	}
+	want := map[string]string{
+		wav:     pack + "1. Modular Loops (120 BPM)/STO/STO_Loops_A_01_C.wav",
+		presets: presets,
+	}
+	for src, out := range want {
+		if got[src] != out {
+			t.Errorf("%s → %q, want %q", src, got[src], out)
+		}
+	}
+	for _, src := range []string{aif, kontakt} {
+		if out, ok := got[src]; ok {
+			t.Errorf("%s survived as %q; it is the vendor's prep and the WAV render is present", src, out)
+		}
+	}
+	if p.VendorPrepSkipped != 2 {
+		t.Errorf("vendor prep skipped = %d, want 2 (the .aif and the Kontakt copy)", p.VendorPrepSkipped)
+	}
+}

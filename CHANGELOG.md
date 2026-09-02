@@ -7,6 +7,34 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.38 — 2026-09-02 (the format level is not always at pack root)
+
+Jonathan, in Modular Creations From Mars: "under the loops, it has some
+apple loops bullshit that isn't getting deduped I don't think. aifs
+instead of wavs. we can just straight ignore that shit." The pack has no
+`WAV` at its top — its `1. Modular Loops (120 BPM)` holds `WAV/`, `Apple
+Loops/` (.aif) and `REX2/` renders of the same 143 loops — so the
+vendor's top-level globs never saw a format tree, the 143 .aif planned
+as canonical loops beside their .wav twins, and the vendor-prep skip
+never fired at all for the pack (no rank-0 tree, nothing to swap in),
+which is also why `4. Modular Instruments`' 294 Kontakt / Live copies
+sat in the plan despite their `format-tree` role and Jonathan had to pin
+`…/Samples/Imported` by hand. SPEC §19 row E had already named it: a
+consumer bug, roles honoured only at pack root.
+
+**`strip` now descends for the pack's own nested `[[dir]]` roles.** When
+the segment after the pack dir is not a tree, each deeper prefix is
+looked up in the pack map (`annotations.PackDirRoleAt` — whole-path,
+case-folded, globs as the harvester allows): `canonical-audio` strips
+that segment at rank 0, `format-tree` strips it at the vendor's rank for
+the name (never 0), and the dir above keeps its place in the output path.
+The vendor's globs are deliberately not read below the top — a `Presets`
+folder inside a content tree is content until a human says otherwise.
+With sample-vendor-annotations annotating the three dirs, the WAV tree is
+canonical, the .aif and the Kontakt / Live trees are SFM's own host prep
+and leave the plan where their stems survive under WAV, and the plan's
+vendor-prep warning names any that don't.
+
 ## v0.9.37 — 2026-09-02 (camel case is words too)
 
 Jonathan, from the leftover list after the fx/tops/clav passes:
