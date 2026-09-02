@@ -124,8 +124,9 @@
   .disc-note { font: 400 10.5px var(--sans); color: var(--fg-ghost); padding: 2px 18px 0; }
   .pack { background: var(--bg-card); border: 1px solid var(--bord-card); border-radius: 6px; padding: 11px; display: flex; gap: 11px; cursor: pointer; }
   .pack:hover { border-color: var(--bord-hover); }
-  .art { width: 46px; height: 46px; border-radius: 4px; flex: none; display: flex; align-items: center; justify-content: center; font: 700 16px var(--sans); color: rgba(255,255,255,.85); overflow: hidden; }
-  .art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .art { position: relative; width: 46px; height: 46px; border-radius: 4px; flex: none; display: flex; align-items: center; justify-content: center; font: 700 16px var(--sans); color: rgba(255,255,255,.85); overflow: hidden; }
+  .art img, .pd-art img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; opacity: 0; transition: opacity .16s ease-out; }
+  .art img.ld, .pd-art img.ld { opacity: 1; }
   .art.none { border: 1px dashed #343a40; font: 500 13px var(--mono); color: var(--fg-faint); background: none; }
   .pack .body { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 3px; }
   .pack .name { font: 600 12.5px var(--sans); color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -266,8 +267,7 @@
   .crumb-btn { font: 600 11px var(--sans); color: var(--fg-dim); border: 1px solid var(--bord-raise); border-radius: 4px; padding: 3px 10px; cursor: pointer; user-select: none; }
   .crumb-btn:hover { color: var(--fg); border-color: var(--bord-hover); }
   .pd-head { display: flex; gap: 16px; padding: 16px 18px 14px; }
-  .pd-art { width: 88px; height: 88px; border-radius: 6px; flex: none; display: flex; align-items: center; justify-content: center; font: 700 28px var(--sans); color: rgba(255,255,255,.85); overflow: hidden; }
-  .pd-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .pd-art { position: relative; width: 88px; height: 88px; border-radius: 6px; flex: none; display: flex; align-items: center; justify-content: center; font: 700 28px var(--sans); color: rgba(255,255,255,.85); overflow: hidden; }
   .pd-art.none { border: 1px dashed #343a40; font: 500 20px var(--mono); color: var(--fg-faint); }
   .pd-grid { display: grid; grid-template-columns: 210px minmax(0, 1fr); border-top: 1px solid var(--bord); flex: 1; }
   .pd-folder { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 5px; cursor: pointer; }

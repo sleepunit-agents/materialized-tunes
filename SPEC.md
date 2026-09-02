@@ -162,6 +162,10 @@ at the pack root, Blu Mar Ten style — gets `image` / `blurb` refs of the
 form `catalog:<location>/<path>`, resolved by `/api/art` and `/api/blurb`
 straight from the cataloged file (same trust boundary as preview: only
 cataloged paths resolve; remote locations go through the object cache).
+`/api/art` serves a thumbnail (long edge ≤ 192 px) built once per image
+into `annotations-cache/img/thumb/` — keyed by the cataloged file's hash
+or the vendor URL — and answers from it thereafter without touching the
+source or the annotations (v0.9.32).
 `About.md` yields title / prose / product URL; SFM's `About.rtf` is stripped
 to prose; `.txt` passes through. Vendor annotations, when present, still win
 for name/slug/identity; docs fill whatever they leave empty. On the house

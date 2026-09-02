@@ -388,6 +388,8 @@ function renderInner() {
     ${statusbar()}
   `;
   wire();
+  // covers the browser already has show at once; only new ones fade in
+  for (const i of $app.querySelectorAll('img.cover')) if (i.complete && i.naturalWidth) i.classList.add('ld');
   restoreScroll();
   focusRestore(focus);
   document.querySelector('.pd-row.playing')?.scrollIntoView({ block: 'nearest' });
@@ -633,6 +635,20 @@ function badgeFor(p) {
 }
 
 const artHue = (s) => { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) % 360; return h; };
+// artBox draws a cover slot that is never empty: the pack's hue gradient
+// and initial are the placeholder, painted at once and sized like the
+// cover, and the thumbnail (served by /api/art, one small file per image)
+// fades in over them when it lands. A rebuild of the page — every state
+// change is one — re-creates every <img>; the ones the browser already
+// holds are marked loaded right after the rebuild (see renderInner), so
+// only a genuinely new cover ever fades. On error the placeholder simply
+// stays. `none` is the slot for a folder nobody annotated.
+function artBox(cls, name, image, none) {
+  if (!image && none) return `<div class="${cls} none">/</div>`;
+  const h = artHue(name || '');
+  const img = image ? `<img class="cover" src="/api/art?u=${encodeURIComponent(image)}" loading="lazy" alt="" onload="this.classList.add('ld')" onerror="this.remove()">` : '';
+  return `<div class="${cls}" style="background:linear-gradient(135deg,hsl(${h},38%,42%),hsl(${h},45%,24%))">${esc((name || '?')[0] || '?')}${img}</div>`;
+}
 
 // The head-bar chips group packs by who made them: the vendor when the row
 // knows one (vendor-dirs archives, annotated locations), else the location.
@@ -768,9 +784,7 @@ function discHints(r) {
 }
 
 function discCard(r, ghost) {
-  const art = r.image
-    ? `<div class="art"><img src="/api/art?u=${encodeURIComponent(r.image)}" loading="lazy" onerror="this.parentNode.classList.add('none');this.remove();this.textContent='/'"></div>`
-    : `<div class="art" style="background:linear-gradient(135deg,hsl(${artHue(r.name)},38%,42%),hsl(${artHue(r.name)},45%,24%))">${esc(r.name[0] || '?')}</div>`;
+  const art = artBox('art', r.name, r.image, false);
   const badges = [];
   if (r.class === 'vendor-free' || (r.class === 'distributor' && r.gate !== 'purchase')) badges.push('<span class="badge free">free</span>');
   if (r.class === 'vendor-paid' || (r.class === 'distributor' && r.gate === 'purchase')) badges.push('<span class="badge paid">paid</span>');
@@ -889,11 +903,7 @@ function renderLibrary() {
 
     <div class="grid">
       ${rows.map(p => {
-        const art = p.image
-          ? `<div class="art"><img src="/api/art?u=${encodeURIComponent(p.image)}" loading="lazy" onerror="this.parentNode.classList.add('none');this.remove();this.textContent='/'"></div>`
-          : p.slug
-            ? `<div class="art" style="background:linear-gradient(135deg,hsl(${artHue(p.name)},38%,42%),hsl(${artHue(p.name)},45%,24%))">${esc(p.name[0] || '?')}</div>`
-            : `<div class="art none">/</div>`;
+        const art = artBox('art', p.name, p.image, !p.slug);
         const vendor = p.provider || p.vendor || p.location;
         const stats = S.lens
           ? `<div class="stats lens">${n(p.eligible)} <span class="of">of ${n(p.files)}</span> · ${fmtB(p.converted_bytes || 0)}</div>`
@@ -921,11 +931,7 @@ function fmtDur(s) {
 
 function renderPackDetail() {
   const po = S.packOpen, pd = S.pd;
-  const art = po.image
-    ? `<div class="pd-art"><img src="/api/art?u=${encodeURIComponent(po.image)}"></div>`
-    : po.slug
-      ? `<div class="pd-art" style="background:linear-gradient(135deg,hsl(${artHue(po.name)},38%,42%),hsl(${artHue(po.name)},45%,24%))">${esc(po.name[0] || '?')}</div>`
-      : `<div class="pd-art none">/</div>`;
+  const art = artBox('pd-art', po.name, po.image, !po.slug);
   const lensLine = S.lens && po.eligible != null
     ? `<span style="font:500 11px var(--mono);color:var(--teal)">${esc(S.lens)}: ${n(po.eligible)} of ${n(po.files)} eligible · ${fmtB(po.converted_bytes || 0)} converted</span>` : '';
   const desc = S.pdDesc

@@ -7,6 +7,62 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.32 — 2026-09-02 (covers are thumbnails, served from disk; the slot is never empty)
+
+"It takes a surprisingly long time to load in the album images for the
+library. We should skeleton them first so it's less jarring, but also — it
+shouldn't take a threadripper pro any time to display a bunch of
+thumbnails."
+
+Three things were true of `/api/art`, all of them per image, per render
+(and every state change is a render):
+
+- **it re-loaded the annotations to allow the request.** Before serving a
+  vendor image it rebuilt the allow-list — every vendor TOML in every
+  annotation root plus every resolver JSON — to check the URL was one it
+  knew. Against the real annotations checkout (12 vendors, 510 files) that
+  was ~100 ms of TOML parsing per cover, warm; a grid of forty covers was
+  four seconds of it.
+- **it served the full-size image.** A 46 px slot in the grid was handed
+  the vendor's product shot as-is; for art shipped inside a pack, the
+  cataloged file itself. A 150-pack fixture with 1600 px covers moved
+  182 MB into the browser per first paint, and the browser decoded all of
+  it — that is the threadripper's time.
+- **art inside a pack was hashed every time.** Catalog-scheme refs went
+  through `localCopy`, which SHA-256s a local source on every call — the
+  right check before a preview plays or a file is copied, and a full read
+  of the archive drive per cover per render here.
+
+Now (`internal/ui/art.go`):
+
+- **one thumbnail per image**, long edge ≤ 192 px (an 88 px pack-detail
+  slot at 2× DPR), built once into `annotations-cache/img/thumb/` and served
+  straight from there with an immutable cache header. A hit touches
+  nothing else — not the source file, not the annotations, one catalog map
+  lookup. Catalog refs key on the file's own hash (a changed file is a new
+  thumbnail); vendor URLs on the URL. JPEG stays JPEG, PNG/GIF become PNG
+  so logos keep their transparency, WebP passes through, anything already
+  ≤ 192 px is served untouched. Box-filter downsample, standard library
+  only.
+- **the allow-list is memoized.** A known URL answers at once; an unknown
+  one rebuilds the list at most every 2 s, so a freshly resolved pack
+  shows its cover within a beat and a grid of unknowns can't become a
+  grid of full loads. `/api/blurb` uses the same memo.
+- **the slot is never empty.** The hue gradient and initial that
+  un-annotated packs already got are now the placeholder under every
+  cover, painted with the grid; the thumbnail fades in over it when it
+  lands, and a broken image just leaves the placeholder. After a rebuild
+  of the page, covers the browser already holds are marked shown in the
+  same frame — only a genuinely new cover ever fades.
+
+Measured on the 150-pack fixture, old build → new: bytes per first paint
+182 MB → 0.5 MB; warm server time per cover 3–7 ms (catalog, local NVMe)
+and ~100 ms (vendor URL, annotations reload) → ~1 ms either way; first
+build of a 1600 px cover ~130 ms, once. Headless Chromium: 150 slots
+with background and initial at first paint (old: 0), all 150 covers
+visible immediately after a re-render, a 404 cover leaves the gradient
+and initial in place.
+
 ## v0.9.31 — 2026-09-02 (the recipe head is locked; edit is a form; racks are a recipe's call)
 
 "I still don't see how to edit a recipe. I can change a bunch of

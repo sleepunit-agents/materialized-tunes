@@ -57,6 +57,8 @@ type Server struct {
 	inputs  *plan.Inputs             // what plans read, shared across builds (SPEC §19.4)
 	plans   map[string]*planArtifact // per view: the last plan built, entries and all
 	planRun *planRun                 // at most one plan build at a time
+
+	allow artAllow // memoized image/page allow-list for /api/art and /api/blurb (art.go)
 }
 
 type runState struct {
@@ -559,52 +561,6 @@ func fetchURL(url string) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 }
 
-// art serves a pack's cover image from the workspace cache, fetching it
-// from the vendor CDN once. Only URLs present in annotations are allowed.
-func (s *Server) art(w http.ResponseWriter, r *http.Request) {
-	u := r.URL.Query().Get("u")
-	if strings.HasPrefix(u, browse.CatalogScheme) {
-		// Art shipped inside the pack (Docs/Artwork - X.jpg): serve the
-		// cataloged file itself — same trust boundary as /api/preview.
-		local, path, ok := s.catalogFile(r, u)
-		if !ok {
-			w.WriteHeader(404)
-			return
-		}
-		switch strings.ToLower(filepath.Ext(path)) {
-		case ".jpg", ".jpeg":
-			w.Header().Set("Content-Type", "image/jpeg")
-		case ".png":
-			w.Header().Set("Content-Type", "image/png")
-		case ".webp":
-			w.Header().Set("Content-Type", "image/webp")
-		default:
-			w.WriteHeader(415)
-			return
-		}
-		w.Header().Set("Cache-Control", "max-age=86400")
-		http.ServeFile(w, r, local)
-		return
-	}
-	images, _ := s.allowedURLs()
-	if !images[u] {
-		w.WriteHeader(403)
-		return
-	}
-	path := s.cachePath("img", u)
-	if _, err := os.Stat(path); err != nil {
-		data, err := fetchURL(u)
-		if err != nil {
-			w.WriteHeader(502)
-			return
-		}
-		os.MkdirAll(filepath.Dir(path), 0o755)
-		os.WriteFile(path, data, 0o644)
-	}
-	w.Header().Set("Cache-Control", "max-age=86400")
-	http.ServeFile(w, r, path)
-}
-
 // blurb serves a pack's og title/description from the workspace cache,
 // scraped from its product page once. Vendor prose stays local.
 func (s *Server) blurb(w http.ResponseWriter, r *http.Request) {
@@ -621,8 +577,7 @@ func (s *Server) blurb(w http.ResponseWriter, r *http.Request) {
 		jsonOut(w, map[string]string{"title": title, "description": desc})
 		return
 	}
-	_, pages := s.allowedURLs()
-	if !pages[u] {
+	if !s.allowedURL("page", u) {
 		w.WriteHeader(403)
 		return
 	}
