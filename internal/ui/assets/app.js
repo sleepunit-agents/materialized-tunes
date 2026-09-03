@@ -2530,12 +2530,19 @@ function renderReconcile() {
   return head + rows;
 }
 
+// The picker lists families A→Z and, within each, instruments A→Z with the
+// family's catch-all (the id that IS the family) pinned last. The lexicon's
+// own order is match precedence — riser above bass so "Flute Riser" reads
+// as a riser — and a person choosing from a list doesn't want that order.
+// Labels are ids, as everywhere else in the app: `display` is the FOLDER
+// name the layout renders ("Synth Vox", "Upright Bass"), not a label.
 function instrumentOptions(lex, current) {
   if (!lex) return '';
   const fams = {};
   for (const i of lex.instruments || []) (fams[i.family || '?'] ||= []).push(i);
-  return Object.keys(fams).sort().map(fam => `<optgroup label="${esc(fam)}">${fams[fam].map(i =>
-    `<option value="${esc(i.id)}" ${i.id === current ? 'selected' : ''}>${esc(i.display || i.id)}${i.id === fam ? ' (family catch-all)' : ''}</option>`).join('')}</optgroup>`).join('');
+  const order = fam => (a, b) => (a.id === fam) - (b.id === fam) || a.id.localeCompare(b.id);
+  return Object.keys(fams).sort().map(fam => `<optgroup label="${esc(fam)}">${fams[fam].sort(order(fam)).map(i =>
+    `<option value="${esc(i.id)}" ${i.id === current ? 'selected' : ''}>${esc(i.id)}${i.id === fam ? ' (family catch-all)' : ''}</option>`).join('')}</optgroup>`).join('');
 }
 
 function renderPlanForm() {

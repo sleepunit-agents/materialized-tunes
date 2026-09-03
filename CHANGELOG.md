@@ -7,6 +7,26 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.52 — 2026-09-03 (the instrument picker reads A→Z)
+
+Jonathan: "Synth Vox is the only one with capitals, we should unfuck
+that. also, right now I'm assuming our instrument and family lists are
+ordered how you process them or whatever. we should alphabetize them and
+leave the catch all always at the bottom of each." Both right. The Fix
+form's instrument picker labelled an option with the lexicon's `display`
+where one existed — `display` is the **folder** name the layout renders
+("Synth Vox", "Upright Bass"), never a label — so two options were
+capitalised words among lowercase ids. And within each family it listed
+instruments in instruments.toml order, which is match precedence (riser
+above bass so "Flute Riser" reads as a riser; the catch-all last because
+it is the loosest word), not a reading order. Now: families A→Z (they
+already were), instruments A→Z within each, the family's catch-all — the
+id that IS the family — pinned last with its "(family catch-all)" tag,
+and every label is the id, as the filter column and the why panel show
+them. Verified in headless Chromium over the real lexicon: eleven
+groups, no option with a capital letter, e.g. `synth: arp | lead | pad |
+pluck | stab | synth-vox | synth (family catch-all)`.
+
 ## v0.9.51 — 2026-09-03 (Fix listens like the pack page)
 
 Jonathan: "the sample preview on fix/plan isn't what was in the mockup.
