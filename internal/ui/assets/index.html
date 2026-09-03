@@ -171,13 +171,6 @@
   .flabel { font: 600 10px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--fg-faint); }
   .filt { font: 400 11.5px var(--sans); color: var(--fg); background: var(--bg-raise); border: 1px solid var(--bord-raise); border-radius: 5px; padding: 5px 8px; outline: none; }
   .filt:focus { border-color: var(--teal); }
-  .slist { padding: 4px 10px 20px; }   /* .main is the scroll container */
-  .srow { display: grid; grid-template-columns: minmax(180px, 2.2fr) minmax(140px, 1.6fr) 90px 70px 80px 90px 60px; gap: 10px; align-items: center; padding: 7px 8px; border-radius: 5px; cursor: pointer; }
-  .srow:hover { background: var(--bg-raise); }
-  .sname { font: 400 12px var(--sans); color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .spack { font: 400 11px var(--mono); color: var(--fg-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .smeta { font: 400 11px var(--mono); color: var(--fg-dim); overflow: hidden; white-space: nowrap; }
-  .smeta b { color: var(--teal); font-weight: 600; }
   .titlebar .brand { font: 700 12px var(--sans); letter-spacing: .06em; color: var(--fg); }
   .titlebar .meta { font: 400 11px var(--mono); color: var(--fg-faint); margin-left: 12px; }
 
@@ -398,8 +391,10 @@
   .pd-folder { display: flex; align-items: center; gap: 8px; padding: 5px 6px; border-radius: 5px; cursor: pointer; }
   .pd-folder:hover { background: var(--bg-raise); }
   .pd-folder.sel { background: var(--bg-sel); }
-  .pd-cols { display: grid; grid-template-columns: 26px minmax(0, 1fr) 110px 64px 86px 76px 160px; gap: 8px; padding: 7px 12px; border-bottom: 1px solid var(--bord-card); font: 600 9px var(--sans); letter-spacing: .09em; color: var(--fg-faint); }
-  .pd-row { display: grid; grid-template-columns: 26px minmax(0, 1fr) 110px 64px 86px 76px 160px; gap: 8px; align-items: center; padding: 4.5px 12px; border-bottom: 1px solid #16191c; cursor: pointer; }
+  /* .ftable is the one file table (pack folder listing, Samples list); its --cols carries the column template */
+  .ftable { display: flex; flex-direction: column; min-width: 0; }
+  .pd-cols { display: grid; grid-template-columns: var(--cols); gap: 8px; padding: 7px 12px; border-bottom: 1px solid var(--bord-card); font: 600 10px var(--sans); letter-spacing: .09em; color: var(--fg-faint); position: sticky; top: 0; background: var(--bg); z-index: 1; }
+  .pd-row { display: grid; grid-template-columns: var(--cols); gap: 8px; align-items: center; padding: 4.5px 12px; border-bottom: 1px solid #16191c; cursor: pointer; }
   .pd-row:hover { background: var(--bg-card); }
   .pd-row.playing { background: var(--bg-sel); }
   .player { position: sticky; bottom: 0; display: flex; align-items: center; gap: 14px; padding: 9px 18px; background: var(--bg-deep); border-top: 1px solid var(--bord-card); }

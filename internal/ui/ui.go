@@ -676,6 +676,7 @@ func (s *Server) packDetail(w http.ResponseWriter, r *http.Request) {
 		Key       string  `json:"key,omitempty"`
 		Chord     string  `json:"chord,omitempty"`
 		Cat       string  `json:"cat,omitempty"`
+		Inst      string  `json:"instrument,omitempty"`
 	}
 	// folder is a path WITHIN the pack ("WAV", "WAV/Acid Synths", ...);
 	// the response describes that level: its child dirs and its own files.
@@ -713,7 +714,7 @@ func (s *Server) packDetail(w http.ResponseWriter, r *http.Request) {
 		ce := byPath[p]
 		f := file{Path: ce.Path, Name: p[strings.LastIndex(p, "/")+1:], Size: ce.Size}
 		if mr, ok := meta[p]; ok {
-			f.BPM, f.Key, f.Chord, f.Cat = mr.BPM, mr.Key, mr.Chord, mr.Category
+			f.BPM, f.Key, f.Chord, f.Cat, f.Inst = mr.BPM, mr.Key, mr.Chord, mr.Category, mr.Instrument
 		}
 		if ce.Audio != nil {
 			f.Format = ce.Audio.Format
@@ -834,13 +835,14 @@ func (s *Server) why(w http.ResponseWriter, r *http.Request) {
 // vendor databases stay in the workspace, never in the annotations repo.
 
 type fileMeta struct {
-	Path     string   `json:"path"`
-	SHA      string   `json:"sha"`
-	BPM      int      `json:"bpm,omitempty"`
-	Key      string   `json:"key,omitempty"`
-	Chord    string   `json:"chord,omitempty"`
-	Category string   `json:"category,omitempty"`
-	Tags     []string `json:"tags,omitempty"`
+	Path       string   `json:"path"`
+	SHA        string   `json:"sha"`
+	BPM        int      `json:"bpm,omitempty"`
+	Key        string   `json:"key,omitempty"`
+	Chord      string   `json:"chord,omitempty"`
+	Category   string   `json:"category,omitempty"`
+	Instrument string   `json:"instrument,omitempty"`
+	Tags       []string `json:"tags,omitempty"`
 }
 
 func (s *Server) loadMeta(location string) map[string]fileMeta {

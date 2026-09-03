@@ -7,6 +7,43 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.46 — 2026-09-03 (one file table: the Samples list is the pack page's listing)
+
+Jonathan, on v0.9.45: "we've got different experiences for playing back
+files. I can now browse by sample, which is a great addition, but it
+looks and acts differently than the folder/sample setup on the pack show
+page. I would expect them to be pretty similar. up/down moving me around
+samples, waveform, etc." He was right — the Samples list was its own
+grid (`.srow`, sans-serif names, category as a column, a click that
+played with no player bar, no keyboard) beside the pack page's table
+(`.pd-row`, play glyph, playing-row highlight, docked player with the
+wave, ↑↓). Two renderers for the same thing.
+
+- **One `fileTable()`** renders both: ▷ · FILE · [PACK] · INSTRUMENT ·
+  FORMAT · LENGTH · KEY·BPM · SIZE · [LENS]. The Samples list adds PACK
+  because its rows come from everywhere; the lens column appears in
+  both only when a lens is on (it used to be a permanent empty 160px on
+  the pack page). Column template is a CSS variable (`--cols`) on the
+  table so the two shapes share every other rule.
+- **One `playerBar()`**, docked at the foot of whichever list is playing,
+  wave and all. **One keyboard handler**: ↑↓ walk `browseFiles()` — the
+  open pack's folder or the Samples list, whichever is on screen — and
+  each Samples row carries its own location so a cross-pack list plays
+  from the right source. Escape stops the player in the Samples list
+  (it already closed the pack, stopping the player, on the pack page).
+- **`/api/samples` now serves what `/api/pack` serves** per file:
+  format · rate · depth · size · chord · converted (lens). Both serve
+  `instrument`, so the pack listing gains an INSTRUMENT column — the
+  harvester's verdict on each file, teal, beside its category. Until now
+  that verdict was only visible in Fix.
+- **Bug on the way:** the pack table upper-cased the key (`Am` → `AM`,
+  `F#m` → `F#M`, which reads as major). The harvester already stores
+  keys with their `m`; the table now shows them as stored.
+
+The Fix screen's per-row ▶ (`pl-play`) is the last separate playback
+surface; it gets the docked player in P4 (t-384), which is now a call to
+`playerBar()`.
+
 ## v0.9.45 — 2026-09-03 (the shell: three modes on a rail, not four steps — redesign P1)
 
 Jonathan ran the app through Claude Design and dropped the handoff

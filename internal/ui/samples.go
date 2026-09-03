@@ -59,9 +59,15 @@ func (s *Server) samples(w http.ResponseWriter, r *http.Request) {
 		Category   string  `json:"category,omitempty"`
 		Key        string  `json:"key,omitempty"`
 		BPM        int     `json:"bpm,omitempty"`
+		Chord      string  `json:"chord,omitempty"`
 		Duration   float64 `json:"duration,omitempty"`
+		Format     string  `json:"format,omitempty"`
 		Channels   int     `json:"channels,omitempty"`
+		Rate       int     `json:"rate,omitempty"`
+		Depth      int     `json:"depth,omitempty"`
+		Size       int64   `json:"size"`
 		Ineligible string  `json:"ineligible,omitempty"`
+		Converted  int64   `json:"converted,omitempty"` // device lens: bytes after transcode
 	}
 	var out []row
 	total := 0
@@ -115,10 +121,12 @@ func (s *Server) samples(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			reason := ""
+			var converted int64
 			if dev != nil {
 				if reason = plan.Eligibility(dev, ce); reason != "" {
 					continue // the lens hides what can't ride
 				}
+				converted = plan.ConvertedBytes(dev, ce)
 			}
 			total++
 			if m.Instrument != "" {
@@ -128,8 +136,10 @@ func (s *Server) samples(w http.ResponseWriter, r *http.Request) {
 				out = append(out, row{
 					Location: lc.Name, Path: p, Name: name, Pack: pack,
 					Instrument: m.Instrument, Family: m.Family, Category: m.Category,
-					Key: m.Key, BPM: m.BPM, Duration: ce.Audio.DurationS,
-					Channels: ce.Audio.Channels, Ineligible: reason,
+					Key: m.Key, Chord: m.Chord, BPM: m.BPM, Duration: ce.Audio.DurationS,
+					Format: ce.Audio.Format, Channels: ce.Audio.Channels,
+					Rate: ce.Audio.SampleRate, Depth: ce.Audio.BitDepth,
+					Size: ce.Size, Ineligible: reason, Converted: converted,
 				})
 			}
 		}

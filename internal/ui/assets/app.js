@@ -932,17 +932,69 @@ function renderSamples() {
     return head + `<div style="font:400 11.5px var(--mono);color:var(--fg-faint);padding:24px;line-height:1.7">
       nothing matches.<br><span style="color:var(--fg-ghost)">only what the vendor labelled is searchable — unlabelled samples never match rather than being guessed at.</span></div>`;
   }
-  const rows = d.samples.map(s => `
-    <div class="srow" data-act="play-sample" data-loc="${esc(s.location)}" data-path="${esc(s.path)}">
-      <span class="sname" title="${esc(s.path)}">${esc(s.name)}</span>
-      <span class="spack" title="${esc(s.pack)}">${esc(s.pack)}</span>
-      <span class="smeta">${s.instrument ? `<b>${esc(s.instrument)}</b>` : ''}</span>
-      <span class="smeta">${s.key ? esc(s.key) : ''}</span>
-      <span class="smeta">${s.bpm ? s.bpm + ' bpm' : ''}</span>
-      <span class="smeta">${esc(s.category || '')}</span>
-      <span class="smeta" style="text-align:right">${fmtDur(s.duration)}</span>
-    </div>`).join('');
-  return head + `<div class="slist">${rows}</div>`;
+  const more = d.total > d.shown ? `<div style="font:400 10.5px var(--mono);color:var(--fg-faint);padding:8px 12px">… and ${n(d.total - d.shown)} more — narrow the filters to see them</div>` : '';
+  return `<div style="display:flex;flex-direction:column;min-height:100%">${head}<div style="flex:1;min-width:0">${fileTable(d.samples, { pack: true })}${more}</div>${playerBar()}</div>`;
+}
+
+/* ---------- the one file table ----------
+   A sample is a sample wherever you meet it: the pack page's folder
+   listing and the cross-pack Samples list are the same rows, the same
+   player, the same keys (click or ↑↓ to audition; the playing row is
+   highlighted and follows the keyboard). The Samples list adds a PACK
+   column because its rows come from everywhere; nothing else differs
+   (Jonathan, 2026-09-03: "I would expect them to be pretty similar").
+   Rows come from /api/pack or /api/samples, which serve the same fields. */
+function fileTable(files, { pack = false } = {}) {
+  const lens = S.lens;
+  const cols = `26px minmax(0,1fr)${pack ? ' minmax(0,.8fr)' : ''} 104px 110px 64px 86px 76px${lens ? ' 160px' : ''}`;
+  const head = `<div class="pd-cols"><span></span><span>FILE</span>${pack ? '<span>PACK</span>' : ''}<span>INSTRUMENT</span><span>FORMAT</span><span>LENGTH</span><span>KEY · BPM</span><span>SIZE</span>${lens ? `<span>${esc(lens.toUpperCase())} LENS</span>` : ''}</div>`;
+  const rows = files.map(fl => {
+    const isPlaying = S.player && S.player.path === fl.path;
+    const fmt = fl.format ? `${fl.format} ${fl.depth || '?'}/${fl.rate ? (fl.rate / 1000).toFixed(1) : '?'}k ${fl.channels === 1 ? 'mono' : fl.channels === 2 ? 'st' : (fl.channels || '') + 'ch'}` : '—';
+    const lensTxt = lens ? (fl.ineligible ? fl.ineligible : fl.converted ? '→ ' + fmtB(fl.converted) : '') : '';
+    const lensColor = fl.ineligible ? 'var(--warn)' : 'var(--fg-faint)';
+    const playable = !!fl.format;
+    const inst = `${fl.instrument ? `<b style="color:var(--teal);font-weight:600">${esc(fl.instrument)}</b>` : ''}${(fl.cat || fl.category) ? `${fl.instrument ? ' · ' : ''}${esc(fl.cat || fl.category)}` : ''}`;
+    return `<div class="pd-row ${isPlaying ? 'playing' : ''}" ${playable ? `data-act="play" data-p="${esc(fl.path)}" data-n="${esc(fl.name)}" data-d="${fl.duration || 0}" data-loc="${esc(fl.location || '')}"` : ''}>
+      <span style="font:400 9.5px var(--sans);color:${isPlaying ? 'var(--teal)' : playable ? 'var(--fg-faint)' : '#33393f'}">${isPlaying && S.player.playing ? '❚❚' : playable ? '▷' : '·'}</span>
+      <span style="font:400 11px var(--mono);color:var(--fg-num);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(fl.path)}">${esc(fl.name)}</span>
+      ${pack ? `<span style="font:400 10.5px var(--mono);color:var(--fg-faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(fl.pack || '')}">${esc(fl.pack || '')}</span>` : ''}
+      <span style="font:400 10.5px var(--mono);color:var(--fg-log);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${inst}</span>
+      <span style="font:400 10.5px var(--mono);color:var(--fg-log)">${esc(fmt)}</span>
+      <span style="font:400 10.5px var(--mono);color:var(--fg-log)">${fmtDur(fl.duration)}</span>
+      <span style="font:400 10.5px var(--mono);color:var(--fg-log)">${fl.key ? esc(fl.key) : ''}${fl.bpm ? (fl.key ? ' · ' : '') + fl.bpm : ''}</span>
+      <span style="font:400 10.5px var(--mono);color:var(--fg-log)">${fmtB(fl.size)}</span>
+      ${lens ? `<span style="font:500 10.5px var(--mono);color:${lensColor};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(lensTxt)}</span>` : ''}
+    </div>`;
+  }).join('');
+  return `<div class="ftable" style="--cols:${cols}">${head}${rows}</div>`;
+}
+
+// browseFiles is what ↑↓ walk: the open pack's folder, or the Samples
+// list — whichever is on screen. Each row carries its own location so a
+// cross-pack list plays from the right source.
+function browseFiles() {
+  if (S.packOpen) return (S.pd?.files || []).filter(f => f.format).map(f => ({ ...f, location: S.packOpen.location }));
+  if (S.screen === 'library' && !S.discover && sampleMode()) return (S.samples?.samples || []).filter(f => f.format);
+  return [];
+}
+
+// The docked player: sticky at the foot of whichever list is playing.
+function playerBar() {
+  const pl = S.player;
+  if (!pl) return '';
+  const bars = Array.from({ length: 90 }, (_, i) => {
+    let h = 0; for (const c of pl.path) h = (h * 31 + c.charCodeAt(0) + i * 7) % 97;
+    return `<span style="height:${4 + (h % 20)}px"></span>`;
+  }).join('');
+  return `
+    <div class="player">
+      <span class="play-btn" data-act="toggle-play">${pl.playing ? '❚❚' : '▶'}</span>
+      <span style="font:500 11px var(--mono);color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:320px">${esc(pl.name)}</span>
+      <div class="wave">${bars}<div class="fill" id="wavefill"></div></div>
+      <span style="font:400 10.5px var(--mono);color:var(--fg-dim)">${fmtDur(pl.dur)}</span>
+      <span style="font:400 10px var(--sans);color:var(--fg-ghost)">↑↓ next · preview streams from source — nothing is written</span>
+    </div>`;
 }
 
 async function loadSamples() {
@@ -1161,44 +1213,9 @@ function renderPackDetail() {
 
   let body = `<div style="font:400 11px var(--mono);color:var(--fg-faint);padding:20px">loading…</div>`;
   if (pd) {
-    const rows = (pd.files || []).map(fl => {
-      const isPlaying = S.player && S.player.path === fl.path;
-      const fmt = fl.format ? `${fl.format} ${fl.depth || '?'}/${fl.rate ? (fl.rate / 1000).toFixed(1) : '?'}k ${fl.channels === 1 ? 'mono' : fl.channels === 2 ? 'st' : (fl.channels || '') + 'ch'}` : '—';
-      const lensTxt = S.lens ? (fl.ineligible ? fl.ineligible : fl.converted ? '→ ' + fmtB(fl.converted) : '') : '';
-      const lensColor = fl.ineligible ? 'var(--warn)' : 'var(--fg-faint)';
-      const playable = !!fl.format;
-      return `<div class="pd-row ${isPlaying ? 'playing' : ''}" ${playable ? `data-act="play" data-p="${esc(fl.path)}" data-n="${esc(fl.name)}" data-d="${fl.duration || 0}"` : ''}>
-        <span style="font:400 9.5px var(--sans);color:${isPlaying ? 'var(--teal)' : playable ? 'var(--fg-faint)' : '#33393f'}">${isPlaying && S.player.playing ? '❚❚' : playable ? '▷' : '·'}</span>
-        <span style="font:400 11px var(--mono);color:var(--fg-num);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(fl.name)}</span>
-        <span style="font:400 10.5px var(--mono);color:var(--fg-log)">${esc(fmt)}</span>
-        <span style="font:400 10.5px var(--mono);color:var(--fg-log)">${fmtDur(fl.duration)}</span>
-        <span style="font:400 10.5px var(--mono);color:var(--fg-log)">${fl.key ? esc(fl.key.toUpperCase() + (fl.chord === 'minor' ? 'm' : '')) : ''}${fl.bpm ? (fl.key ? ' · ' : '') + fl.bpm : ''}</span>
-        <span style="font:400 10.5px var(--mono);color:var(--fg-log)">${fmtB(fl.size)}</span>
-        <span style="font:500 10.5px var(--mono);color:${lensColor};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(lensTxt)}</span>
-      </div>`;
-    }).join('');
     const more = pd.total > pd.shown ? `<div style="font:400 10.5px var(--mono);color:var(--fg-faint);padding:8px 12px">… and ${n(pd.total - pd.shown)} more in this folder</div>` : '';
-    body = `<div class="pd-grid">
-      <div style="min-width:0;display:flex;flex-direction:column">
-        <div class="pd-cols"><span></span><span>FILE</span><span>FORMAT</span><span>LENGTH</span><span>KEY · BPM</span><span>SIZE</span><span>${S.lens ? esc(S.lens.toUpperCase()) + ' LENS' : ''}</span></div>
-        <div style="overflow:auto;flex:1">${rows}${more}</div>
-      </div>
-    </div>`;
+    body = `<div class="pd-grid"><div style="min-width:0;display:flex;flex-direction:column">${fileTable(pd.files || [])}${more}</div></div>`;
   }
-
-  const pl = S.player;
-  const bars = pl ? Array.from({ length: 90 }, (_, i) => {
-    let h = 0; for (const c of pl.path) h = (h * 31 + c.charCodeAt(0) + i * 7) % 97;
-    return `<span style="height:${4 + (h % 20)}px"></span>`;
-  }).join('') : '';
-  const playerBar = pl ? `
-    <div class="player">
-      <span class="play-btn" data-act="toggle-play">${pl.playing ? '❚❚' : '▶'}</span>
-      <span style="font:500 11px var(--mono);color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:320px">${esc(pl.name)}</span>
-      <div class="wave">${bars}<div class="fill" id="wavefill"></div></div>
-      <span style="font:400 10.5px var(--mono);color:var(--fg-dim)">${fmtDur(pl.dur)}</span>
-      <span style="font:400 10px var(--sans);color:var(--fg-ghost)">preview streams from source — nothing is written</span>
-    </div>` : '';
 
   return `
     <div style="display:flex;flex-direction:column;min-height:100%">
@@ -1222,7 +1239,7 @@ function renderPackDetail() {
       </div>
     </div>
     ${body}
-    ${playerBar}
+    ${playerBar()}
     </div>`;
 }
 
@@ -2430,10 +2447,6 @@ function wire() {
         S.fInst = S.fKey = S.fBpm = S.fCat = '';
         S.samples = null; stopPlayback(); render();
       }
-      if (act === 'play-sample') {
-        const p = el.dataset.path;
-        playFile(p, p.split('/').pop(), 0, el.dataset.loc);
-      }
       if (act === 'open-pack') {
         if (e.target.closest('a')) return; // product link stays a link
         const row = S.packs.find(x => x.location === el.dataset.loc && x.dir === el.dataset.dir);
@@ -2550,7 +2563,7 @@ function wire() {
         S.pdFolder = i > 0 ? S.pdFolder.slice(0, i) : '';
         loadPdFolder().then(render);
       }
-      if (act === 'play') { playFile(el.dataset.p, el.dataset.n, +el.dataset.d); }
+      if (act === 'play') { playFile(el.dataset.p, el.dataset.n, +el.dataset.d, el.dataset.loc || undefined); }
       if (act === 'toggle-play') { if (S.player) playFile(S.player.path, S.player.name, S.player.dur); }
       if (act === 'grp') {
         const g = (S.rModel?.groups || []).find(x => x.key === el.dataset.g);
@@ -2725,16 +2738,17 @@ window.addEventListener('keydown', (e) => {
   const map = { 1: 'library', 2: 'discover', 3: 'materialize', 4: 'fix', 5: 'setup' };
   if (e.key === 'Escape' && S.lensMenu) { S.lensMenu = false; render(); return; }
   if (e.key === 'Escape' && S.packOpen) { stopPlayback(); S.packOpen = null; S.pd = null; render(); return; }
+  if (e.key === 'Escape' && S.player) { stopPlayback(); render(); return; }
   if ((e.metaKey || e.ctrlKey) && e.key === '\\') { e.preventDefault(); S.colOpen = !S.colOpen; persistUI(); render(); return; }
-  if (S.packOpen && (e.key === 'ArrowDown' || e.key === 'ArrowUp') && S.pd?.files?.length) {
-    e.preventDefault();
-    const files = S.pd.files.filter(f => f.format);
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    const files = browseFiles();
     if (!files.length) return;
+    e.preventDefault();
     let i = S.player ? files.findIndex(f => f.path === S.player.path) : -1;
     const j = e.key === 'ArrowDown' ? Math.min(i + 1, files.length - 1) : Math.max(i - 1, 0);
     if (j === i) return; // at the edge of the list — keep playing
     const f = files[j];
-    playFile(f.path, f.name, f.duration || 0);
+    playFile(f.path, f.name, f.duration || 0, f.location);
     return;
   }
   if (map[e.key] && !e.altKey && !e.shiftKey) { if (e.metaKey || e.ctrlKey) e.preventDefault(); setMode(map[e.key]); return; }
