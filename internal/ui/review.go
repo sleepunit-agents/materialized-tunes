@@ -24,15 +24,21 @@ import (
 // the destination tree as it will be written — sharing a why per file,
 // and one action vocabulary that writes the local annotation layer.
 
-// artifactFor is the last plan built for a view, entries and all.
-func (s *Server) artifactFor(viewName string) (*planArtifact, error) {
+// artifactFor is the last plan built for a view, entries and all, and
+// whether it is stale: the workspace moved under it (a correction, a
+// rescan) or a build for the view is in flight. Stale still answers —
+// the folder you are deciding did not change because the one before it
+// did — the client shows the rebuild and re-reads when it lands.
+func (s *Server) artifactFor(viewName string) (*planArtifact, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	a := s.plans[viewName]
 	if a == nil || a.Plan == nil {
-		return nil, fmt.Errorf("no plan built for %q yet — the Plan step builds it", viewName)
+		return nil, false, fmt.Errorf("no plan built for %q yet — the Plan step builds it", viewName)
 	}
-	return a, nil
+	stale := s.inputs == nil || a.Stamp != s.inputs.Stamp() ||
+		(s.planRun != nil && s.planRun.View == viewName && s.planRun.Status == "running" && s.planRun.Key != a.Key)
+	return a, stale, nil
 }
 
 type fileRow struct {
@@ -58,7 +64,7 @@ func (s *Server) fileRow(e plan.Entry) fileRow {
 // queues groups the plan's placement failures by source folder, biggest
 // first: one decision per folder, never per file.
 func (s *Server) queues(w http.ResponseWriter, r *http.Request) {
-	a, err := s.artifactFor(r.URL.Query().Get("view"))
+	a, stale, err := s.artifactFor(r.URL.Query().Get("view"))
 	if err != nil {
 		jsonErr(w, 409, err)
 		return
@@ -160,7 +166,7 @@ func (s *Server) queues(w http.ResponseWriter, r *http.Request) {
 	if len(out) > limit {
 		out = out[:limit]
 	}
-	jsonOut(w, map[string]any{"view": a.View, "built": a.Built, "kinds": kindTotals, "rows": out, "total_rows": total})
+	jsonOut(w, map[string]any{"view": a.View, "built": a.Built, "stale": stale, "kinds": kindTotals, "rows": out, "total_rows": total})
 }
 
 // dump hands over the whole decision surface as one file: every folder
@@ -170,7 +176,7 @@ func (s *Server) queues(w http.ResponseWriter, r *http.Request) {
 // silence in one sitting instead of being handed folders one at a time.
 func (s *Server) dump(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("format") == "json" {
-		a, err := s.artifactFor(r.URL.Query().Get("view"))
+		a, _, err := s.artifactFor(r.URL.Query().Get("view"))
 		if err != nil {
 			jsonErr(w, 409, err)
 			return
@@ -199,7 +205,7 @@ func (s *Server) buildDump(a *planArtifact) *plan.Dump {
 // a webview has no download path of its own (a window.open on
 // wails.localhost lands in the OS browser, where the origin means nothing).
 func (s *Server) DumpText(view string) (name string, text []byte, err error) {
-	a, err := s.artifactFor(view)
+	a, _, err := s.artifactFor(view)
 	if err != nil {
 		return "", nil, err
 	}
@@ -224,7 +230,7 @@ func (s *Server) LocalExport() (name string, b []byte, err error) {
 
 // folder lists one source folder's files as the plan places them.
 func (s *Server) folder(w http.ResponseWriter, r *http.Request) {
-	a, err := s.artifactFor(r.URL.Query().Get("view"))
+	a, stale, err := s.artifactFor(r.URL.Query().Get("view"))
 	if err != nil {
 		jsonErr(w, 409, err)
 		return
@@ -242,13 +248,13 @@ func (s *Server) folder(w http.ResponseWriter, r *http.Request) {
 	if len(files) > 500 {
 		files = files[:500]
 	}
-	jsonOut(w, map[string]any{"location": loc, "folder": folder, "files": files, "total": total})
+	jsonOut(w, map[string]any{"location": loc, "folder": folder, "files": files, "total": total, "stale": stale})
 }
 
 // tree walks the destination tree as it will be written, one level at a
 // time: child folders with their file counts, and the files at this level.
 func (s *Server) tree(w http.ResponseWriter, r *http.Request) {
-	a, err := s.artifactFor(r.URL.Query().Get("view"))
+	a, stale, err := s.artifactFor(r.URL.Query().Get("view"))
 	if err != nil {
 		jsonErr(w, 409, err)
 		return
@@ -286,7 +292,7 @@ func (s *Server) tree(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Slice(ds, func(i, j int) bool { return ds[i].Name < ds[j].Name })
 	sort.Slice(files, func(i, j int) bool { return files[i].Name < files[j].Name })
-	jsonOut(w, map[string]any{"prefix": prefix, "dirs": ds, "files": files, "total": total})
+	jsonOut(w, map[string]any{"prefix": prefix, "dirs": ds, "files": files, "total": total, "stale": stale})
 }
 
 func (s *Server) provenance() correct.Provenance {
@@ -332,7 +338,13 @@ func (s *Server) correctEndpoint(w http.ResponseWriter, r *http.Request) {
 	} else {
 		rad, err = correct.Apply(s.ws, lc, entries, current, vendors, req.Correction, s.provenance())
 		s.mu.Lock()
-		s.meta = nil // per-file caches were just patched; the next plan re-stamps its inputs
+		s.meta = nil // the Library's per-file cache; it re-reads
+		if err == nil && s.inputs == in {
+			// the plan's inputs take the correction in place: the covered
+			// files' records, the annotation layers, a new stamp — and the
+			// catalogs survive, so the replan is placement, not the decode
+			in.Patched(lc.Name, rad.After)
+		}
 		s.mu.Unlock()
 	}
 	if err != nil {
@@ -501,7 +513,10 @@ func (s *Server) withdraw(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
-	s.meta = nil // per-file caches were just patched; the next plan re-stamps its inputs
+	s.meta = nil
+	if s.inputs == in {
+		in.Reload("") // the caches were patched underneath; re-read them, keep the catalogs
+	}
 	s.mu.Unlock()
 	jsonOut(w, map[string]any{"withdrawn": 1, "covered": v.Covered, "changed": v.Changed})
 }

@@ -62,6 +62,45 @@ func (in *Inputs) Reset() {
 	in.stamp = inputStamp(in.ws)
 }
 
+// Patched mirrors a correction into the loaded inputs: the covered files'
+// records replace the ones held for that location (an empty record
+// deletes, as harvest.Patch does), the annotation layers are dropped —
+// the correction wrote a TOML into the local layer — and the stamp is
+// taken again. The catalogs stay: they did not change, and on an archive
+// drive they are the whole cost of a load. A plan built after this pays
+// for placement, not for the decode.
+func (in *Inputs) Patched(location string, updates map[string]harvest.Meta) {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	if m, ok := in.meta[location]; ok {
+		for p, rec := range updates {
+			if rec.BPM == 0 && rec.Key == "" && rec.Category == "" && rec.Instrument == "" && len(rec.Tags) == 0 {
+				delete(m, p)
+				continue
+			}
+			m[p] = rec
+		}
+	}
+	in.vendors, in.loaded, in.lex = nil, false, nil
+	in.stamp = inputStamp(in.ws)
+}
+
+// Reload forgets one location's metadata ("" for every location's) and
+// the annotation layers, and re-stamps — after a withdrawal patched the
+// cache in a shape this Inputs did not see. The catalogs stay, as in
+// Patched.
+func (in *Inputs) Reload(location string) {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	if location == "" {
+		in.meta = map[string]map[string]harvest.Meta{}
+	} else {
+		delete(in.meta, location)
+	}
+	in.vendors, in.loaded, in.lex = nil, false, nil
+	in.stamp = inputStamp(in.ws)
+}
+
 // Catalog is one location's catalog.
 func (in *Inputs) Catalog(location string) (map[string]catalog.Entry, error) {
 	in.mu.Lock()

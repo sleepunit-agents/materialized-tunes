@@ -37,6 +37,7 @@ type planRun struct {
 
 type planArtifact struct {
 	Key      string
+	Stamp    string // the inputs it was built from; differs from the live stamp once the workspace moved
 	View     string
 	Disabled []int
 	Built    time.Time
@@ -44,12 +45,17 @@ type planArtifact struct {
 	Verdict  map[string]any
 }
 
-// freshInputs returns the shared inputs, replacing them (and dropping
-// every artifact) when the files underneath have changed. Caller holds s.mu.
+// freshInputs returns the shared inputs, replacing them when the files
+// underneath have changed. The artifacts stay: their key no longer
+// matches, so the next POST /api/plan rebuilds and materialize refuses
+// them (cachedPlan), but the review surface keeps answering from the last
+// plan built — marked stale — while the rebuild runs, instead of 409ing
+// and throwing the user out of the folder they were deciding. A
+// correction does not come through here at all: correctEndpoint patches
+// the loaded inputs in place so the catalogs survive it. Caller holds s.mu.
 func (s *Server) freshInputs() *plan.Inputs {
 	if s.inputs == nil || !s.inputs.Fresh() {
 		s.inputs = plan.NewInputs(s.ws)
-		s.plans = map[string]*planArtifact{}
 	}
 	return s.inputs
 }
@@ -217,7 +223,7 @@ func (s *Server) buildArtifact(v *view.View, disabled []int, key string, in *pla
 		}
 		out["plan"] = &verdict
 	}
-	return &planArtifact{Key: key, View: v.Name, Disabled: disabled, Built: time.Now(), Plan: p, Verdict: out}, nil
+	return &planArtifact{Key: key, Stamp: in.Stamp(), View: v.Name, Disabled: disabled, Built: time.Now(), Plan: p, Verdict: out}, nil
 }
 
 // cachedPlan is the current artifact for a view with every rule enabled,

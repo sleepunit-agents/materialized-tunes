@@ -167,17 +167,36 @@ func TestReviewSurface(t *testing.T) {
 	if _, err := os.Stat(ws.LocalAnnotations()); !os.IsNotExist(err) {
 		t.Error("preview wrote something")
 	}
+	inputsBefore := s.inputs
 	call(http.MethodPost, "/api/correct", `{"location":"src","path":"A/P1/Kicks","facet":"category","value":"one-shots","note":"all hits"}`)
 	if _, err := os.Stat(filepath.Join(ws.LocalAnnotations(), "vendors", "a", "packs", "p1.toml")); err != nil {
 		t.Fatal("apply must write the local pack file")
+	}
+	// Deciding one folder must not throw the user out of the next: the
+	// review surface keeps answering from the last plan, marked stale,
+	// until the rebuild lands — no 409, the folder listing still there.
+	stale := call(http.MethodGet, "/api/plan/queues?view=v", "")
+	if stale["stale"] != true || len(stale["rows"].([]any)) != 2 {
+		t.Errorf("after a correction the queues answer from the last plan, stale: %v", stale)
+	}
+	if fo := call(http.MethodGet, "/api/plan/folder?view=v&location=src&folder=A/P1/Noise", ""); fo["stale"] != true || len(fo["files"].([]any)) != 2 {
+		t.Errorf("the next folder still lists while the plan rebuilds: %v", fo)
+	}
+	// and the correction was taken in place: same inputs, so the catalogs
+	// loaded once are the catalogs the rebuild reads — no second decode
+	if s.inputs != inputsBefore || !s.inputs.Fresh() {
+		t.Error("a correction patches the loaded inputs; it must not replace them")
+	}
+	if m := s.inputs.Meta("src")["A/P1/Kicks/Kick 01.wav"]; m.Category != "one-shots" {
+		t.Errorf("the loaded meta must carry the correction: %+v", m)
 	}
 	after := settle()
 	if after["built"] == q["built"] {
 		t.Error("the plan must rebuild after a correction (inputs changed)")
 	}
 	q = call(http.MethodGet, "/api/plan/queues?view=v", "")
-	if rows := q["rows"].([]any); len(rows) != 1 || rows[0].(map[string]any)["folder"] != "A/P1/Noise" {
-		t.Errorf("Kicks must have left the queue: %v", rows)
+	if rows := q["rows"].([]any); len(rows) != 1 || rows[0].(map[string]any)["folder"] != "A/P1/Noise" || q["stale"] != false {
+		t.Errorf("Kicks must have left the queue, and the fresh plan is not stale: %v", q)
 	}
 	tr = call(http.MethodGet, "/api/plan/tree?view=v&prefix=Drums/Kick/One-Shots/P1", "")
 	if tr["total"].(float64) != 2 { // the kick, and the rack that followed it

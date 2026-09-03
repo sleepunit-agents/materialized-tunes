@@ -7,6 +7,43 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.49 — 2026-09-03 (deciding without losing your place)
+
+Jonathan, on the Fix tab: "if I select something, listen, and pick what
+it is, and go to select the next... the whole plan reruns and I lose my
+place and I effectively start over with the one I just did gone from the
+list." Every decision threw the plan away: the client nulled the
+preflight, the server saw the workspace stamp move (the correction had
+written a TOML into the local layer and patched the meta cache) and
+replaced its inputs — catalogs included, so on the archive drive the
+decode ran again — and dropped every built plan, so the queue answered
+409 until the rebuild landed; then the client re-fetched the rows with
+the selection cleared. Now a correction is taken *into* the loaded
+inputs (`plan.Inputs.Patched`): the covered files' records swap in, the
+annotation layers reload, the stamp follows the disk, and the catalogs
+stay, so the replan is placement, not the decode. A withdrawal does the
+same by forgetting one location's metadata (`Reload`). Built plans
+survive a moved workspace — `freshInputs` no longer clears them; each
+artifact carries the stamp it was built from, and the review endpoints
+(queues, folder, tree) answer from the last plan with `stale: true`
+while the rebuild runs instead of 409ing. Materialize still refuses a
+stale artifact (the key check in `cachedPlan` is unchanged). On the
+client the decided row is marked ✓ and struck through, the next
+undecided row opens at once, the rebuild runs behind a band above the
+list, and when it lands the rows are refreshed in place: the selected
+folder is found again by location + folder and its listing re-read (or
+it left the queue and the panel says so), the scroller keeps its
+offset, the marks clear — a row still in the queue after a decision is
+still a decision (an instrument default on a folder with no kind word
+makes it *uncategorized*, not placed). Leave-it and withdraw take the
+same path. Also: every render rebuilds the form from state, and a poll
+landing mid-note used to eat what was typed; the Fix screen now reads
+the shown form back before the rebuild. Verified in headless Chromium
+over a throwaway library: decide → next row selected, offset kept,
+band; typed while re-planning → note survives; settle → row re-kinded,
+marks cleared; leave-it → row gone, next selected; category → row
+leaves, selection kept by key.
+
 ## v0.9.48 — 2026-09-03 (every wait shows itself)
 
 Jonathan, on a fresh start: "I'm still getting kind of hung on loading

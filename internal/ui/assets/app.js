@@ -2193,27 +2193,112 @@ async function loadPlanReview() {
     if (!S.pf || S.pf.error) return;
     if (!pl.lex) pl.lex = await api('/api/lexicon');
     pl.local = await api('/api/local');
-    if (pl.tab === 'queues') {
-      const q = new URLSearchParams({ view: S.view });
-      if (pl.kind) q.set('kind', pl.kind);
-      pl.q = await api('/api/plan/queues?' + q);
-      if (planGone(pl.q)) return;
-    } else {
-      pl.tree = await api('/api/plan/tree?' + new URLSearchParams({ view: S.view, prefix: pl.prefix }));
-      if (planGone(pl.tree)) return;
-    }
-    pl.regen = 0;
+    await refreshPlanReview();
   } finally { pl.busy = false; render(); }
 }
 
-/* The server drops every built plan the moment the files under it move —
-   a rescan, an annotation write, the launch re-derive — and the plan's
-   sub-endpoints (queues, tree, folder) then answer 409 "no plan built"
-   until the next POST /api/plan. That is timing, not a fault: forget what
-   was drawn from the old plan and let the next render build a fresh one.
-   Returns true when the answer was that gap. Bounded: after a few
-   consecutive rebuilds the message is shown instead, so a workspace that
-   keeps moving underneath can't spin the plan forever. */
+/* ---------- deciding without losing your place ----------
+   A decision used to throw the whole plan away: S.pf = null, the plan
+   rebuilt from the catalogs up (on the archive drive, the decode again),
+   the queue re-fetched, the selection cleared — "I lose my place and I
+   effectively start over with the one I just did gone from the list"
+   (Jonathan, v0.9.49). The server now takes a correction into the loaded
+   inputs in place and keeps answering the queue from the last plan,
+   marked stale, while it rebuilds. So here: the decided row is marked
+   and the next one opens at once; the rebuild runs behind; when it
+   lands the rows are refreshed in place — the same folder stays
+   selected, found again by location + folder, the scroller keeps its
+   offset — and the decided rows have simply left. */
+const rowKey = (r) => r ? r.location + '\n' + r.folder : '';
+
+// Marks the row decided, drops the form, and opens the next undecided
+// row below it — the queue is worked top to bottom.
+function planDecided(row) {
+  const pl = S.pl;
+  pl.decided = pl.decided || new Set();
+  if (row) pl.decided.add(rowKey(row));
+  pl.sel = null; pl.file = null; pl.form = null; pl.radius = null; pl.files = null;
+  const rows = (pl.q && pl.q.rows) || [];
+  const next = rows.slice(rows.indexOf(row) + 1).find(r => !pl.decided.has(rowKey(r)));
+  if (next && pl.tab === 'queues') openQueueRow(rows.indexOf(next), true); else render();
+}
+
+// The rebuild behind a decision or a withdrawal: the plan polled until it
+// lands (the list keeps answering meanwhile), then the rows refreshed in
+// place.
+async function replan() {
+  await loadPreflight();
+  await refreshPlanReview();
+}
+
+// Re-reads the queue (or the tree) and puts the new rows under the same
+// selection: the selected folder is found again by key and its listing
+// re-read, or it left the queue and the panel says so. A fresh answer
+// clears the decided marks — what they marked has either left or is
+// still waiting, and a row still here is still a decision. A stale
+// answer with no rebuild running (the workspace moved while we were on
+// another screen) starts one, bounded like planGone.
+async function refreshPlanReview() {
+  const pl = S.pl;
+  if (!S.view || !S.pf || S.pf.error) return;
+  const view = S.view, tab = pl.tab, kind = pl.kind, prefix = pl.prefix;
+  let r;
+  if (tab === 'queues') {
+    const q = new URLSearchParams({ view });
+    if (kind) q.set('kind', kind);
+    r = await api('/api/plan/queues?' + q);
+  } else {
+    r = await api('/api/plan/tree?' + new URLSearchParams({ view, prefix }));
+  }
+  if (S.view !== view || pl.tab !== tab || pl.kind !== kind || pl.prefix !== prefix) return; // the user moved on
+  if (planGone(r)) { render(); return; }
+  if (tab === 'queues') {
+    pl.q = r;
+    const rows = (r && Array.isArray(r.rows)) ? r.rows : [];
+    if (pl.sel) {
+      const was = pl.sel, again = rows.find(x => rowKey(x) === rowKey(was));
+      if (again) {
+        pl.sel = again;
+        const fr = await api('/api/plan/folder?' + new URLSearchParams({ view, location: again.location, folder: again.folder }));
+        if (pl.sel === again && fr && Array.isArray(fr.files)) {
+          const cur = pl.file && pl.file.source_path;
+          pl.files = fr; pl.file = cur ? fr.files.find(f => f.source_path === cur) || null : null;
+        }
+      } else {
+        pl.sel = null; pl.file = null; pl.files = null; pl.form = null; pl.radius = null;
+        pl.msg = `${was.folder.split('/').pop()} left the queue — it has a place now`;
+      }
+    }
+  } else {
+    pl.tree = r;
+    if (pl.file) {
+      const cur = pl.file.source_path;
+      pl.file = (r && Array.isArray(r.files) ? r.files : []).find(f => f.source_path === cur) || null;
+      if (!pl.file) { pl.form = null; pl.radius = null; }
+    }
+  }
+  if (r && r.stale) {
+    pl.regen = (pl.regen || 0) + 1;
+    if (!S.pfBusy && pl.regen <= 3) setTimeout(replan, 0);
+  } else {
+    pl.regen = 0;
+    if (pl.decided) pl.decided.clear();
+    pl.msg = (pl.msg || '').replace(/ — re-planning behind you$/, ' — re-planned');
+    pl.local = await api('/api/local'); // the decisions count on the left
+  }
+  render();
+}
+
+/* Before a plan has been built for the view at all (a fresh process, a
+   view just made) the plan's sub-endpoints (queues, tree, folder) answer
+   409 "no plan built" until the next POST /api/plan. That is timing, not
+   a fault: forget what was drawn and let the next render build one.
+   (A workspace moving under a built plan no longer drops it — the
+   endpoints answer from the last plan, marked stale, see
+   refreshPlanReview.) Returns true when the answer was that gap.
+   Bounded: after a few consecutive rebuilds the message is shown
+   instead, so a workspace that keeps moving underneath can't spin the
+   plan forever. */
 function planGone(r) {
   if (!(r && r.error && /no plan built/i.test(r.error))) return false;
   const pl = S.pl;
@@ -2224,10 +2309,11 @@ function planGone(r) {
   return true;
 }
 
-async function openQueueRow(i) {
+async function openQueueRow(i, keepMsg) {
   const pl = S.pl;
   const row = pl.q.rows[i];
-  pl.sel = row; pl.file = null; pl.files = null; pl.radius = null; pl.msg = '';
+  pl.sel = row; pl.file = null; pl.files = null; pl.radius = null;
+  if (!keepMsg) pl.msg = '';
   // the default action per kind: a category answer, an instrument, or a name
   pl.form = { location: row.location, path: row.folder, facet: row.kind === 'uncategorized' ? 'category' : 'instrument',
     value: '', mode: row.kind === 'unsorted' ? 'default' : 'pin', note: '', local: false, word: '' };
@@ -2272,11 +2358,9 @@ async function planCorrect(preview) {
   if (r.error) { pl.msg = r.error; render(); return; }
   pl.radius = r.radius;
   if (!preview) {
-    pl.msg = `written to annotations.local/${r.radius.target.file} — re-planning`;
-    pl.sel = null; pl.file = null; pl.form = null; pl.radius = null;
-    S.pf = null; render();
-    await loadPreflight();
-    await loadPlanReview();
+    pl.msg = `written to annotations.local/${r.radius.target.file} — re-planning behind you`;
+    planDecided(pl.sel);
+    replan();
     return;
   }
   render();
@@ -2285,8 +2369,9 @@ async function planCorrect(preview) {
 async function planAck() {
   const pl = S.pl; const f = readForm(); if (!pl.sel) return;
   await api('/api/ack', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: pl.sel.location, folder: pl.sel.folder, note: f ? f.note : '' }) });
-  pl.msg = 'left as-is — it will not come back to the queue'; pl.sel = null; pl.form = null; pl.files = null;
-  await loadPlanReview();
+  pl.msg = 'left as-is — it will not come back to the queue';
+  planDecided(pl.sel);
+  await refreshPlanReview();
 }
 
 async function planReport() {
@@ -2321,11 +2406,10 @@ async function planWithdraw(v) {
   const r = await api('/api/local/withdraw', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ entry: { file: v.file, vendor: v.vendor, pack: v.pack, kind: v.kind, entry: v.entry }, reason: 'withdrawn' }) });
   pl.recBusy = false;
   if (r.error) { pl.msg = r.error; render(); return; }
-  pl.msg = `withdrawn — ${n(r.changed)} of ${n(r.covered)} files back to how they were — re-planning`;
-  pl.sel = null; pl.file = null; pl.form = null; pl.radius = null;
-  S.pf = null; render();
-  await loadPreflight();
-  await loadPlanReview();
+  pl.msg = `withdrawn — ${n(r.changed)} of ${n(r.covered)} files back to how they were — re-planning behind you`;
+  pl.sel = null; pl.file = null; pl.form = null; pl.radius = null; pl.files = null;
+  render();
+  await replan();
   pl.local = await api('/api/local');
   await planReconcile();
 }
@@ -2441,6 +2525,11 @@ function renderVerdict() {
 function renderPlan() {
   const pl = S.pl;
   if (!S.view) return `<div class="chead"><h1>Fix</h1></div><div style="font:400 12px var(--sans);color:var(--fg-faint);padding:28px 20px">${S.views.length ? 'Pick a recipe on the left — the queue is what its rules could not place.' : 'No recipes yet — Fix reads the folders a recipe cannot place. Make one in Materialize first.'}</div>`;
+  // every render rebuilds the form from state; a poll landing mid-note
+  // must not eat what was typed, so read the form the DOM shows first —
+  // only that one: a form just opened for another row has nothing there
+  if (pl.form && pl.form === pl.formShown) readForm();
+  pl.formShown = pl.form;
   const need = !S.pf ? true : (pl.tab === 'queues' ? !pl.q : !pl.tree);
   if (need && !pl.busy && !S.pfBusy && !(S.pf && S.pf.error)) setTimeout(loadPlanReview, 0);
   const counts = (pl.q && pl.q.kinds) || {};
@@ -2456,13 +2545,23 @@ function renderPlan() {
       <div class="seg"><span class="${pl.tab === 'queues' ? 'on' : ''}" data-act="pl-tab" data-k="queues">Folders</span><span class="${pl.tab === 'tree' ? 'on' : ''}" data-act="pl-tab" data-k="tree">Tree</span></div>
       ${S.pf && !S.pf.error && !S.pfBusy ? `<span class="btn" data-act="pl-dump" title="one text file: every folder waiting for a decision (acked ones marked), every file in it, and the why per facet — drop it in the channel">Dump</span>` : ''}
     </div>`;
+  // what is happening to the list: the rebuild behind a decision, the
+  // last thing done — above the rows, where it reads while a folder is
+  // open. In the DOM it comes after them (CSS order puts it first): the
+  // scroller's place is kept by its position among its siblings, and a
+  // band appearing in front of the rows would rename the scroller and
+  // lose the offset — the very thing this is for
+  const rebuilding = S.pfBusy && pl.q;
+  const bandMsg = pl.msg && !pl.form; // with a form open, the form shows it
+  const band = (rebuilding || bandMsg) ? `<div class="pl-band">${rebuilding ? spinner('re-planning · ' + esc(pfProgressLabel())) : ''}${bandMsg ? `<span class="msg">${esc(pl.msg)}</span>` : ''}</div>` : '';
   let list = '';
   if (pl.tab === 'queues') {
     const rows = (pl.q && pl.q.rows) || [];
-    list = rows.length ? rows.map((r, i) => `<div class="pl-row ${pl.sel === r ? 'on' : ''}" data-act="pl-row" data-i="${i}">
+    const decided = pl.decided || new Set();
+    list = rows.length ? rows.map((r, i) => `<div class="pl-row ${pl.sel === r ? 'on' : ''} ${decided.has(rowKey(r)) ? 'done' : ''}" data-act="pl-row" data-i="${i}">
         <div><div class="f" title="${esc(r.folder)}">${esc(r.folder)}</div><div class="ex">${r.instrument ? esc(r.instrument) + ' · ' : ''}${r.category ? esc(r.category) + ' · ' : ''}${r.examples.map(esc).join(' · ')}</div></div>
         <div class="n">${n(r.count)}</div>
-        <div><span class="pl-tag ${r.kind}">${KIND_LABEL[r.kind] || r.kind}</span></div>
+        <div>${decided.has(rowKey(r)) ? '<span class="pl-tag done">✓ decided</span>' : `<span class="pl-tag ${r.kind}">${KIND_LABEL[r.kind] || r.kind}</span>`}</div>
       </div>`).join('') + (pl.q.total_rows > rows.length ? `<div style="font:400 10.5px var(--mono);color:var(--fg-faint);padding:8px 10px">… ${n(pl.q.total_rows - rows.length)} more folders — decide these first</div>` : '')
       : `<div style="font:400 11.5px var(--sans);color:var(--fg-faint);padding:24px 10px">${(S.pf && S.pf.error) ? 'plan failed: ' + esc(S.pf.error) : (pl.q && pl.q.error) ? esc(pl.q.error) : (pl.busy || S.pfBusy) ? (S.pfBusy ? pfProgressBlock() : spinner('reading the queues…')) : 'nothing waiting — every file the layout reads has a place'}</div>`;
   } else {
@@ -2501,13 +2600,12 @@ function renderPlan() {
   } else {
     panel = `${renderVerdict()}
       <div style="font:400 11.5px var(--sans);color:var(--fg-faint)">${pl.tab === 'queues' ? 'Pick a folder. One decision per folder — the files inside are there to listen to, not to label one by one.' : 'Walk the tree as it will be written. Click a file to see why it landed there; confident misfiles live here, no queue holds them.'}</div>
-      ${pl.msg ? `<div style="font:500 11px var(--mono);color:var(--green)">${esc(pl.msg)}</div>` : ''}
       ${pl.local && pl.local.entries && pl.local.entries.length ? `<div style="font:600 10px var(--sans);color:var(--fg-faint);letter-spacing:.05em;text-transform:uppercase;margin-top:6px">your local layer</div>
         ${pl.local.entries.slice(0, 12).map(e => `<div style="font:400 10.5px var(--mono);color:var(--fg-dim)">${esc(e.vendor)}/${esc(e.pack)} · ${e.kind === 'dir' ? esc(e.entry.path || '') : 'word ' + esc((e.entry.aliases || []).join(', '))} → ${esc(e.entry.category || e.entry.default_category || e.entry.instrument || e.entry.default_instrument || e.entry.role || e.entry.id || '')}${e.entry.local ? ' <span style="color:var(--fg-faint)">(local only)</span>' : ''}</div>`).join('')}
         <div style="font:400 10.5px var(--sans);color:var(--fg-faint)">${esc(pl.local.dir)}</div>
         ${renderReconcile()}` : ''}`;
   }
-  return chead + `<div class="pl-wrap"><div class="pl-list" data-scroll>${list}</div><div class="pl-panel" data-scroll>${panel}</div></div>`;
+  return chead + `<div class="pl-wrap"><div class="pl-list"><div class="pl-rows" data-scroll>${list}</div>${band}</div><div class="pl-panel" data-scroll>${panel}</div></div>`;
 }
 
 /* ---------- events ---------- */

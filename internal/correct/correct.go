@@ -84,7 +84,7 @@ type Radius struct {
 	Filled  int      `json:"filled"`  // of those, files that had nothing on the facet before
 	Changes []Change `json:"changes"`
 
-	after map[string]harvest.Meta
+	After map[string]harvest.Meta `json:"-"` // the covered files as they read after the correction — what the caller patches into anything it holds loaded
 }
 
 var nonSlugRe = regexp.MustCompile(`[^a-z0-9]+`)
@@ -246,7 +246,7 @@ func Preview(ws *workspace.Workspace, lc workspace.LocationConfig, entries map[s
 	if err != nil {
 		return nil, err
 	}
-	r := &Radius{Target: t, Covered: len(after), after: after}
+	r := &Radius{Target: t, Covered: len(after), After: after}
 	groups := map[[2]string]*Change{}
 	for _, p := range sortedKeys(after) {
 		b, a := current[p], after[p]
@@ -329,14 +329,14 @@ func Apply(ws *workspace.Workspace, lc workspace.LocationConfig, entries map[str
 	if err := writeEntry(ws, r.Target, c); err != nil {
 		return nil, err
 	}
-	before := majority(current, r.after)
+	before := majority(current, r.After)
 	if err := appendLog(ws, logEntry{
 		At: time.Now().UTC().Format(time.RFC3339), Provenance: prov, Correction: c, Target: r.Target,
 		Before: before, Covered: r.Covered, Changed: r.Changed, Moved: r.Moved, Filled: r.Filled,
 	}); err != nil {
 		return nil, err
 	}
-	if err := harvest.Patch(ws, lc, r.after); err != nil {
+	if err := harvest.Patch(ws, lc, r.After); err != nil {
 		return nil, err
 	}
 	return r, nil
