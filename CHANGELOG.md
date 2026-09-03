@@ -7,6 +7,35 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.44 — 2026-09-03 (a `[[dir]]` path may name a file — it always said so, it never did)
+
+Jonathan pasted `catalog ls` over Elektron's 25 Octatrack demos, the
+folder pinned `one-shots` on 2026-09-01 from a listing. Six of the 25
+sit at exactly 8.00 / 4.00 / 2.00 s — four, two and one bar at 120, the
+Octatrack's default tempo — beside hits of 0.09–0.56 s: Ebass, Isaak,
+Percs, Acdrum, Rhodes, Vocal are loops. Names with no kind word, in a
+folder that mixes kinds: the only honest pin is per file.
+
+SPEC §19.5 has said since 2026-09-01 that a correction may be a file
+glob (`path = "WAV/Textures/Chop *.wav"`) or a single file, "all three
+are `[[dir]]` entries — the schema already takes globs", and
+`correct.go` documents the same glob. `harvestCategory` matched every
+`[[dir]]` path against the file's **folder** path only, so a file entry
+or file glob was a silent no-op — any correction written that way since
+v0.9.18 never applied. Now a path that fails to match the folder is
+tried against the full in-pack path (folder + file name); it is longer
+than its folder's entry, so it wins deepest-match for that file alone,
+and the folder's entry keeps governing the siblings. `why` names the
+file as the matched segment. Document folders (the Live-set tier) still
+match folders only. SCHEMA.md gained the paragraph; the six Elektron
+files carry entries with their durations in `note`.
+
+Probed over the house listing (166,664 files): the harvester change
+alone moves **nothing** — no existing `[[dir]]` glob happened to match
+a file — and the six entries move exactly the six, `one-shots` →
+`loops`, instruments unchanged (Acdrum gains `drums` by a pack alias:
+the name says drum, no piece is named).
+
 ## v0.9.43 — 2026-09-02 (a kit of loops is a construction kit, and names nothing)
 
 Jonathan, on Night Drive 2's `loops/music_loops`: "there are also a

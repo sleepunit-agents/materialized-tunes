@@ -249,7 +249,8 @@ func (h *harvester) one(p string, e catalog.Entry) (m Meta, ok bool) {
 	var pinned string
 	var catSrc, pinSrc annotations.Source
 	var defaults dirDefaults
-	m.Category, m.Tags, pinned, catSrc, pinSrc, defaults = harvestCategory(dirs, labels, vendor, pack, segs[packIdx])
+	file := inPack[len(inPack)-1]
+	m.Category, m.Tags, pinned, catSrc, pinSrc, defaults = harvestCategory(dirs, labels, file, vendor, pack, segs[packIdx])
 	if m.Category == "" {
 		// vendor annotation said nothing (or there is none) — the shared
 		// lexicon reads the same folder/filename grammar cross-vendor
@@ -280,7 +281,7 @@ func (h *harvester) one(p string, e catalog.Entry) (m Meta, ok bool) {
 	if m.Category == "" && len(echoes) > 0 {
 		// nothing on the path said; the pack's own name may ("Silk
 		// Vocals" holds vocals) — the echo is a fallback, not a label
-		c, _, _, src, _, _ := harvestCategory(dirs, echoes, vendor, pack, segs[packIdx])
+		c, _, _, src, _, _ := harvestCategory(dirs, echoes, file, vendor, pack, segs[packIdx])
 		if c == "" {
 			c, src = h.cats.ResolveSrc("", echoes)
 		}
@@ -722,7 +723,7 @@ func (h *harvester) docCategory(p string) docVote {
 		if !ok {
 			continue
 		}
-		c, _, _, src, _, _ := harvestCategory(dirs, labels, s.vendor, s.pack, s.packDir)
+		c, _, _, src, _, _ := harvestCategory(dirs, labels, "", s.vendor, s.pack, s.packDir)
 		if c == "" {
 			c, src = h.cats.ResolveSrc("", labels)
 		}
@@ -744,7 +745,7 @@ func (h *harvester) docInstrument(p, category string, overrides []annotations.In
 		if !ok {
 			continue
 		}
-		_, _, pinned, _, pinSrc, _ := harvestCategory(dirs, labels, s.vendor, s.pack, s.packDir)
+		_, _, pinned, _, pinSrc, _ := harvestCategory(dirs, labels, "", s.vendor, s.pack, s.packDir)
 		var inst, fam string
 		var src annotations.Source
 		if pinned != "" {
@@ -949,10 +950,16 @@ func labelDirs(dirs []string, packDir string, p *annotations.Pack) (labels, echo
 // pin when the deepest matching entry carries one — "" otherwise.
 // dirs is the full in-pack path ([[dir]] pins address it); labels is the
 // same minus the pack-name echoes, and is what the [[category]] globs see.
+// file is the file's own name (with extension): a [[dir]] path may name
+// a file or a file glob ("PRESETS/AUDIO/Elektron/Ebass.wav", "WAV/
+// Textures/Chop *.wav") for a folder that mixes kinds under names that
+// carry no kind word; it is matched against the full in-pack path and,
+// being longer than its folder's entry, wins the deepest-match rule.
+// "" when the caller is reading a document's folders, not a file.
 // catSrc and instSrc say which entry or rule answered. defaults carries
 // the deepest matching entry's default_category / default_instrument,
 // which the caller applies only after every other tier stayed silent.
-func harvestCategory(dirs, labels []string, v *annotations.Vendor, p *annotations.Pack, packDir string) (category string, tags []string, instrument string, catSrc, instSrc annotations.Source, defaults dirDefaults) {
+func harvestCategory(dirs, labels []string, file string, v *annotations.Vendor, p *annotations.Pack, packDir string) (category string, tags []string, instrument string, catSrc, instSrc annotations.Source, defaults dirDefaults) {
 	if v == nil {
 		return "", nil, "", annotations.Source{}, annotations.Source{}, dirDefaults{}
 	}
@@ -966,19 +973,35 @@ func harvestCategory(dirs, labels []string, v *annotations.Vendor, p *annotation
 		}
 	}
 	rel := strings.Join(dirs, "/")
+	full := ""
+	if file != "" {
+		full = file
+		if rel != "" {
+			full = rel + "/" + file
+		}
+	}
 	if p != nil {
 		best, bestInst := -1, -1
 		bestDefCat, bestDefInst := -1, -1
 		for _, d := range p.Dirs {
 			dp := strings.Trim(d.Path, "/")
 			match := false
+			seg := rel
 			if strings.ContainsAny(dp, "*?[{") {
 				match, _ = doublestar.Match(dp, rel)
 				if !match {
 					match, _ = doublestar.Match(dp+"/**", rel)
 				}
+				if !match && full != "" {
+					// the entry names files, not a folder
+					match, _ = doublestar.Match(dp, full)
+					seg = full
+				}
 			} else {
 				match = rel == dp || strings.HasPrefix(rel, dp+"/")
+				if !match && full != "" && full == dp {
+					match, seg = true, full
+				}
 			}
 			if !match {
 				continue
@@ -987,22 +1010,22 @@ func harvestCategory(dirs, labels []string, v *annotations.Vendor, p *annotation
 			if d.Category != "" && len(dp) > best {
 				best = len(dp)
 				category = d.Category
-				catSrc = annotations.Source{Tier: annotations.TierDir, Segment: rel, Word: d.Path}
+				catSrc = annotations.Source{Tier: annotations.TierDir, Segment: seg, Word: d.Path}
 			}
 			if d.Instrument != "" && len(dp) > bestInst {
 				bestInst = len(dp)
 				instrument = d.Instrument
-				instSrc = annotations.Source{Tier: annotations.TierDir, Segment: rel, Word: d.Path}
+				instSrc = annotations.Source{Tier: annotations.TierDir, Segment: seg, Word: d.Path}
 			}
 			if d.DefaultCategory != "" && len(dp) > bestDefCat {
 				bestDefCat = len(dp)
 				defaults.category = d.DefaultCategory
-				defaults.categorySrc = annotations.Source{Tier: annotations.TierDirDefault, Segment: rel, Word: d.Path}
+				defaults.categorySrc = annotations.Source{Tier: annotations.TierDirDefault, Segment: seg, Word: d.Path}
 			}
 			if d.DefaultInstrument != "" && len(dp) > bestDefInst {
 				bestDefInst = len(dp)
 				defaults.instrument = d.DefaultInstrument
-				defaults.instrumentSrc = annotations.Source{Tier: annotations.TierDirDefault, Segment: rel, Word: d.Path}
+				defaults.instrumentSrc = annotations.Source{Tier: annotations.TierDirDefault, Segment: seg, Word: d.Path}
 			}
 		}
 	}

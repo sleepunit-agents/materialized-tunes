@@ -1550,7 +1550,10 @@ Three rules the tool enforces so corrections stay facts:
 Granularity: folder is the default; *files matching a word* generates a
 glob (`path = "WAV/Textures/Chop *.wav"`); a single file is allowed and
 discouraged. All three are `[[dir]]` entries — the schema already takes
-globs.
+globs. (The harvester matched `[[dir]]` paths against the folder only
+until v0.9.44, so file globs and single files were silent no-ops before
+it; a path that does not match the folder is now tried against the full
+in-pack path.)
 
 *Shipped 2026-09-01 (v0.9.18):* the **Plan** step (tab 3). Queues
 (`GET /api/plan/queues`) group the artifact's failures by source folder

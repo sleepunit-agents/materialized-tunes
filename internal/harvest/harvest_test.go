@@ -662,3 +662,76 @@ func TestHarvestDocumentFolderLabelsItsSamples(t *testing.T) {
 		t.Errorf("Describe should name folder and document: %q", s)
 	}
 }
+
+// A [[dir]] path may name a file or a file glob — the pin for a folder
+// that mixes kinds under names carrying no kind word (Elektron's 25
+// Octatrack demos: "Ebass" is an 8-second loop beside "Mdkick", a hit).
+// Matched against the full in-pack path; longer than its folder's entry,
+// it wins the deepest-match rule; a folder entry never matches a file.
+func TestHarvestDirEntryNamesAFile(t *testing.T) {
+	dir := t.TempDir()
+	ws, err := workspace.Init(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws.Config.Locations = []workspace.LocationConfig{{Name: "src", Type: "local", Root: dir, Layout: "vendor-dirs"}}
+	ws.SaveConfig()
+	write := func(rel, body string) {
+		p := filepath.Join(dir, rel)
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		os.WriteFile(p, []byte(body), 0o644)
+	}
+	write("annotations/instruments.toml", "[[instrument]]\nid=\"kick\"\nfamily=\"drums\"\naliases=[\"kick\",\"mdkick\"]\n[[instrument]]\nid=\"bass\"\nfamily=\"bass\"\naliases=[\"bass\",\"ebass\"]\n[[instrument]]\nid=\"drums\"\nfamily=\"drums\"\naliases=[\"drums\"]\n")
+	write("annotations/categories.toml", "[[category]]\nid=\"loops\"\naliases=[\"loop\"]\n[[category]]\nid=\"one-shots\"\naliases=[\"hit\"]\n")
+	write("annotations/vendors/el/vendor.toml", "[vendor]\nname=\"Elektron\"\nslug=\"elektron\"\n")
+	write("annotations/vendors/el/packs/ot.toml", "[pack]\nname=\"OT\"\nslug=\"ot\"\ndir=\"OT\"\n"+
+		"[[dir]]\npath=\"AUDIO/Elektron\"\ncategory=\"one-shots\"\ntags=[\"elektron\"]\n"+
+		"[[dir]]\npath=\"AUDIO/Elektron/Ebass.wav\"\ncategory=\"loops\"\ntags=[\"demo\"]\n"+
+		"[[dir]]\npath=\"AUDIO/Elektron/Acdrum.wav\"\ncategory=\"loops\"\ninstrument=\"drums\"\n"+
+		"[[dir]]\npath=\"AUDIO/Textures\"\ncategory=\"loops\"\n"+
+		"[[dir]]\npath=\"AUDIO/Textures/Chop *.wav\"\ncategory=\"one-shots\"\n")
+
+	mk := func(path, sha string) catalog.Entry {
+		return catalog.Entry{Path: path, SHA256: sha, Size: 1, ScannedAt: time.Now(),
+			Audio: &audio.Meta{Format: "wav", Channels: 1, SampleRate: 44100, BitDepth: 16, Frames: 10}}
+	}
+	cat := map[string]catalog.Entry{}
+	for _, e := range []catalog.Entry{
+		mk("Elektron/OT/AUDIO/Elektron/Ebass.wav", "e1"),        // the file entry beats the folder's pin
+		mk("Elektron/OT/AUDIO/Elektron/Mdkick.wav", "e2"),       // the folder's pin still governs its siblings
+		mk("Elektron/OT/AUDIO/Elektron/Acdrum.wav", "e3"),       // both facets pinned on one file
+		mk("Elektron/OT/AUDIO/Textures/Chop 01.wav", "t1"),      // the file glob
+		mk("Elektron/OT/AUDIO/Textures/Long Tail 01.wav", "t2"), // not matched by it
+	} {
+		cat[e.Path] = e
+	}
+	if err := catalog.Write(ws.CatalogPath("src"), cat); err != nil {
+		t.Fatal(err)
+	}
+	ws, _ = workspace.Load(dir)
+	if _, err := Run(ws, ws.Config.Locations[0]); err != nil {
+		t.Fatal(err)
+	}
+	got := LoadMeta(ws, "src")
+	want := func(p, cat, word, inst string) {
+		m := got["Elektron/OT/AUDIO/"+p]
+		w := ""
+		if m.Why != nil && m.Why.Category != nil {
+			w = m.Why.Category.Word
+		}
+		if m.Category != cat || w != word || m.Instrument != inst {
+			t.Errorf("%s: got %s by %q inst %q, want %s by %q inst %q", p, m.Category, w, m.Instrument, cat, word, inst)
+		}
+	}
+	want("Elektron/Ebass.wav", "loops", "AUDIO/Elektron/Ebass.wav", "bass")
+	want("Elektron/Mdkick.wav", "one-shots", "AUDIO/Elektron", "kick")
+	want("Elektron/Acdrum.wav", "loops", "AUDIO/Elektron/Acdrum.wav", "drums")
+	want("Textures/Chop 01.wav", "one-shots", "AUDIO/Textures/Chop *.wav", "")
+	want("Textures/Long Tail 01.wav", "loops", "AUDIO/Textures", "")
+	if m := got["Elektron/OT/AUDIO/Elektron/Ebass.wav"]; len(m.Tags) != 2 || m.Tags[0] != "elektron" || m.Tags[1] != "demo" {
+		t.Errorf("tags union along the chain, file entry included: %v", m.Tags)
+	}
+	if m := got["Elektron/OT/AUDIO/Elektron/Ebass.wav"]; m.Why.Category.Segment != "AUDIO/Elektron/Ebass.wav" {
+		t.Errorf("why names the file the entry matched: %+v", m.Why.Category)
+	}
+}
