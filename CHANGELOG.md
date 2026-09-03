@@ -7,6 +7,18 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.47 — 2026-09-03 (double-click the title bar to maximise)
+
+Jonathan, on the frameless Windows window: "double clicking the title
+bar should maximize/unmaximize or whatever like normal windows
+behavior." It didn't — the page draws the title bar, so Windows never
+sees a caption to double-click. Wails' runtime already leaves the second
+click of a double-click alone (it won't start a drag on `e.detail !== 1`,
+and defers the drag to mousemove), so a `dblclick` listener on the drag
+region toggles maximise; the search box and — ▢ ✕ are excluded. Same
+listener on macOS, where the page's bar covers the hidden-inset native
+one.
+
 ## v0.9.46 — 2026-09-03 (one file table: the Samples list is the pack page's listing)
 
 Jonathan, on v0.9.45: "we've got different experiences for playing back

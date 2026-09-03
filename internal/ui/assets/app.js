@@ -2383,6 +2383,17 @@ function renderPlan() {
 /* ---------- events ---------- */
 
 function wire() {
+  // Double-click on the title bar's drag region toggles maximise, as a
+  // native title bar does. Wails' runtime deliberately does not start a
+  // drag on the second click of a double-click (main.js: e.detail !== 1),
+  // and defers the drag to mousemove, so the dblclick event reaches us
+  // intact; the search box and — ▢ ✕ are no-drag and keep their own
+  // meaning. (Jonathan, v0.9.47)
+  const tb = $app.querySelector('.titlebar');
+  if (tb) tb.addEventListener('dblclick', (e) => {
+    if (e.target.closest('.gsearch, .winctl')) return;
+    if (window.runtime) window.runtime.WindowToggleMaximise();
+  });
   $app.querySelectorAll('[data-act]').forEach(el => {
     el.addEventListener('click', (e) => {
       const act = el.dataset.act;
