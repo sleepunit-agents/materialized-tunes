@@ -31,6 +31,7 @@ import (
 	"github.com/sleepunit-agents/materialized-tunes/internal/ableton"
 	"github.com/sleepunit-agents/materialized-tunes/internal/annotations"
 	"github.com/sleepunit-agents/materialized-tunes/internal/catalog"
+	"github.com/sleepunit-agents/materialized-tunes/internal/progress"
 	"github.com/sleepunit-agents/materialized-tunes/internal/version"
 	"github.com/sleepunit-agents/materialized-tunes/internal/workspace"
 )
@@ -362,7 +363,12 @@ func Run(ws *workspace.Workspace, lc workspace.LocationConfig) (*Result, error) 
 	}
 	res := &Result{}
 	var out []Meta
-	for _, p := range paths {
+	task := progress.Start("harvest", "classifying "+lc.Name).Units("files").Set("", 0, int64(len(paths)))
+	defer task.End()
+	for i, p := range paths {
+		if i%1000 == 0 {
+			task.Set("", int64(i), int64(len(paths)))
+		}
 		m, ok := h.one(p, entries[p])
 		if !ok {
 			continue

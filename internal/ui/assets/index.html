@@ -353,6 +353,35 @@
   .run-wrap { max-width: 780px; margin: 0 auto; padding: 22px 18px; }
   .runbar { position: relative; height: 14px; background: var(--bg-raise); border: 1px solid var(--bord-raise); border-radius: 4px; overflow: hidden; margin-bottom: 8px; }
   .runbar .fill { position: absolute; top: 0; bottom: 0; left: 0; background: linear-gradient(180deg, var(--amber), var(--amber-deep)); transition: width .18s linear; }
+  .runbar.indet .fill { width: 35%; animation: shimmer 1.2s ease-in-out infinite; }
+  /* waiting: every wait in the app draws one of these — a spinner where the
+     total is unknown, a bar where it is, a block with a name and a clock */
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes shimmer { 0% { left: -40%; } 100% { left: 100%; } }
+  .spin { display: inline-block; width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid rgba(240,160,60,.22); border-top-color: var(--amber); animation: spin .8s linear infinite; vertical-align: -1px; flex: none; }
+  .spin.teal { border-color: rgba(61,196,207,.22); border-top-color: var(--teal); }
+  .wait { display: inline-flex; align-items: center; gap: 7px; font: 400 11px var(--mono); color: var(--fg-faint); }
+  .pbar { position: relative; height: 6px; background: var(--bg-raise); border: 1px solid var(--bord-raise); border-radius: 3px; overflow: hidden; }
+  .pbar .fill { position: absolute; top: 0; bottom: 0; left: 0; background: linear-gradient(90deg, var(--amber-deep), var(--amber)); transition: width .25s linear; }
+  .pbar.indet .fill { width: 35%; animation: shimmer 1.2s ease-in-out infinite; }
+  .prog { display: flex; flex-direction: column; gap: 5px; }
+  .prog .l1 { display: flex; align-items: center; gap: 8px; font: 500 11px var(--mono); color: var(--fg-dim); min-width: 0; }
+  .prog .l1 .lbl { color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; min-width: 38%; }
+  .prog .l1 .stg { white-space: nowrap; flex: none; }
+  .prog .l1 .rt { margin-left: auto; color: var(--fg-faint); font-weight: 400; white-space: nowrap; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .prog .l2 { font: 400 10.5px var(--mono); color: var(--fg-faint); padding-left: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .boot { max-width: 560px; margin: 0 auto; padding: 56px 24px; }
+  .boot .t { font: 600 15px var(--sans); color: var(--fg); margin-bottom: 4px; }
+  .boot .s { font: 400 11.5px/1.5 var(--sans); color: var(--fg-faint); margin-bottom: 22px; }
+  .boot .task, .actpop .task { background: var(--bg-card); border: 1px solid var(--bord-card); border-radius: 6px; padding: 10px 12px; margin-bottom: 8px; }
+  .boot .done { font: 400 10.5px var(--mono); color: var(--fg-faint); padding: 4px 2px; }
+  .statusbar .actwrap { display: contents; }
+  .statusbar .act { display: flex; align-items: center; gap: 8px; color: var(--fg-dim); cursor: pointer; max-width: 46%; min-width: 0; }
+  .statusbar .act .lbl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .statusbar .act .pbar { width: 90px; flex: none; }
+  .statusbar .act .pct { color: var(--fg-faint); flex: none; }
+  .actpop { position: fixed; right: 12px; bottom: 34px; width: 460px; max-height: 60vh; overflow-y: auto; background: var(--bg-raise); border: 1px solid var(--bord-raise); border-radius: 8px; padding: 10px 12px; box-shadow: 0 12px 32px rgba(0,0,0,.5); z-index: 60; }
+  .actpop .h { font: 600 10px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--fg-faint); margin-bottom: 6px; }
   .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 16px; }
   .stat { background: var(--bg-card); border: 1px solid var(--bord-card); border-radius: 5px; padding: 10px 12px; }
   .stat .v { font: 600 16px var(--mono); color: var(--fg); }

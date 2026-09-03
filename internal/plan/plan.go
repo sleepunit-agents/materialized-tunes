@@ -395,14 +395,22 @@ func BuildWith(ws *workspace.Workspace, v *view.View, opt Options) (*Plan, error
 	}
 
 	catalogs := map[string]map[string]catalog.Entry{}
-	for i, inc := range v.Include {
+	nLocs := 0 // distinct locations the recipe reads — what "4/7" counts
+	for _, inc := range v.Include {
+		if _, seen := catalogs[inc.Location]; !seen {
+			catalogs[inc.Location] = nil
+			nLocs++
+		}
+	}
+	catalogs = map[string]map[string]catalog.Entry{}
+	for _, inc := range v.Include {
 		if _, done := catalogs[inc.Location]; done {
 			continue
 		}
 		if _, ok := ws.Location(inc.Location); !ok {
 			return nil, fmt.Errorf("view %s: unknown location %q", v.Name, inc.Location)
 		}
-		progress(StageLoad, i, len(v.Include))
+		progress(StageLoad+" · "+inc.Location, len(catalogs), nLocs)
 		entries, err := in.Catalog(inc.Location)
 		if err != nil {
 			return nil, err

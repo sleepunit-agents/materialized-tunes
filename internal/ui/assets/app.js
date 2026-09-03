@@ -47,6 +47,11 @@ const S = {
   toast: '',
   upd: null, updBusy: false, updMsg: '',  // app self-update state
   booting: false, bootErr: [],           // launch: shell before catalog; what launch could not read
+  // what the server is waiting on right now (/api/progress): tasks with a
+  // label, a stage, done/total in a unit, a start time. The statusbar shows
+  // the newest, the boot panel all of them, plan and scan surfaces their own.
+  act: { seq: -1, tasks: [], skew: 0, reharvesting: false }, actOpen: false,
+  bootLog: [], bootStarted: 0,
 };
 
 const fmtB = (b) => {
@@ -101,7 +106,8 @@ async function boot() {
       else setMode('materialize', k);
     });
   }
-  S.booting = true; render(); // the shell, now — the library fills in when the catalog answers
+  S.booting = true; S.bootStarted = Date.now(); render(); // the shell, now — the library fills in when the catalog answers
+  pollProgress(); // the catalog decode is the launch wait: show it as it happens
   const calls = ['/api/summary', '/api/devices', '/api/views', '/api/storages'];
   const got = await Promise.allSettled(calls.map(c => api(c)));
   S.bootErr = [];
@@ -123,6 +129,101 @@ async function boot() {
   pollRun();
   pollScans();
   pollUpdate();
+}
+
+/* ---------- waiting ----------
+   Anything that makes the user wait is a task on the server (internal/
+   progress): decoding a catalog, deriving classifications, scanning,
+   planning, writing a card, pulling a build. /api/progress lists what is
+   running; this polls it fast while anything is and slow when nothing is,
+   and every surface that waits draws from it — a bar when the total is
+   known, a spinner when it isn't, always a name and a clock. */
+let actTimer = null;
+async function pollProgress() {
+  clearTimeout(actTimer);
+  let busy = S.booting;
+  try {
+    const r = await api('/api/progress');
+    if (r && Array.isArray(r.tasks)) {
+      const prev = S.act;
+      S.act = { seq: r.seq, tasks: r.tasks, skew: r.now ? Date.now() - new Date(r.now).getTime() : 0, reharvesting: !!r.reharvesting };
+      busy = busy || r.tasks.length > 0 || S.act.reharvesting;
+      if (S.booting) noteBootTasks(prev.tasks, r.tasks);
+      if (r.seq !== prev.seq || prev.reharvesting !== S.act.reharvesting) renderActivity();
+    }
+  } catch (e) { /* server busy or gone; keep polling, keep quiet */ }
+  actTimer = setTimeout(pollProgress, busy ? 350 : 2500);
+}
+
+// a full render where a wait is on screen; elsewhere just the statusbar
+function renderActivity() {
+  const onScreen = S.booting || S.actOpen || S.pfBusy || S.pl.busy || S.discBusy || S.diffBusy || S.updBusy
+    || (S.run && S.run.status === 'running') || Object.values(S.scans).some(x => x.status === 'running')
+    || S.screen === 'sources';
+  if (onScreen) { render(); return; }
+  const el = document.querySelector('.statusbar .actwrap');
+  if (el) el.outerHTML = activity();
+  if (!S.act.tasks.length && S.actOpen) { S.actOpen = false; render(); }
+}
+
+// a task that vanished between two polls finished — the boot panel keeps
+// the line, so a 40-second decode leaves a receipt, not a blank
+function noteBootTasks(before, after) {
+  const still = new Set(after.map(t => t.id));
+  for (const t of before) {
+    if (still.has(t.id)) continue;
+    const what = t.unit === 'bytes' && t.total ? ` · ${fmtB(t.total)}` : t.total ? ` · ${n(t.total)} ${t.unit || ''}`.trimEnd() : '';
+    S.bootLog.push(`${t.label}${what} · ${since(t)}`);
+  }
+}
+
+const taskPct = (t) => t && t.total > 0 ? Math.min(100, t.done / t.total * 100) : null;
+const taskCount = (t) => t.unit === 'bytes' ? (t.total ? `${fmtB(t.done)} of ${fmtB(t.total)}` : fmtB(t.done))
+  : t.total ? `${n(t.done)} of ${n(t.total)}${t.unit ? ' ' + t.unit : ''}` : '';
+function since(t) {
+  const s = Math.max(0, Math.round((Date.now() - (S.act.skew || 0) - new Date(t.started).getTime()) / 1000));
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s`;
+}
+const pbar = (pct, cls) => `<div class="pbar${pct == null ? ' indet' : ''}${cls ? ' ' + cls : ''}"><div class="fill"${pct == null ? '' : ` style="width:${pct.toFixed(1)}%"`}></div></div>`;
+const spinner = (text, cls) => `<span class="wait"><span class="spin${cls ? ' ' + cls : ''}"></span>${text}</span>`;
+
+// one task as a block: name · stage, counts · % · clock on the right, a
+// bar under, and (nest) the tasks it spawned — a plan's "loading catalogs
+// · archive" shows the decode's bytes on the line below
+function taskBlock(t, nest) {
+  const pct = taskPct(t), cnt = taskCount(t);
+  const kids = nest ? S.act.tasks.filter(o => o.id > t.id && o.kind !== t.kind) : [];
+  return `<div class="prog"><div class="l1"><span class="spin"></span><span class="lbl">${esc(t.label)}</span>${t.stage ? `<span class="stg">· ${esc(t.stage)}</span>` : ''}
+      <span class="rt">${cnt ? cnt + ' · ' : ''}${pct != null ? pct.toFixed(0) + '% · ' : ''}${since(t)}</span></div>
+    ${pbar(pct)}
+    ${kids.map(k => `<div class="l2">↳ ${esc(k.label)}${k.stage ? ' · ' + esc(k.stage) : ''}${taskCount(k) ? ' · ' + taskCount(k) : ''}${taskPct(k) != null ? ' · ' + taskPct(k).toFixed(0) + '%' : ''} · ${since(k)}</div>`).join('')}
+  </div>`;
+}
+
+// the launch screen: every wait as it happens, receipts for the ones done
+function bootPanel() {
+  const ts = S.act.tasks;
+  const bootSince = () => since({ started: new Date(S.bootStarted - (S.act.skew || 0)).toISOString() });
+  const live = ts.length ? ts.map(t => `<div class="task">${taskBlock(t, false)}</div>`).join('')
+    : `<div class="task"><div class="prog"><div class="l1"><span class="spin"></span><span class="lbl">opening the workspace</span><span class="rt">${bootSince()}</span></div>${pbar(null)}</div></div>`;
+  const log = S.bootLog.map(l => `<div class="done">✓ ${esc(l)}</div>`).join('');
+  return `<div class="boot"><div class="t">Opening the library</div>
+    <div class="s">Each source's catalog is decoded once per launch and then shared by every screen. The archive drive's is the big one — it reads at disk speed, and the bar is the file.</div>
+    ${live}${log}</div>`;
+}
+
+// the statusbar segment: the newest task with a bar, a count of the rest;
+// click for all of them
+function activity() {
+  const ts = S.act.tasks;
+  if (!ts.length) return S.act.reharvesting ? `<span class="actwrap"><span class="act"><span class="spin"></span><span class="lbl">re-deriving classifications</span></span></span>` : '<span class="actwrap"></span>';
+  const t = ts[ts.length - 1], pct = taskPct(t);
+  const title = ts.map(o => `${o.label}${o.stage ? ' · ' + o.stage : ''}${taskCount(o) ? ' · ' + taskCount(o) : ''} · ${since(o)}`).join('\n');
+  return `<span class="actwrap"><span class="act" data-act="act-toggle" title="${esc(title)}"><span class="spin"></span><span class="lbl">${esc(t.label)}${t.stage ? ' · ' + esc(t.stage) : ''}</span>${pbar(pct)}<span class="pct">${pct != null ? pct.toFixed(0) + '%' : since(t)}${ts.length > 1 ? ` +${ts.length - 1}` : ''}</span></span></span>`;
+}
+function actPopover() {
+  if (!S.actOpen || !S.act.tasks.length) return '';
+  return `<div class="actpop"><div class="h">${S.act.tasks.length === 1 ? 'in progress' : S.act.tasks.length + ' in progress'}</div>${S.act.tasks.map(t => `<div class="task">${taskBlock(t, false)}</div>`).join('')}</div>`;
 }
 
 /* ---------- app self-update ----------
@@ -195,7 +296,18 @@ function pfProgressLabel() {
   const p = S.pfProgress;
   if (!p) return 'planning…';
   const stage = p.stage || 'planning';
-  return p.total > 1 ? `${stage} · ${n(p.count)} / ${n(p.total)}` : stage + '…';
+  const clock = p.started ? ' · ' + since(p) : '';
+  return (p.total > 1 ? `${stage} · ${n(p.count)} / ${n(p.total)}` : stage + '…') + clock;
+}
+// the same wait as a block: stage line, bar, and the catalog decode or
+// classification pass the build is sitting on right now, with its bytes
+function pfProgressBlock() {
+  const p = S.pfProgress;
+  const t = S.act.tasks.filter(o => o.kind === 'plan').pop();
+  if (t) return `<div style="max-width:560px">${taskBlock(t, true)}</div>`;
+  if (!p) return `<div style="max-width:560px">${spinner('planning…')}</div>`;
+  const pct = p.total > 1 ? Math.min(100, p.count / p.total * 100) : null;
+  return `<div class="prog" style="max-width:560px"><div class="l1"><span class="spin"></span><span class="lbl">planning ${esc(p.view || S.view || '')}</span><span class="stg">· ${esc(p.stage || 'planning')}</span><span class="rt">${p.total > 1 ? `${n(p.count)} of ${n(p.total)} · ` : ''}${p.started ? since(p) : ''}</span></div>${pbar(pct)}</div>`;
 }
 
 async function openPack(p) {
@@ -386,9 +498,7 @@ function bootBanner() {
 
 function renderInner() {
   const screens = { library: renderLibrary, recipe: renderRecipe, plan: renderPlan, run: renderRun, cards: renderCards, sources: renderSources };
-  const main = S.booting
-    ? `<div style="padding:40px 24px;font:400 12px var(--mono);color:var(--fg-faint)">reading the catalog…</div>`
-    : screens[S.screen]();
+  const main = S.booting ? bootPanel() : screens[S.screen]();
   const focus = focusSnapshot();
   snapshotScroll();
   const col = column();
@@ -397,7 +507,7 @@ function renderInner() {
     ${titlebar()}
     ${rail()}
     ${col}
-    <div class="main" data-view="${esc(viewKey())}">${bootBanner()}${main}</div>
+    <div class="main" data-view="${esc(viewKey())}">${bootBanner()}${main}</div>${actPopover()}
     ${addToPicker()}
     ${dirPicker()}
     ${statusbar()}
@@ -757,7 +867,7 @@ function discoverColumn() {
   return `<div class="col">${colHead('Discover', S.discVendor ? `<span class="a" data-act="disc-vendor" data-v="${esc(S.discVendor)}">clear</span>` : '')}<div class="cb">
     <div class="sec">Show</div>
     <div class="fr ${S.obtainable ? 'on' : ''}" data-act="obtainable" title="acquirable packs only — flip it off to see the out-of-print tail"><span class="ck ${S.obtainable ? 'on' : ''}">${S.obtainable ? '✓' : ''}</span><span class="nm">Obtainable only</span></div>
-    <div class="sec">Vendor</div>${vrows || `<div class="fr"><span class="nm" style="color:var(--fg-faint)">${S.discBusy ? 'loading…' : 'nothing to discover'}</span></div>`}
+    <div class="sec">Vendor</div>${vrows || `<div class="fr"><span class="nm" style="color:var(--fg-faint)">${S.discBusy ? spinner('loading…') : 'nothing to discover'}</span></div>`}
     </div>
     <div class="note">Everything here is in the community registry because someone owns it. Previews live on the vendor's page — that's where Get goes.</div>
   </div>`;
@@ -805,7 +915,7 @@ function setupColumn() {
   const secs = [['sources', 'Sources', S.locations.length], ['devices', 'Devices', S.devices.length], ['storage', 'Cards & storage', S.storages.length], ['rules', 'Classification rules', null]];
   const rows = secs.map(([id, lbl, cnt]) => `<div class="fr" data-act="setup-sec" data-id="${id}"><span class="nm">${lbl}</span>${cnt != null ? `<span class="n">${n(cnt)}</span>` : ''}</div>`).join('');
   const u = S.upd, r = (u && u.remote) || {};
-  const upd = S.updBusy || S.updMsg ? `<div class="fr"><span class="nm" style="color:var(--amber)">${esc(S.updMsg || 'updating…')}</span></div>`
+  const upd = S.updBusy || S.updMsg ? `<div class="fr"><span class="nm" style="color:var(--amber)">${S.updBusy ? spinner(esc(S.updMsg || 'updating…')) : esc(S.updMsg)}</span></div>`
     : u && u.available ? `<div class="fr amber" data-act="upd-apply" title="${esc(r.sha || '')} · ${esc(r.subject || '')}"><span class="nm">Update</span><span class="n" style="color:var(--amber)">→ ${esc((r.sha || '').slice(0, 7))}</span></div>`
     : `<div class="fr" style="cursor:default"><span class="nm" style="color:var(--fg-faint)">Updates</span><span class="n">${u ? 'up to date' : ''}</span></div>`;
   const ws = S.summary ? S.summary.workspace : '';
@@ -825,10 +935,10 @@ function statusbar() {
   const u = S.upd;
   const build = u ? `build ${u.commit || u.version || '?'}` : '';
   let upd = '';
-  if (S.updBusy || S.updMsg) upd = `<span class="upd">${esc(S.updMsg)}</span>`;
+  if (S.updBusy || S.updMsg) { const d = S.act.tasks.find(o => o.kind === 'update'); upd = `<span class="upd" style="display:inline-flex;align-items:center;gap:7px">${S.updBusy ? '<span class="spin"></span>' : ''}${esc(S.updMsg)}${d && d.total ? ` ${taskPct(d).toFixed(0)}%` : ''}${d ? pbar(taskPct(d)) : ''}</span>`; }
   else if (u && u.available) { const r = u.remote || {}; upd = `<span class="upd" data-act="upd-apply" title="${esc(r.sha || '')} · ${esc(r.subject || '')}">update → ${esc((r.sha || '').slice(0, 7))}</span>`; }
   return `<div class="statusbar"><span>⌘1–5 modes</span><span>⌘\\ column</span><span>L cycle lens</span><span>⌘K search</span>
-    <span class="spacer"></span>${upd}${build ? `<span title="${esc(u.note || (u.available ? 'a newer build is published' : 'up to date'))}">${esc(build)}</span>` : ''}<span>${ann}</span></div>`;
+    <span class="spacer"></span>${activity()}${upd}${build ? `<span title="${esc(u.note || (u.available ? 'a newer build is published' : 'up to date'))}">${esc(build)}</span>` : ''}<span>${ann}</span></div>`;
 }
 
 // the Materialize content header: the recipe, its device and storage, and
@@ -919,7 +1029,7 @@ function renderSamples() {
   const head = `
     <div class="chead">
       <h1>Samples</h1>
-      <span class="sum">${S.samplesBusy ? 'searching…' : d ? `${n(d.total)} match${d.total === 1 ? '' : 'es'}${d.total > d.shown ? ` · showing ${n(d.shown)}` : ''}` : ''}</span>
+      <span class="sum">${S.samplesBusy ? spinner('searching…') : d ? `${n(d.total)} match${d.total === 1 ? '' : 'es'}${d.total > d.shown ? ` · showing ${n(d.shown)}` : ''}` : ''}</span>
       ${filterPill()}
       <span class="spacer"></span>
       <div class="seg"><span data-act="samples-off">Packs</span><span class="on">Samples</span></div>
@@ -927,7 +1037,7 @@ function renderSamples() {
   if (!S.fInst && !S.fKey && !S.fBpm && !S.fCat && !S.search) {
     return head + `<div style="font:400 12px var(--sans);color:var(--fg-faint);padding:28px 20px;line-height:1.7">Pick an instrument, a category, a key or a BPM on the left — or type a name above.<br><span style="color:var(--fg-ghost)">Only what the vendor labelled is searchable; unlabelled samples never match rather than being guessed at.</span></div>`;
   }
-  if (S.samplesBusy && !d) return head + `<div style="font:400 11px var(--mono);color:var(--fg-faint);padding:20px">searching…</div>`;
+  if (S.samplesBusy && !d) return head + `<div style="padding:20px">${spinner('searching…')}</div>`;
   if (!d || !d.samples.length) {
     return head + `<div style="font:400 11.5px var(--mono);color:var(--fg-faint);padding:24px;line-height:1.7">
       nothing matches.<br><span style="color:var(--fg-ghost)">only what the vendor labelled is searchable — unlabelled samples never match rather than being guessed at.</span></div>`;
@@ -1104,12 +1214,12 @@ function renderDiscover() {
   const head = `
     <div class="chead">
       <h1>Discover</h1>
-      <span class="sum">${S.discBusy ? 'loading…' : `${n(acq.length)} obtainable${rest.length ? ` · ${n(rest.length)} recognized only` : ''}`}</span>
+      <span class="sum">${S.discBusy ? spinner('matching the library against every vendor…') : `${n(acq.length)} obtainable${rest.length ? ` · ${n(rest.length)} recognized only` : ''}`}</span>
       ${S.discVendor ? `<span class="fchip" data-act="disc-vendor" data-v="${esc(S.discVendor)}">${esc(S.discVendor)}<span class="x">✕</span></span>` : ''}
       <span class="spacer"></span>
       <div class="seg"><span class="${vm === 'grid' ? 'on' : ''}" data-act="vm" data-v="grid">Grid</span><span class="${vm === 'list' ? 'on' : ''}" data-act="vm" data-v="list">List</span></div>
     </div>`;
-  if (S.discBusy && !S.disc) return head + `<div style="font:400 11px var(--mono);color:var(--fg-faint);padding:20px">loading…</div>`;
+  if (S.discBusy && !S.disc) return head + `<div style="padding:20px">${spinner('matching the library against every vendor…')}</div>`;
   const list = (rows, ghost) => vm === 'list'
     ? `<div class="lcols disc"><span></span><span>Pack</span><span>Vendor</span><span>Price</span><span>License</span><span class="hide-narrow">Listed</span><span></span></div>${rows.map(r => discRow(r, ghost)).join('')}`
     : `<div class="grid">${rows.map(r => discCard(r, ghost)).join('')}</div>`;
@@ -1211,7 +1321,7 @@ function renderPackDetail() {
     : po.slug ? '' : `<div style="font:400 11.5px var(--mono);color:var(--fg-faint)">no annotation for this source — folder indexed from ${esc(po.location)}</div>`;
   const urlChip = po.url ? `<a href="${esc(po.url)}" target="_blank" title="${esc(po.url)}" style="font:600 10.5px var(--sans);color:var(--teal);border:1px solid rgba(61,196,207,.35);border-radius:4px;padding:2px 9px;text-decoration:none">product page ↗</a>` : '';
 
-  let body = `<div style="font:400 11px var(--mono);color:var(--fg-faint);padding:20px">loading…</div>`;
+  let body = `<div style="padding:20px">${spinner('reading the folder…')}</div>`;
   if (pd) {
     const more = pd.total > pd.shown ? `<div style="font:400 10.5px var(--mono);color:var(--fg-faint);padding:8px 12px">… and ${n(pd.total - pd.shown)} more in this folder</div>` : '';
     body = `<div class="pd-grid"><div style="min-width:0;display:flex;flex-direction:column">${fileTable(pd.files || [])}${more}</div></div>`;
@@ -1413,7 +1523,7 @@ function renderSources() {
   const rows = S.locations.map(l => {
     const sc = S.scans[l.name];
     const running = sc && sc.status === 'running';
-    const prog = running && sc.total ? ` ${n(sc.done)}/${n(sc.total)} ${esc(sc.stage || '')}` : '';
+    const prog = running ? (sc.total ? ` · ${esc(sc.stage || '')} ${n(sc.done)}/${n(sc.total)}` : sc.stage ? ` · ${esc(sc.stage)}` : '') + (sc.started ? ' · ' + since(sc) : '') : '';
     const when = l.scanned ? new Date(l.scanned).toLocaleString() : 'never scanned';
     return `<div style="display:flex;align-items:center;gap:12px;background:var(--bg-card);border:1px solid ${l.stale ? 'rgba(224,182,79,.3)' : 'var(--bord-card)'};border-radius:6px;padding:11px 13px">
       <div style="min-width:0;flex:1;display:flex;flex-direction:column;gap:3px">
@@ -1425,12 +1535,13 @@ function renderSources() {
         </div>
         <span style="font:400 10.5px var(--mono);color:var(--fg-faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(l.root)}</span>
         <span style="font:400 10.5px var(--mono);color:var(--fg-faint)">${n(l.files)} files${l.docs ? ' · ' + n(l.docs) + ' Live documents' : ''} · scanned ${esc(when)}</span>
+        ${running ? pbar(sc.total ? Math.min(100, sc.done / sc.total * 100) : null) : ''}
       </div>
       <select data-act="rescan" data-l="${esc(l.name)}" style="font:500 10.5px var(--mono);color:var(--fg-dim);background:var(--bg-raise);border:1px solid var(--bord-raise);border-radius:4px;padding:3px 6px">
         ${RESCANS.map(([v, lbl]) => `<option value="${v}" ${(l.rescan || 'manual') === v ? 'selected' : ''}>${lbl}</option>`).join('')}
       </select>
       ${running
-        ? `<span style="font:500 11px var(--mono);color:var(--amber);white-space:nowrap;min-width:120px;text-align:right">scanning${prog}</span>`
+        ? `<span style="font:500 11px var(--mono);color:var(--amber);white-space:nowrap;min-width:120px;text-align:right;display:inline-flex;align-items:center;gap:7px;justify-content:flex-end"><span class="spin"></span>scanning${prog}</span>`
         : `<span class="restore-btn" data-act="scan" data-l="${esc(l.name)}">rescan</span>`}
     </div>`;
   }).join('');
@@ -1505,7 +1616,11 @@ function renderSources() {
 function annDerived(ann) {
   if (!ann.version) return '';
   const st = 'font:400 10px var(--mono);';
-  if (ann.reharvesting) return `<span style="${st}color:var(--amber)">classifications refreshing under this build…</span>`;
+  if (ann.reharvesting || S.act.reharvesting) {
+    const t = S.act.tasks.filter(o => o.kind === 'reharvest').pop(), h = S.act.tasks.filter(o => o.kind === 'harvest').pop();
+    const detail = t ? ` · ${esc(t.stage || '')} ${n(t.done + 1)} of ${n(t.total)}${h && h.total ? ` · ${n(h.done)} / ${n(h.total)} files` : ''} · ${since(t)}` : '';
+    return `<span style="${st}color:var(--amber)">${spinner('classifications refreshing under this build' + detail)}</span>`;
+  }
   if (!ann.meta_build) return `<span style="${st}color:var(--fg-faint)">classifications not derived yet — rescan all</span>`;
   if (ann.meta_build === ann.version) return `<span style="${st}color:var(--fg-faint)">classifications derived by this build</span>`;
   return `<span style="${st}color:var(--warn)">classifications derived by build ${esc(ann.meta_build)}, not this one — rescan all</span>`;
@@ -1802,7 +1917,7 @@ function renderRecipe() {
 
   if (!S.view) return matHead() + `<div style="font:400 12px var(--sans);color:var(--fg-faint);padding:28px 20px">${S.views.length ? 'Pick a recipe on the left.' : 'No recipes yet — press + on the left to make one.'}${nrForm ? '' : ''}</div>` + (nr ? `<div style="padding:0 20px">${nrForm}</div>` : '');
   if (!pf || pf.error || !pf.rules) return matHead() + `<div class="recipe-grid"><div class="recipe-left">${head}
-    <div style="font:400 11px var(--mono);color:${pf && pf.error ? 'var(--warn)' : 'var(--fg-faint)'};padding:24px 4px">${pf && pf.error ? 'plan failed: ' + esc(pf.error) : esc(pfProgressLabel())}</div></div>
+    <div style="font:400 11px var(--mono);color:${pf && pf.error ? 'var(--warn)' : 'var(--fg-faint)'};padding:24px 4px">${pf && pf.error ? 'plan failed: ' + esc(pf.error) : pfProgressBlock()}</div></div>
     <div class="preflight"></div></div>`;
 
   // The recipe as vendors, not as [[include]] blocks. S.rModel is what the
@@ -1880,7 +1995,7 @@ function renderRecipe() {
         <span style="font:400 11px var(--mono);color:var(--fg-faint)">${esc(pf.storage)} · ${fmtB(cap)}</span>
         <div style="flex:1"></div>
         <span style="font:700 12px var(--mono);color:${fitColor}">${fitLabel}</span>
-        ${S.pfBusy ? `<span style="font:400 11px var(--mono);color:var(--fg-faint)">${esc(pfProgressLabel())}</span>` : ''}
+        ${S.pfBusy ? spinner(esc(pfProgressLabel())) : ''}
       </div>
       <div class="meter">
         <div class="fill" style="width:${fillPct}%"></div>
@@ -1941,10 +2056,10 @@ function renderRun() {
       <span style="font:500 11px var(--mono);color:var(--fg-faint)">${esc(r.view || S.view || '')} · lock is written only on success</span>
     </div>
     <div style="font:400 11px var(--sans);color:var(--fg-faint);margin-bottom:16px">${sub}</div>
-    <div class="runbar"><div class="fill" style="width:${pct}%"></div></div>
-    <div style="display:flex;font:500 11px var(--mono);color:var(--fg-dim);margin-bottom:16px">
-      <span>${n(r.count)} of ${n(r.total)} files</span><div style="flex:1"></div>
-      <span style="color:var(--fg-faint)">${running ? 'running · ' + elapsed(r.started) : isDone ? 'finished' : ''}</span>
+    <div class="runbar${running && !r.count ? ' indet' : ''}"><div class="fill" style="width:${pct}%"></div></div>
+    <div style="display:flex;font:500 11px var(--mono);color:var(--fg-dim);margin-bottom:16px;align-items:center;gap:8px">
+      ${running ? '<span class="spin"></span>' : ''}<span>${n(r.count)} of ${n(r.total)} files${running && r.total ? ` · ${pct.toFixed(0)}%` : ''}</span><div style="flex:1"></div>
+      <span style="color:var(--fg-faint)">${running ? runPace(r) : isDone ? 'finished' : ''}</span>
     </div>
     <div class="stat-grid">
       <div class="stat"><div class="v">${n(isDone ? r.written - r.resumed : r.count)}</div><div class="l">${isDone ? 'rendered' : 'processed'}</div></div>
@@ -1964,6 +2079,21 @@ function renderRun() {
 }
 
 const elapsed = (t) => t ? Math.round((Date.now() - new Date(t).getTime()) / 1000) + 's' : '';
+// "running · 2m04s · 41 files/s · ~3m left" — the rate is the whole run's,
+// so it settles rather than flickers; the estimate is honest about that
+function runPace(r) {
+  const secs = r.started ? (Date.now() - new Date(r.started).getTime()) / 1000 : 0;
+  let out = 'running · ' + since({ started: r.started });
+  if (secs > 3 && r.count > 0) {
+    const rate = r.count / secs;
+    out += ` · ${rate >= 10 ? rate.toFixed(0) : rate.toFixed(1)} files/s`;
+    if (r.total > r.count) {
+      const left = (r.total - r.count) / rate;
+      out += ` · ~${left < 90 ? Math.round(left) + 's' : Math.round(left / 60) + 'm'} left`;
+    }
+  }
+  return out;
+}
 
 /* ---------- cards ---------- */
 
@@ -1980,7 +2110,7 @@ function renderCards() {
     </div>`).join('');
 
   let stale = '';
-  if (S.diffBusy) stale = `<div style="font:400 11px var(--mono);color:var(--fg-faint);margin:10px 0">computing staleness…</div>`;
+  if (S.diffBusy) stale = `<div style="margin:10px 0">${spinner('comparing the lock against the library…')}</div>`;
   else if (S.diff && S.diff.diff) {
     const d = S.diff.diff;
     const counts = [(d.added || []).length, (d.deselected || []).length, (d.gone_from_source || []).length, (d.content_drift || []).length, (d.new_transform || []).length];
@@ -2287,7 +2417,7 @@ function renderPlanForm() {
 // The plan's verdict and its exits: fit, issues, materialize or migrate.
 function renderVerdict() {
   const pf = S.pf, p = pf && pf.plan;
-  if (!p) return S.pfBusy ? `<div style="font:500 11px var(--mono);color:var(--fg-faint)">${esc(pfProgressLabel())}</div>` : '';
+  if (!p) return S.pfBusy ? pfProgressBlock() : '';
   const fits = p.fits, warnings = p.warnings || [], errors = p.errors || [];
   const fitLabel = !fits ? "WON'T FIT" : (warnings.length || errors.length) ? `FITS · ${warnings.length + errors.length} issues` : 'FITS · clean';
   const fitColor = !fits ? 'var(--err)' : (warnings.length || errors.length) ? 'var(--warn)' : 'var(--green)';
@@ -2334,7 +2464,7 @@ function renderPlan() {
         <div class="n">${n(r.count)}</div>
         <div><span class="pl-tag ${r.kind}">${KIND_LABEL[r.kind] || r.kind}</span></div>
       </div>`).join('') + (pl.q.total_rows > rows.length ? `<div style="font:400 10.5px var(--mono);color:var(--fg-faint);padding:8px 10px">… ${n(pl.q.total_rows - rows.length)} more folders — decide these first</div>` : '')
-      : `<div style="font:400 11.5px var(--sans);color:var(--fg-faint);padding:24px 10px">${(S.pf && S.pf.error) ? 'plan failed: ' + esc(S.pf.error) : (pl.q && pl.q.error) ? esc(pl.q.error) : (pl.busy || S.pfBusy) ? 'building the plan…' : 'nothing waiting — every file the layout reads has a place'}</div>`;
+      : `<div style="font:400 11.5px var(--sans);color:var(--fg-faint);padding:24px 10px">${(S.pf && S.pf.error) ? 'plan failed: ' + esc(S.pf.error) : (pl.q && pl.q.error) ? esc(pl.q.error) : (pl.busy || S.pfBusy) ? (S.pfBusy ? pfProgressBlock() : spinner('reading the queues…')) : 'nothing waiting — every file the layout reads has a place'}</div>`;
   } else {
     const t = pl.tree && Array.isArray(pl.tree.dirs) && Array.isArray(pl.tree.files) ? pl.tree : null;
     const parts = pl.prefix ? pl.prefix.split('/') : [];
@@ -2358,7 +2488,7 @@ function renderPlan() {
       <div class="pl-files" data-scroll>${files.map((f, i) => `<div class="pl-file ${pl.file === f ? 'on' : ''}" data-act="pl-qfile" data-i="${i}">
           <span class="play-btn" data-act="pl-play" data-path="${esc(f.source_path)}" data-loc="${esc(f.location)}">${S.player && S.player.path === f.source_path && S.player.playing ? '❚❚' : '▶'}</span>
           <span class="nm" title="${esc(f.source_path)}">${esc(f.name)}</span><span class="fm">${esc(f.instrument || '—')} · ${esc(f.category || '—')}</span>
-        </div>`).join('') || `<div style="padding:8px;font:400 10.5px var(--mono);color:var(--fg-faint)">${pl.files ? esc(pl.files.error || 'no files') : 'loading…'}</div>`}</div>
+        </div>`).join('') || `<div style="padding:8px;font:400 10.5px var(--mono);color:var(--fg-faint)">${pl.files ? esc(pl.files.error || 'no files') : spinner('loading…')}</div>`}</div>
       ${pl.file ? whyPanel(pl.file) : ''}
       ${renderPlanForm()}`;
   } else if (pl.file) {
@@ -2469,6 +2599,7 @@ function wire() {
       if (act === 'scan-all') scanAll();
       if (act === 'ann-update') updateAnnotations();
       if (act === 'upd-apply') applyUpdate();
+      if (act === 'act-toggle') { S.actOpen = !S.actOpen; render(); }
       if (act === 'dev-new') { S.devForm = { bit_depth: 16, sample_rate: 44100, channels: 'stereo', mode: 'card', layout: 'mirror', sanitize: true }; S.toast=''; render(); }
       if (act === 'dev-edit') {
         const x = S.devices.find(v => v.name === el.dataset.d);

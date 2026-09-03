@@ -34,6 +34,7 @@ import (
 	"github.com/sleepunit-agents/materialized-tunes/internal/materialize"
 	"github.com/sleepunit-agents/materialized-tunes/internal/plan"
 	"github.com/sleepunit-agents/materialized-tunes/internal/profile"
+	"github.com/sleepunit-agents/materialized-tunes/internal/progress"
 	"github.com/sleepunit-agents/materialized-tunes/internal/resolve"
 	"github.com/sleepunit-agents/materialized-tunes/internal/selfupdate"
 	"github.com/sleepunit-agents/materialized-tunes/internal/version"
@@ -108,6 +109,7 @@ func (s *Server) Handler() http.Handler {
 	static, _ := fs.Sub(assets, "assets")
 	mux.Handle("/", http.FileServer(http.FS(static)))
 	mux.HandleFunc("/api/summary", s.summary)
+	mux.HandleFunc("/api/progress", s.progress)
 	mux.HandleFunc("/api/devices", s.devices)
 	mux.HandleFunc("/api/packs", s.packs)
 	mux.HandleFunc("/api/discover", s.discover)
@@ -203,6 +205,18 @@ func (s *Server) summary(w http.ResponseWriter, _ *http.Request) {
 	jsonOut(w, o)
 }
 
+// progress is everything the process is waiting on right now — the UI
+// polls it and draws a bar or a spinner wherever the wait is felt. It
+// deliberately takes no server lock: a launch decode or a plan build holds
+// s.mu in short bursts, and this must answer while they run.
+func (s *Server) progress(w http.ResponseWriter, _ *http.Request) {
+	seq, tasks := progress.Snapshot()
+	s.mu.Lock()
+	reh := s.reharvesting
+	s.mu.Unlock()
+	jsonOut(w, map[string]any{"seq": seq, "tasks": tasks, "reharvesting": reh, "now": time.Now()})
+}
+
 func (s *Server) devices(w http.ResponseWriter, _ *http.Request) {
 	type dev struct {
 		Name string     `json:"name"`
@@ -254,6 +268,8 @@ func (s *Server) packs(w http.ResponseWriter, r *http.Request) {
 // identities nothing in the catalog matches (SPEC §11.6). Read-only over
 // annotations + catalogs; the client applies the obtainable filter.
 func (s *Server) discover(w http.ResponseWriter, _ *http.Request) {
+	task := progress.Start("discover", "matching the library against every vendor")
+	defer task.End()
 	rows, err := browse.Discover(s.ws)
 	if err != nil {
 		jsonErr(w, 500, err)
@@ -338,9 +354,12 @@ func (s *Server) materialize(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 
 	go guard("materialize", func() {
+		task := progress.Start("run", "writing "+req.View).Units("files").Set("", 0, int64(len(p.Entries)))
+		defer task.End()
 		// context.Background, NOT the request context: the POST returns
 		// immediately and its context dies with it — the run must not.
 		out, err := materialize.Materialize(context.Background(), s.ws, p, target, func(count, total int) {
+			task.Set("", int64(count), int64(total))
 			s.mu.Lock()
 			rs.Count, rs.Total = count, total
 			s.mu.Unlock()
@@ -419,8 +438,11 @@ func (s *Server) migrateRun(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 
 	go guard("migrate", func() {
+		task := progress.Start("run", "migrating "+req.View).Units("files").Set("", 0, int64(mg.Work()))
+		defer task.End()
 		// context.Background, NOT the request context — see materialize
 		out, err := materialize.Migrate(context.Background(), s.ws, l, p, mg, target, func(count, total int) {
+			task.Set("", int64(count), int64(total))
 			s.mu.Lock()
 			rs.Count, rs.Total = count, total
 			s.mu.Unlock()

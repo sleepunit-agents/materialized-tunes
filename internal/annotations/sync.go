@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/sleepunit-agents/materialized-tunes/internal/proc"
+	"github.com/sleepunit-agents/materialized-tunes/internal/progress"
 )
 
 // RepoAPI is where the annotations data lives. Public, code-free, its own
@@ -116,6 +117,8 @@ func syncFrom(ctx context.Context, wsRoot, api string, force bool) SyncResult {
 		migrating = true
 	}
 
+	task := progress.Start("sync", "checking for annotation updates")
+	defer task.End()
 	remote, err := fetchRemoteHead(ctx, api)
 	if err != nil {
 		if empty {

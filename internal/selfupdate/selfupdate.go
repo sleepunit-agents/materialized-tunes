@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sleepunit-agents/materialized-tunes/internal/progress"
 	"github.com/sleepunit-agents/materialized-tunes/internal/version"
 )
 
@@ -318,7 +319,9 @@ func downloadTo(ctx context.Context, url, path string) (string, error) {
 		return "", err
 	}
 	h := sha256.New()
-	_, err = io.Copy(io.MultiWriter(f, h), resp.Body)
+	task := progress.Start("update", "downloading the new build").Units("bytes").Set("", 0, max(resp.ContentLength, 0))
+	defer task.End()
+	_, err = io.Copy(io.MultiWriter(f, h, &countingWriter{task: task, total: max(resp.ContentLength, 0)}), resp.Body)
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
@@ -348,4 +351,16 @@ func fetchSum(ctx context.Context, url, name string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("%s not listed in SHA256SUMS.txt", name)
+}
+
+// countingWriter reports what io.Copy has moved so far.
+type countingWriter struct {
+	task     *progress.Running
+	n, total int64
+}
+
+func (c *countingWriter) Write(p []byte) (int, error) {
+	c.n += int64(len(p))
+	c.task.Set("", c.n, c.total)
+	return len(p), nil
 }

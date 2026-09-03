@@ -20,6 +20,7 @@ import (
 	"github.com/sleepunit-agents/materialized-tunes/internal/annotations"
 	"github.com/sleepunit-agents/materialized-tunes/internal/harvest"
 	"github.com/sleepunit-agents/materialized-tunes/internal/location"
+	"github.com/sleepunit-agents/materialized-tunes/internal/progress"
 	"github.com/sleepunit-agents/materialized-tunes/internal/resolve"
 	"github.com/sleepunit-agents/materialized-tunes/internal/scan"
 	"github.com/sleepunit-agents/materialized-tunes/internal/version"
@@ -77,7 +78,10 @@ func (s *Server) reharvestAll() {
 	s.mu.Lock()
 	s.reharvesting = true
 	s.mu.Unlock()
-	for _, lc := range s.ws.Config.Locations {
+	task := progress.Start("reharvest", "re-deriving classifications").Units("locations")
+	defer task.End()
+	for i, lc := range s.ws.Config.Locations {
+		task.Set(lc.Name, int64(i), int64(len(s.ws.Config.Locations)))
 		if _, err := harvest.Run(s.ws, lc); err != nil { // best-effort; a failed location keeps its old meta
 			log.Printf("re-harvest %s: %v", lc.Name, err)
 		}
@@ -376,6 +380,8 @@ func (s *Server) startScan(name string) error {
 	s.mu.Unlock()
 
 	go guard("scan", func() {
+		task := progress.Start("scan", "scanning "+name).Units("files")
+		defer task.End()
 		// Freshen the annotations checkout before harvest reads it. Throttled
 		// and serialized inside Sync, so concurrent/auto scans stay cheap.
 		annSync := annotations.Sync(context.Background(), s.ws.Root)
@@ -383,12 +389,14 @@ func (s *Server) startScan(name string) error {
 		if err == nil {
 			var res *scan.Result
 			res, err = scan.Run(context.Background(), loc, s.ws.CatalogPath(name), func(stage string, done, total int) {
+				task.Set(stage, int64(done), int64(total))
 				s.mu.Lock()
 				st.Stage, st.Done, st.Total = stage, done, total
 				s.mu.Unlock()
 			})
 			if err == nil {
 				// derive per-file metadata (bpm/key/category) from the fresh catalog
+				task.Set("classifying", 0, 0)
 				harvest.Run(s.ws, lc)
 				if annSync.Changed() {
 					// the pre-scan pull landed new grammar — the other

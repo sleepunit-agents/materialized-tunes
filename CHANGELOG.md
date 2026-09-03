@@ -7,6 +7,38 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.48 — 2026-09-03 (every wait shows itself)
+
+Jonathan, on a fresh start: "I'm still getting kind of hung on loading
+catalog 4/7 … it's obviously going to take time and that's fine. there
+just isn't enough user feedback." So the app now says what it is waiting
+on, everywhere it waits. A process-wide registry (`internal/progress`)
+lists every task in flight — a name, a stage, done/total in a unit, a
+start time — and `GET /api/progress` reports it without touching the
+server lock, so it answers while the decode or the build holds it. The
+things that make you wait register themselves: the catalog decoder
+reports bytes read of the file's size, under the location's name (the
+launch wait was always that decode — an archive drive's catalog is
+hundreds of megabytes); harvest reports files classified; the launch
+re-derive reports locations; scans, plan builds, materialize/migrate,
+discover, the annotations pull and the self-update download all report.
+
+What that looks like: the launch screen is a panel — "Opening the
+library" — with a live bar per catalog (`reading catalog archive · 113
+MiB of 152 MiB · 74% · 2s`) and a receipt line for each one done. The
+statusbar carries an activity segment in every mode: spinner, the newest
+task, a bar, `+N` more; click it for all of them. The plan's placeholder
+is a block — stage, bar, clock — with the decode or classification pass
+it is sitting on nested under it, bytes and all; the stage line names
+the location (`loading catalogs · archive · 4 of 7` counts distinct
+locations now, not include rules). Scan rows get a bar, the stage, and a
+clock. The Write tab's run shows percent, files/s and an estimate. Every
+"loading…" in the app is a spinner with a sentence.
+
+Verified in headless Chromium over a throwaway library with a 152 MiB
+catalog: boot panel, receipts, plan block with the nested decode, scan
+row, statusbar segment, popover, run pace; no console errors.
+
 ## v0.9.47 — 2026-09-03 (double-click the title bar to maximise)
 
 Jonathan, on the frameless Windows window: "double clicking the title

@@ -17,6 +17,7 @@ import (
 	"github.com/sleepunit-agents/materialized-tunes/internal/catalog"
 	"github.com/sleepunit-agents/materialized-tunes/internal/plan"
 	"github.com/sleepunit-agents/materialized-tunes/internal/profile"
+	"github.com/sleepunit-agents/materialized-tunes/internal/progress"
 	"github.com/sleepunit-agents/materialized-tunes/internal/resolve"
 	"github.com/sleepunit-agents/materialized-tunes/internal/workspace"
 )
@@ -28,7 +29,7 @@ type Row struct {
 	Name       string `json:"name"` // display name: annotated pack name, else the pack's own directory name
 	Vendor     string `json:"vendor,omitempty"`
 	VendorSlug string `json:"vendor_slug,omitempty"` // set when the row resolved against an annotated vendor
-	Tier       string `json:"tier"` // "vendor" (annotations) | "docs" (art/about shipped in the pack) | "top-level-dirs" (honest fallback)
+	Tier       string `json:"tier"`                  // "vendor" (annotations) | "docs" (art/about shipped in the pack) | "top-level-dirs" (honest fallback)
 
 	Slug          string   `json:"slug,omitempty"`
 	URL           string   `json:"url,omitempty"`
@@ -73,10 +74,13 @@ func Rows(ws *workspace.Workspace, dev *profile.Device, location string) ([]Row,
 	bySlug := annotations.BySlug(vendors)
 
 	var rows []Row
-	for _, lc := range ws.Config.Locations {
+	task := progress.Start("library", "indexing the library").Units("locations")
+	defer task.End()
+	for i, lc := range ws.Config.Locations {
 		if location != "" && lc.Name != location {
 			continue
 		}
+		task.Set(lc.Name, int64(i), int64(len(ws.Config.Locations)))
 		entries, err := catalog.Load(ws.CatalogPath(lc.Name))
 		if err != nil {
 			return nil, err

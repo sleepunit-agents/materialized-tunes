@@ -12,6 +12,7 @@ import (
 
 	"github.com/sleepunit-agents/materialized-tunes/internal/lock"
 	"github.com/sleepunit-agents/materialized-tunes/internal/plan"
+	"github.com/sleepunit-agents/materialized-tunes/internal/progress"
 	"github.com/sleepunit-agents/materialized-tunes/internal/view"
 )
 
@@ -104,7 +105,10 @@ func (s *Server) planEndpoint(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 
 	go guard("plan build", func() {
+		task := progress.Start("plan", "planning "+req.View).Set(plan.StageLoad, 0, 0)
+		defer task.End()
 		a, err := s.buildArtifact(v, disabled, key, in, func(stage string, done, total int) {
+			task.Set(stage, int64(done), int64(total))
 			s.mu.Lock()
 			pr.Stage, pr.Count, pr.Total = stage, done, total
 			s.mu.Unlock()

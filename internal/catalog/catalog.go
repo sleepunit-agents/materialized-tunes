@@ -10,12 +10,15 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/sleepunit-agents/materialized-tunes/internal/ableton"
 	"github.com/sleepunit-agents/materialized-tunes/internal/audio"
+	"github.com/sleepunit-agents/materialized-tunes/internal/progress"
 )
 
 type Entry struct {
@@ -117,8 +120,20 @@ func read(path string) (map[string]Entry, error) {
 	}
 	defer f.Close()
 
+	// The decode is the wait the user sees on a fresh launch — an archive
+	// drive's catalog runs to hundreds of megabytes — so it reports bytes
+	// as they go by, under the location's name, for whoever is watching.
+	var size int64
+	if st, err := f.Stat(); err == nil {
+		size = st.Size()
+	}
+	name := strings.TrimSuffix(filepath.Base(path), ".jsonl")
+	task := progress.Start("catalog", "reading catalog "+name).Units("bytes").Set("", 0, size)
+	defer task.End()
+	cr := &countingReader{r: f, task: task, total: size}
+
 	entries := map[string]Entry{}
-	dec := json.NewDecoder(bufio.NewReaderSize(f, 256*1024))
+	dec := json.NewDecoder(bufio.NewReaderSize(cr, 256*1024))
 	line := 0
 	for {
 		var e Entry
@@ -132,6 +147,25 @@ func read(path string) (map[string]Entry, error) {
 		}
 		entries[e.Path] = e
 	}
+}
+
+// countingReader reports bytes read to a task, once per megabyte — the
+// reader is behind a 256K buffer, so this is a few stores per second.
+type countingReader struct {
+	r           io.Reader
+	task        *progress.Running
+	n, reported int64
+	total       int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	if c.n-c.reported >= 1<<20 || err != nil {
+		c.reported = c.n
+		c.task.Set("", c.n, c.total)
+	}
+	return n, err
 }
 
 // Write persists entries sorted by path, atomically.
