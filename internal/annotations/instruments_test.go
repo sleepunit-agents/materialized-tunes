@@ -50,7 +50,13 @@ category = "loops"
 [[instrument]]
 id = "drums"
 family = "drums"
-aliases = ["drum", "drums", "kit", "kits"]
+aliases = ["drum", "drums", "drum kit"]
+
+[[instrument]]
+id = "drums"
+family = "drums"
+aliases = ["kit", "kits"]
+category = "one-shots"
 
 [[instrument]]
 id = "upright-bass"
@@ -227,6 +233,13 @@ func TestInstrumentCategoryGate(t *testing.T) {
 		{"unknown category leaves it alone", "", "Beat 03", []string{"Misc"}, "break"},
 		// a multisample can't be a break either
 		{"multisample", "multisamples", "Beat C3", nil, "drums"},
+		// the catch-all's own scoped word has no family to fall back on: a
+		// kit of loops is a construction kit, and each stem reads its name
+		{"a kit of hits is a drum kit", "one-shots", "Blip A", []string{"Kits", "Hard Glitch Kit"}, "drums"},
+		{"a kit of loops names nothing", "loops", "NW_ND2_110_bass_cyberpunk_Abmaj", []string{"music_loops", "NW_ND2_110_kit_cyberpunk_Abmaj"}, "bass"},
+		{"a kit of loops with a nameless stem", "loops", "NW_ND2_110_cyberpunk_Abmaj", []string{"music_loops", "NW_ND2_110_kit_cyberpunk_Abmaj"}, ""},
+		{"drum kit spelled out stands in any category", "loops", "Loop 01", []string{"Drum Kit"}, "drums"},
+		{"unknown category keeps kit as drums", "", "Loop 01", []string{"Kit 03"}, "drums"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -236,7 +249,11 @@ func TestInstrumentCategoryGate(t *testing.T) {
 			}
 		})
 	}
-	// a vendor block naming the gated id inherits the gate
+	// a vendor block naming a gated id inherits the FIRST entry's gate:
+	// break is scoped on both of its entries, drums only on its second
+	if got, _ := lx.ResolveIn("loops", "KT 01", []string{"Misc"}, []Instrument{{ID: "drums", Aliases: []string{"kt"}}}); got != "drums" {
+		t.Errorf("vendor alias of drums on a loop: got %q, want drums (the main entry is unscoped)", got)
+	}
 	vendor := []Instrument{{ID: "break", Aliases: []string{"brk"}}}
 	if got, _ := lx.ResolveIn("one-shots", "BRK 01", []string{"Misc"}, vendor); got != "drums" {
 		t.Errorf("vendor alias of a gated id on a one-shot: got %q, want drums", got)

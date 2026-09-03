@@ -33,8 +33,14 @@ type Instrument struct {
 	// there the word is a title ("Beat" is a kit's name, "Break Chop" is
 	// a hit cut from a break) — it speaks only for its family, through
 	// the family's catch-all entry, and every lower entry gets its turn.
-	// Empty means the word describes a sound whatever its length, which
-	// is nearly every entry. Shared-lexicon-only, like split and display.
+	// On the catch-all's OWN word the demotion has nowhere to go, so the
+	// word is silent instead: "kit" is the drums catch-all's word for a set
+	// of hits, and a kit that is already loops is a construction kit — a
+	// song's stems — which names no family at all; each stem reads its own
+	// name. Empty means the word describes a sound whatever its length,
+	// which is nearly every entry. Shared-lexicon-only, like split and
+	// display; where an id has several entries, overrides inherit the
+	// first's.
 	Category string `toml:"category" json:"category,omitempty"`
 	// Split exempts one entry from its family's flat rendering: the family
 	// stays flat for everything else, this instrument keeps its own folder.
@@ -165,7 +171,7 @@ func (lx *Lexicon) compile() {
 		if ins.Display != "" {
 			lx.display[ins.ID] = ins.Display
 		}
-		if ins.Category != "" {
+		if ins.Category != "" && lx.category[ins.ID] == "" {
 			lx.category[ins.ID] = ins.Category
 		}
 	}
@@ -293,8 +299,10 @@ func (lx *Lexicon) match(segment string, vendorFirst []Instrument, category stri
 	}
 	for i, ins := range lx.Instruments {
 		if w, ok := hit(pad, lx.patterns[i], lx.avoids[i]); ok {
-			if lx.gated(ins.ID, category) {
-				note(ins.Family, w)
+			if gatedEntry(ins, category) {
+				if ins.ID != ins.Family { // a catch-all's own word has no family to fall back on
+					note(ins.Family, w)
+				}
 				continue
 			}
 			return ins.ID, ins.Family, i, Source{Tier: TierLexicon, Word: w}
@@ -311,8 +319,10 @@ func (lx *Lexicon) match(segment string, vendorFirst []Instrument, category stri
 	}
 	for i, ins := range lx.Instruments {
 		if w, ok := hit(pad, lx.codes[i], lx.avoids[i]); ok {
-			if lx.gated(ins.ID, category) {
-				note(ins.Family, w)
+			if gatedEntry(ins, category) {
+				if ins.ID != ins.Family { // a catch-all's own word has no family to fall back on
+					note(ins.Family, w)
+				}
 				continue
 			}
 			return ins.ID, ins.Family, i, Source{Tier: TierLexiconCode, Word: w}
@@ -326,10 +336,17 @@ func (lx *Lexicon) match(segment string, vendorFirst []Instrument, category stri
 	return "", "", 0, Source{}
 }
 
-// gated reports whether an instrument's word is ruled out on a file of the
-// given category: the shared entry names a category of its own and the
-// file is known to be a different one. Vendor and pack overrides carry no
-// category; they inherit the shared entry's by id.
+// gatedEntry reports whether a shared entry's word is ruled out on a file
+// of the given category: the entry names a category of its own and the
+// file is known to be a different one. Each entry carries its own — an id
+// may have several entries, and only one of them may be scoped ("kit" is a
+// one-shots word for drums; "drum" is not).
+func gatedEntry(ins Instrument, category string) bool {
+	return category != "" && ins.Category != "" && ins.Category != category
+}
+
+// gated is gatedEntry for a vendor or pack override, which carries no
+// category of its own and inherits the first shared entry's by id.
 func (lx *Lexicon) gated(id, category string) bool {
 	if category == "" {
 		return false

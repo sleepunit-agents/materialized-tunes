@@ -7,6 +7,40 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.43 — 2026-09-02 (a kit of loops is a construction kit, and names nothing)
+
+Jonathan, on Night Drive 2's `loops/music_loops`: "there are also a
+couple of music loop folders under that same night drive pack, same
+deal." They were wrong in a way the Origin Sound folder was not. Every
+folder there is `NW_ND2_110_kit_cyberpunk_Abmaj` — a song's stems as
+loops, `…_bass_…`, `…_pad_…`, `…_full_…` — and "kit" read as the drums
+catch-all, which is ranked above every bass / synth / keys word in the
+lexicon, so the folder's word outranked each stem's own and all 102
+stems were **Drums/_General/Loops**. The Splice category grammar had
+already learned this shape (90ee83b: `*kit*[0-9][0-9][0-9]*` is loops);
+the instrument side had not.
+
+The lexicon's category gate (`Instrument.Category`, the break rule) said
+a word ruled out by the file's category "speaks only for its family" —
+right for a piece ("Beat" on a one-shot is still drums), meaningless on
+the catch-all's own word, whose family IS the word. Now a catch-all's
+scoped word in the wrong category is **silent**, not demoted: "kit" /
+"kits" move to a second `drums` entry scoped `category = "one-shots"`
+(sample-vendor-annotations), so a kit of hits is a drum kit and a kit of
+loops is a construction kit whose stems read their own names. "drum kit"
+spelled out stays on the unscoped entry. Gating is per entry now (an id
+may carry several, only one scoped); overrides inherit the first entry's
+category by id, as before.
+
+Probed over Jonathan's plan dump (Splice rows, 706 files): 351 move,
+every one `loops · drums` → the stem's word (synth 87, bass 65, arp 52,
+lead 37, pad 27, fx 15, sub 11 …), all inside `music_loops` / `Demo_Kits`
+/ `Songstarters` / `music_kit_loops` folders of Night Drive 1+2,
+Noirspace, Flipped Funk 2, French House 2, Acid House & Rave, 90s Rave,
+Hard Trap, Cr2 Progressive Melodic Techno, Trap'd in Space. House
+listing (166,444 files): 3 move, all Loopmasters `Music Loops` stems
+named `…_Kit_…` (`SIG_126_Cm_Kit_7_Pad` → pad). Nothing else.
+
 ## v0.9.42 — 2026-09-02 (the correction form's note box no longer looks like a verdict)
 
 Jonathan, on the Octatrack's `Origin Sound/Music Loops/Melody`: "your
