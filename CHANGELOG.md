@@ -7,6 +7,68 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.45 — 2026-09-03 (the shell: three modes on a rail, not four steps — redesign P1)
+
+Jonathan ran the app through Claude Design and dropped the handoff
+(`docs/redesign-2026-09-03/`: the README is the spec, `board.dc.html`
+the options board). "You've gotten us a seriously useful, functional
+app so I figured we'd take another stab at making it pretty like a
+product too." This is the first of five cuts — the shell — and every
+existing screen keeps working inside it.
+
+- **Three modes, not steps.** The 1-2-3-4 strip (§19.1, v0.9.20) is
+  gone. An icon rail (52px) carries Library · Discover · Materialize ·
+  Fix, the lens box and Setup; ⌘1–5 switch modes, `L` still cycles the
+  lens. The mode is derived from what the app already tracked
+  (`S.screen` + `S.discover`), so nothing that set a screen had to
+  change.
+- **A contextual column (216px) next to the rail**, ⌘\ folds it. In
+  Library it is the filters — lens, vendor, category (with the Unsorted
+  count in amber, a link into Fix), instrument, key · bpm — replacing
+  the chip row and the `Find` bar; folded, a `Filters ›` pill carries the
+  count and the active filters as removable chips. In pack detail it is
+  the folder tree and the source box. In Discover, the show/vendor
+  facets. In Materialize, the recipes (`device → storage · rules`) with
+  `+` and History. In Fix, the scope and the queues with counts, and the
+  local-annotations box with Export. In Setup, the section index, the
+  update chip, and the workspace box.
+- **Materialize = one recipe, three tabs.** Select (the recipe), Write
+  (the run; gated exactly as step 4 was), History (locks). The recipe's
+  own header — name, device chip, storage chip, Edit — replaces the
+  select-and-buttons row. The old Cards left pane is retired; the column
+  is the recipe list.
+- **Plan is Fix.** Same review surface (§19.2), its own rail slot with
+  the waiting count (green ✓ at zero), no longer a gate between Recipe
+  and Materialize.
+- **Library has a list view** (default) beside the grid: art · pack ·
+  vendor · files · size, and with a lens on, `<device> files` ·
+  `<device> size` in teal. Discover gets the same two views; its list row
+  is price · license · what the vendor lists · Get. Both remembered per
+  mode.
+- **A frameless window on Windows.** The page draws the 40px title bar
+  (logo, name, the search field, — ▢ ✕) as the drag region; the native
+  menu, whose only Windows job was Ctrl+1–4, is dropped there (the keys
+  moved into the page). macOS keeps its traffic lights and menus; Linux
+  keeps the native frame (WebKitGTK frameless loses edge resizing).
+  Search moved into the title bar — global; typing in another mode
+  lands you in Library.
+- **Fonts are bundled** (Archivo, JetBrains Mono — OFL, latin subsets,
+  ~34 KB each). The app pulled them from Google Fonts at runtime and fell
+  back to Segoe offline.
+- **Fixed on the way:** the History screen re-fetched locks and the
+  diff on *every* render while a recipe had no lock yet (empty list read
+  as "not loaded") — a tight loop against the server for as long as the
+  screen was open.
+
+Deviations from the handoff, decided here: frameless is Windows-only
+(it said all platforms); "Hear it as <device>" waits for a transcode
+preview; add-to-recipe's fit consequence will be arithmetic on
+`converted_bytes`, not a dry-run plan per recipe; labels floor at 10px.
+Next cuts: dialogs + Setup cards + first run (t-382), the Materialize
+tabs proper with the stacked pre-flight (t-383), the Fix inbox with the
+listen table and docked player (t-384), ⌘K / lens picker / add-to-recipe
+popover (t-385).
+
 ## v0.9.44 — 2026-09-03 (a `[[dir]]` path may name a file — it always said so, it never did)
 
 Jonathan pasted `catalog ls` over Elektron's 25 Octatrack demos, the

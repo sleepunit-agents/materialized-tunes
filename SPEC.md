@@ -1469,6 +1469,21 @@ materialize / migrate buttons live on Plan; Materialize returns with
 *back to the plan*, and the lock history moved behind it as *history &
 diff*.
 
+*Re-cut 2026-09-03 (v0.9.45, redesign P1 — `docs/redesign-2026-09-03/`):*
+the step strip is gone. The shell is three **modes** on an icon rail —
+Library · Discover · Materialize — with Fix and Setup beside them, and a
+contextual column next to the rail (filters, a pack's folders, the
+recipes, the queues, the setup index; ⌘\ folds it). Materialize is one
+recipe at a time with Select · Write · History tabs; Write stays gated
+the way step 4 was (the plan must fit, with no errors, or a run is under
+way). Plan is no longer a step between them: it is **Fix**, the decisions
+inbox, reached from the rail or from the Unsorted count, and writing
+never waits on it — unplaced files land under `_Unsorted/` as before.
+The sequence in the diagram above is still what the API does; the
+screens stopped enforcing it because a tool used every week is not a
+wizard. Windows gets a frameless window with the page's own title bar;
+macOS keeps its traffic lights; Linux keeps the native frame.
+
 ### 19.2 The plan is the review surface
 
 Everything the user wants to see or fix is visible in one artifact: the

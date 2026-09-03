@@ -14,6 +14,12 @@ audio.addEventListener('timeupdate', () => {
 
 const S = {
   screen: 'library',
+  // the shell (redesign P1): the rail's mode is derived from screen +
+  // discover (curMode), so every place that already sets S.screen keeps
+  // working. colOpen = the contextual column; viewMode per mode.
+  colOpen: JSON.parse(localStorage.getItem('mtunes.colOpen') || 'true'),
+  viewMode: Object.assign({ library: 'list', discover: 'list' }, JSON.parse(localStorage.getItem('mtunes.viewMode') || '{}')),
+  samplesOn: false, instMore: false, discVendor: '',
   summary: null, devices: [], packs: [], views: [],
   lens: null,                      // device name or null
   owned: JSON.parse(localStorage.getItem('mtunes.owned') || '{}'),
@@ -77,6 +83,8 @@ async function boot() {
     document.body.classList.add('in-wails');
     // the traffic-light inset is a macOS thing; Windows/Linux keep the OS title bar
     if (/Mac/i.test(navigator.platform)) document.body.classList.add('in-wails-mac');
+    // Windows is the frameless build: the page draws — ▢ ✕ (main.go)
+    if (/Win/i.test(navigator.platform)) document.body.classList.add('in-wails-win');
     // native Recipes menu → jump to that recipe
     window.runtime.EventsOn('open-view', (name) => {
       stopPlayback();
@@ -87,11 +95,10 @@ async function boot() {
     });
     // native Go menu (⌘1–4) → main screens
     window.runtime.EventsOn('open-screen', (k) => {
-      stopPlayback();
-      S.packOpen = null; S.pd = null;
-      S.screen = k;
-      if (k === 'cards') S.locks = [];
-      render();
+      if (k === 'library') setMode('library');
+      else if (k === 'sources') setMode('setup');
+      else if (k === 'plan') setMode('fix');
+      else setMode('materialize', k);
     });
   }
   S.booting = true; render(); // the shell, now — the library fills in when the catalog answers
@@ -247,9 +254,15 @@ function playFile(path, name, dur, location) {
   render();
 }
 
+// locksFor is the recipe the locks on screen belong to. Before it existed,
+// History re-fetched locks + diff on EVERY render while a recipe had no
+// lock yet (empty list → "not loaded" → fetch → render → …): a tight loop
+// against the server for as long as the screen was open (found 2026-09-03,
+// redesign P1).
 async function loadCards() {
   if (!S.views.length) return;
   const v = S.views[S.selCard];
+  S.locksFor = v.name;
   S.locks = await api('/api/locks?view=' + encodeURIComponent(v.name)) || [];
   S.diff = null; S.diffBusy = true; render();
   try { S.diff = await api('/api/diff?view=' + encodeURIComponent(v.name)); } catch (e) { S.diff = null; }
@@ -378,11 +391,13 @@ function renderInner() {
     : screens[S.screen]();
   const focus = focusSnapshot();
   snapshotScroll();
+  const col = column();
+  $app.className = (S.colOpen && col) ? '' : 'col-off';
   $app.innerHTML = `
     ${titlebar()}
-    ${tabbar()}
-    ${bootBanner()}
-    <div class="main" data-view="${esc(viewKey())}">${main}</div>
+    ${rail()}
+    ${col}
+    <div class="main" data-view="${esc(viewKey())}">${bootBanner()}${main}</div>
     ${addToPicker()}
     ${dirPicker()}
     ${statusbar()}
@@ -556,15 +571,268 @@ function openDirPicker(title, start, onPick) {
   dirPickGo(start || '');
 }
 
+/* ---------- the shell (redesign P1, docs/redesign-2026-09-03) ----------
+   Three modes, not steps: Library · Discover · Materialize, with Fix (the
+   decisions inbox) and Setup on the same rail. The mode is derived from
+   what the app already tracks — S.screen and S.discover — so nothing that
+   sets S.screen had to learn a new word. The column beside the rail is
+   contextual: filters, a pack's folders, recipes, queues, or the setup
+   index; ⌘\ folds it away. */
+const MODE_SCREEN = { library: 'library', discover: 'library', materialize: 'recipe', fix: 'plan', setup: 'sources' };
+const MODE_LABEL = { library: 'Library', discover: 'Discover', materialize: 'Materialize', fix: 'Fix', setup: 'Setup' };
+const curMode = () => S.screen === 'sources' ? 'setup' : S.screen === 'plan' ? 'fix'
+  : (S.screen === 'recipe' || S.screen === 'run' || S.screen === 'cards') ? 'materialize'
+  : S.discover ? 'discover' : 'library';
+function setMode(m, screen) {
+  stopPlayback(); S.packOpen = null; S.pd = null; S.lensMenu = false;
+  S.discover = m === 'discover';
+  if (m === 'materialize') S.screen = screen || (['recipe', 'run', 'cards'].includes(S.screen) ? S.screen : 'recipe');
+  else S.screen = MODE_SCREEN[m] || 'library';
+  if (S.screen === 'cards') S.locks = []; S.locksFor = null;
+  if (S.screen === 'plan') { S.pl.q = null; S.pl.tree = null; }
+  if (m === 'discover' && !S.disc) { loadDiscover(); return; }
+  render();
+}
+const persistUI = () => { localStorage.setItem('mtunes.colOpen', JSON.stringify(S.colOpen)); localStorage.setItem('mtunes.viewMode', JSON.stringify(S.viewMode)); };
+const fixCount = () => { const p = S.pf && S.pf.plan; return p ? (p.unsorted || 0) + (p.uncategorized || 0) + (p.general || 0) : null; };
+const short = (x) => x >= 1000 ? (x / 1000).toFixed(1).replace(/\.0$/, '') + 'k' : String(x);
+
 function titlebar() {
-  const s = S.summary;
-  const meta = s ? `${esc(s.workspace.replace(/^\/Users\/[^/]+/, '~'))} · ${s.locations} sources · ${n(s.files)} files · ${fmtB(s.bytes)}` : '…';
-  return `<div class="titlebar"><span class="brand">mtunes</span><span class="meta">${meta}</span></div>`;
+  const win = document.body.classList.contains('in-wails-win') ? `
+    <div class="winctl"><span data-act="win-min" title="minimise">—</span><span data-act="win-max" title="maximise">▢</span><span class="close" data-act="win-close" title="close">✕</span></div>`
+    : `<span style="width:14px;flex:none"></span>`;
+  const ph = S.discover ? 'Search the registry' : sampleMode() ? 'Search sample names' : 'Search packs';
+  return `<div class="titlebar"><span class="logo"></span><span class="brand">Materialized Tunes</span>
+    <span class="spacer"></span>
+    <div class="gsearch"><span class="glyph">⌕</span><input id="search" placeholder="${ph}" value="${esc(S.search)}"><span class="kbd">⌘K</span></div>
+    <span class="spacer"></span>${win}</div>`;
 }
 
-// The screens are steps, not tabs (SPEC §19.1): Library and Setup are
-// places; Recipe → Plan → Materialize happen in that order, and a step
-// is reachable only when the one before it has something to hand over.
+function lensMenu() {
+  if (!S.lensMenu) return '';
+  const ownedDevs = S.devices.filter(d => S.owned[d.name]);
+  const otherDevs = S.devices.filter(d => !S.owned[d.name]);
+  const devRow = (d) => `
+    <div class="row ${S.lens === d.name ? 'picked' : ''}" data-act="pick-lens" data-d="${esc(d.name)}">
+      <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:1px">
+        <span class="dname">${esc(d.name)}</span><span class="dsub">${esc(d.sub)}</span>
+      </div>
+      <span class="star ${S.owned[d.name] ? 'owned' : ''}" data-act="star" data-d="${esc(d.name)}" title="${S.owned[d.name] ? 'in my rig — click to unflag' : 'flag as mine'}">${S.owned[d.name] ? '★' : '☆'}</span>
+    </div>`;
+  return `
+    <div class="menu-veil" data-act="close-menu"></div>
+    <div class="lens-menu">
+      <div class="row ${S.lens ? '' : 'picked'}" data-act="no-lens">
+        <span class="dname" style="flex:1">No lens</span>
+        <span style="font:400 10px var(--mono);color:var(--fg-faint)">whole library</span>
+      </div>
+      <div class="sect">MY DEVICES</div>
+      ${ownedDevs.map(devRow).join('') || '<div style="font:400 10px var(--mono);color:var(--fg-faint);padding:4px 9px">none flagged</div>'}
+      ${!S.onlyOwned && otherDevs.length ? `<div class="sect" style="border-top:1px solid var(--bord);margin-top:5px">OTHER DEVICES</div>${otherDevs.map(devRow).join('')}` : ''}
+      <div class="foot" data-act="only-owned">
+        <span class="ck ${S.onlyOwned ? 'on' : ''}">${S.onlyOwned ? '✓' : ''}</span>
+        <span style="font:500 11px var(--sans);color:var(--fg-dim)">Only show my devices</span>
+      </div>
+      <div class="foot" data-act="mode" data-m="setup" style="border-top:0;padding-top:2px"><span style="font:500 11px var(--sans);color:var(--fg-faint)">Manage devices ›</span></div>
+    </div>`;
+}
+
+function rail() {
+  const m = curMode();
+  const b = (k, ic, lb, extra, title) => `<div class="rb ${m === k ? 'on' : ''}" data-act="mode" data-m="${k}" title="${esc(title)}"><span class="ic">${ic}</span><span class="lb">${lb}</span>${extra || ''}</div>`;
+  const fn = fixCount();
+  const fixBadge = fn == null ? '' : fn ? `<span class="cnt">${short(fn)}</span>` : `<span class="cnt ok">✓</span>`;
+  const lens = `<div class="lensbox"><div class="lens ${S.lens ? 'on' : ''}" data-act="toggle-menu" title="lens — every count and size through one device (L cycles)"><span class="lb">LENS</span><span class="dv">${S.lens ? esc(S.lens.slice(0, 7)) : 'OFF'}</span></div>${lensMenu()}</div>`;
+  return `<div class="rail">
+    ${b('library', '▤', 'LIB', '', 'Library · ⌘1')}
+    ${b('discover', '◎', 'DISC', '', 'Discover — what the registry knows that you don\'t have · ⌘2')}
+    ${b('materialize', '⇥', 'MAT', '', 'Materialize — recipes, writing, history · ⌘3')}
+    ${b('fix', '✎', 'FIX', fixBadge, 'Fix — folders waiting for a decision · ⌘4')}
+    <div class="gap"></div>
+    ${lens}
+    ${b('setup', '⚙', 'SETUP', '', 'Setup — sources, devices, storage, rules · ⌘5')}
+  </div>`;
+}
+
+const colHead = (t, right) => `<div class="ch"><span class="t">${t}</span>${right || ''}<span class="a" data-act="col-toggle" title="hide the column (⌘\\)">‹</span></div>`;
+function column() {
+  if (S.booting) return `<div class="col"></div>`;
+  const m = curMode();
+  if (m === 'library') return S.packOpen ? packColumn() : libraryColumn();
+  if (m === 'discover') return discoverColumn();
+  if (m === 'materialize') return materializeColumn();
+  if (m === 'fix') return fixColumn();
+  if (m === 'setup') return setupColumn();
+  return '';
+}
+
+const activeFilters = () => [
+  S.locFilter && { k: 'loc', label: S.locFilter },
+  S.fCat && { k: 'cat', label: S.fCat },
+  S.fInst && { k: 'inst', label: S.fInst },
+  S.fKey && { k: 'key', label: 'key ' + S.fKey },
+  S.fBpm && { k: 'bpm', label: S.fBpm + ' bpm' },
+].filter(Boolean);
+// the collapsed column's stand-in: a pill with the count, the filters as chips
+function filterPill() {
+  if (S.colOpen) return '';
+  const act = activeFilters();
+  return `<span class="fpill" data-act="col-toggle">Filters ›${act.length ? `<span class="b">${act.length}</span>` : ''}</span>
+    ${act.map(f => `<span class="fchip" data-act="drop-filter" data-k="${f.k}">${esc(f.label)}<span class="x">✕</span></span>`).join('')}`;
+}
+
+function lensBox() {
+  const d = S.lens && S.devices.find(x => x.name === S.lens);
+  return `<div class="box lens" data-act="toggle-menu" title="pick the device every count and size is read through">
+    <span class="bt">Lens</span>
+    <span class="bv">${S.lens ? esc(S.lens) : 'off · whole library'}</span>
+    <span class="bd">${d ? esc(d.sub) : 'pick a device to see what fits it ▾'}</span>
+  </div>`;
+}
+
+function libraryColumn() {
+  const act = activeFilters();
+  const vendors = {};
+  for (const p of S.packs) { const g = packGroup(p); vendors[g] = (vendors[g] || 0) + 1; }
+  const vrows = Object.keys(vendors).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+    .map(v => `<div class="fr ${S.locFilter === v ? 'on' : ''}" data-act="loc" data-l="${esc(v)}"><span class="nm">${esc(v)}</span><span class="n">${n(vendors[v])}</span></div>`).join('');
+  const crows = ['one-shots', 'loops', 'multisamples'].map(c =>
+    `<div class="fr ${S.fCat === c ? 'on' : ''}" data-act="cat" data-v="${c}"><span class="nm">${c}</span></div>`).join('');
+  const fn = fixCount();
+  const unsorted = fn ? `<div class="fr amber" data-act="mode" data-m="fix" title="folders the rules could not place — decide them in Fix"><span class="nm">Unsorted</span><span class="n" style="color:var(--amber)">${n(fn)}</span></div>` : '';
+  // instruments: the counted ones when a search is live, else the lexicon
+  let irows;
+  const counted = S.samples && S.samples.instruments && S.samples.instruments.length ? S.samples.instruments : null;
+  if (counted) {
+    irows = counted.slice(0, S.instMore ? 200 : 14).map(f => `<div class="fr ${S.fInst === f.id ? 'on' : ''}" data-act="f-inst" data-v="${esc(f.id)}"><span class="nm">${esc(f.id)}</span><span class="n">${n(f.count)}</span></div>`).join('');
+    if (counted.length > 14) irows += `<div class="fr" data-act="inst-more"><span class="nm" style="color:var(--fg-faint)">${S.instMore ? 'fewer' : `${counted.length - 14} more…`}</span></div>`;
+  } else {
+    const all = INSTRUMENTS.flatMap(([, ids]) => ids);
+    const shown = S.instMore ? all : all.slice(0, 14);
+    irows = shown.map(i => `<div class="fr ${S.fInst === i ? 'on' : ''}" data-act="f-inst" data-v="${esc(i)}"><span class="nm">${esc(i)}</span></div>`).join('')
+      + `<div class="fr" data-act="inst-more"><span class="nm" style="color:var(--fg-faint)">${S.instMore ? 'fewer' : `${all.length - 14} more…`}</span></div>`;
+  }
+  return `<div class="col">${colHead('Filters', act.length ? `<span class="a" data-act="clear-all-filters">clear</span>` : '')}<div class="cb">
+    ${lensBox()}
+    <div class="sec">Vendor</div>${vrows || '<div class="fr"><span class="nm" style="color:var(--fg-faint)">no packs yet</span></div>'}
+    <div class="sec">Category</div>${crows}${unsorted}
+    <div class="sec">Instrument</div>${irows}
+    <div class="sec">Key · BPM</div>
+    <div class="ci"><input id="f-key" placeholder="Am, C#1" value="${esc(S.fKey)}"><input id="f-bpm" placeholder="120-130" value="${esc(S.fBpm)}"></div>
+  </div></div>`;
+}
+
+function packColumn() {
+  const po = S.packOpen, pd = S.pd;
+  let rows = '';
+  if (pd) {
+    const up = S.pdFolder ? `<div class="fr tree" data-act="pd-up"><span class="nm" style="color:var(--fg-dim)">..</span></div>` : '';
+    const here = S.pdFolder ? `<div class="fr tree on" title="${esc('/' + S.pdFolder)}"><span class="nm">${esc(S.pdFolder.split('/').pop())}/</span></div>` : `<div class="fr tree on"><span class="nm">/</span></div>`;
+    rows = up + here + (pd.folders || []).map(f => `
+      <div class="fr tree" style="--lvl:1" data-act="pd-folder" data-f="${esc(S.pdFolder ? S.pdFolder + '/' + f.name : f.name)}">
+        <span class="nm">${esc(f.name)}/</span><span class="n">${n(f.count)}</span>
+      </div>`).join('');
+  }
+  const nf = pd && pd.folders ? pd.folders.length : null;
+  return `<div class="col">
+    <div class="ch"><span class="a" data-act="close-pack" style="font:600 12px var(--sans);color:var(--fg-dim)">‹ Back to Library</span><span class="t"></span><span class="a" data-act="col-toggle" title="hide the column (⌘\\)">‹</span></div>
+    <div class="cb">
+      <div class="sec">Folders${nf != null ? ` <span style="font-weight:400;letter-spacing:0;text-transform:none">· ${n(nf)}</span>` : ''}</div>
+      ${rows || '<div class="fr"><span class="nm" style="color:var(--fg-faint)">reading…</span></div>'}
+    </div>
+    <div class="foot"><div class="box" style="margin:0">
+      <span class="bt">Source</span>
+      <span class="bv" title="${esc(po.location + ':' + po.dir)}">${esc(po.location)} · ${esc(po.dir)}</span>
+      <span class="bd">${n(po.files)} files · ${fmtB(po.bytes)}${po.slug ? ' · matched by content hash' : ' · not in the registry'}</span>
+    </div></div>
+  </div>`;
+}
+
+function discoverColumn() {
+  const all = S.disc || [];
+  const vendors = {};
+  for (const r of all) if (!S.obtainable || obtainable(r)) vendors[r.vendor] = (vendors[r.vendor] || 0) + 1;
+  const vrows = Object.keys(vendors).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+    .map(v => `<div class="fr ${S.discVendor === v ? 'on' : ''}" data-act="disc-vendor" data-v="${esc(v)}"><span class="nm">${esc(v)}</span><span class="n">${n(vendors[v])}</span></div>`).join('');
+  return `<div class="col">${colHead('Discover', S.discVendor ? `<span class="a" data-act="disc-vendor" data-v="${esc(S.discVendor)}">clear</span>` : '')}<div class="cb">
+    <div class="sec">Show</div>
+    <div class="fr ${S.obtainable ? 'on' : ''}" data-act="obtainable" title="acquirable packs only — flip it off to see the out-of-print tail"><span class="ck ${S.obtainable ? 'on' : ''}">${S.obtainable ? '✓' : ''}</span><span class="nm">Obtainable only</span></div>
+    <div class="sec">Vendor</div>${vrows || `<div class="fr"><span class="nm" style="color:var(--fg-faint)">${S.discBusy ? 'loading…' : 'nothing to discover'}</span></div>`}
+    </div>
+    <div class="note">Everything here is in the community registry because someone owns it. Previews live on the vendor's page — that's where Get goes.</div>
+  </div>`;
+}
+
+function materializeColumn() {
+  const rows = S.views.map((v, i) => `
+    <div class="fr two ${v.name === S.view ? 'on' : ''}" data-act="pick-view" data-v="${esc(v.name)}" data-i="${i}">
+      <div class="row1"><span class="st ${v.name === S.view && S.run.status === 'done' && S.run.view === v.name ? 'green' : ''}"></span><span class="nm">${esc(v.name)}</span></div>
+      <span class="sub">${esc(v.device)} → ${esc(v.storage)} · ${v.rules} ${v.rules === 1 ? 'rule' : 'rules'}</span>
+    </div>`).join('');
+  return `<div class="col">${colHead('Recipes', `<span class="a" data-act="recipe-new" title="new recipe">+</span>`)}<div class="cb">
+    ${rows || '<div class="fr"><span class="nm" style="color:var(--fg-faint)">no recipes yet — press +</span></div>'}
+    </div>
+    <div class="foot"><div class="fr ${S.screen === 'cards' ? 'on' : ''}" data-act="mat-tab" data-k="cards"><span class="nm">History</span><span class="n">${S.locks.length ? n(S.locks.length) + ' locks' : ''}</span></div></div>
+  </div>`;
+}
+
+function fixColumn() {
+  const pl = S.pl, plan = (S.pf && S.pf.plan) || {};
+  const kinds = [['', 'Everything'], ['general', KIND_LABEL.general], ['unsorted', KIND_LABEL.unsorted], ['uncategorized', KIND_LABEL.uncategorized]];
+  const qrows = kinds.map(([k, lbl]) => {
+    const c = k ? (plan[k] || 0) : ((plan.unsorted || 0) + (plan.uncategorized || 0) + (plan.general || 0));
+    return `<div class="fr ${pl.kind === k ? 'on' : ''}" data-act="pl-kind" data-k="${k}"><span class="nm">${esc(lbl)}</span><span class="n">${S.pf ? n(c) : ''}</span></div>`;
+  }).join('');
+  const scope = `<div class="box"><span class="bt">Scope</span>
+    ${S.views.length ? sel('view-pick', S.views.map(v => [v.name, v.name]), S.view) : '<span class="bd">no recipes yet</span>'}
+    <span class="bd">the folders this recipe reads that the rules could not place</span></div>`;
+  const local = pl.local;
+  const ann = `<div class="box" style="margin:0">
+    <span class="bt">Your annotations</span>
+    <span class="bv">${local ? `${n((local.entries || []).length)} decisions · local only` : 'local layer not read yet'}</span>
+    <span class="bd">Want them in the shared registry? Export and attach to a GitHub issue or PR.</span>
+    <div style="display:flex;gap:10px;margin-top:2px"><span class="a" data-act="pl-export">Export file…</span><span class="a" data-act="pl-reconcile" style="color:var(--fg-dim)">Reconcile</span></div>
+  </div>`;
+  return `<div class="col">${colHead('Fix')}<div class="cb">
+    ${scope}
+    <div class="sec">Queues</div>${qrows}
+    </div>
+    <div class="foot">${ann}</div>
+  </div>`;
+}
+
+function setupColumn() {
+  const secs = [['sources', 'Sources', S.locations.length], ['devices', 'Devices', S.devices.length], ['storage', 'Cards & storage', S.storages.length], ['rules', 'Classification rules', null]];
+  const rows = secs.map(([id, lbl, cnt]) => `<div class="fr" data-act="setup-sec" data-id="${id}"><span class="nm">${lbl}</span>${cnt != null ? `<span class="n">${n(cnt)}</span>` : ''}</div>`).join('');
+  const u = S.upd, r = (u && u.remote) || {};
+  const upd = S.updBusy || S.updMsg ? `<div class="fr"><span class="nm" style="color:var(--amber)">${esc(S.updMsg || 'updating…')}</span></div>`
+    : u && u.available ? `<div class="fr amber" data-act="upd-apply" title="${esc(r.sha || '')} · ${esc(r.subject || '')}"><span class="nm">Update</span><span class="n" style="color:var(--amber)">→ ${esc((r.sha || '').slice(0, 7))}</span></div>`
+    : `<div class="fr" style="cursor:default"><span class="nm" style="color:var(--fg-faint)">Updates</span><span class="n">${u ? 'up to date' : ''}</span></div>`;
+  const ws = S.summary ? S.summary.workspace : '';
+  return `<div class="col">${colHead('Setup')}<div class="cb">
+    ${rows}${upd}
+    </div>
+    <div class="foot"><div class="box" style="margin:0">
+      <span class="bt">Workspace</span>
+      <span class="bv" title="${esc(ws)}">${esc(ws.replace(/^\/Users\/[^/]+/, '~'))}</span>
+      <span class="bd">${u ? 'build ' + esc(u.commit || u.version || '?') : ''}${S.summary ? ` · ${S.summary.locations} sources · ${n(S.summary.files)} files · ${fmtB(S.summary.bytes)}` : ''}</span>
+    </div></div>
+  </div>`;
+}
+
+function statusbar() {
+  const ann = S.summary ? `annotations: ${n(S.summary.packs_annotated)} packs known` : '';
+  const u = S.upd;
+  const build = u ? `build ${u.commit || u.version || '?'}` : '';
+  let upd = '';
+  if (S.updBusy || S.updMsg) upd = `<span class="upd">${esc(S.updMsg)}</span>`;
+  else if (u && u.available) { const r = u.remote || {}; upd = `<span class="upd" data-act="upd-apply" title="${esc(r.sha || '')} · ${esc(r.subject || '')}">update → ${esc((r.sha || '').slice(0, 7))}</span>`; }
+  return `<div class="statusbar"><span>⌘1–5 modes</span><span>⌘\\ column</span><span>L cycle lens</span><span>⌘K search</span>
+    <span class="spacer"></span>${upd}${build ? `<span title="${esc(u.note || (u.available ? 'a newer build is published' : 'up to date'))}">${esc(build)}</span>` : ''}<span>${ann}</span></div>`;
+}
+
+// the Materialize content header: the recipe, its device and storage, and
+// the three tabs — Select (the recipe), Write (the run), History (locks).
 function runAllowed() {
   const r = S.run || {};
   if (r.status === 'running' || r.status === 'done' || r.status === 'error') return true;
@@ -576,42 +844,16 @@ function stepAllowed(k) {
   if (k === 'run') return runAllowed();
   return true;
 }
-function tabbar() {
-  const tab = (k, label, num, off, title) => `
-      <div class="tab ${S.screen === k ? 'on' : ''} ${off ? 'off' : ''}" data-act="tab" data-k="${k}" title="${esc(title || '')}">
-        <span class="num">${num}</span><span class="label">${label}</span>
-      </div>`;
-  const steps = [['recipe', 'Recipe', '2', ''], ['plan', 'Plan', '3', 'pick a recipe first'], ['run', 'Materialize', '4', 'the plan has to fit, with no errors']];
-  const lens = S.lens ? `
-    <div class="lens-chip"><span class="dot"></span><span class="name">Lens · ${esc(S.lens)}</span>
-    <span class="x" data-act="clear-lens">✕</span></div>` : '';
-  // one click from "fix pushed" to "running the fix" — visible on every screen
-  let upd = '';
-  if (S.updBusy || S.updMsg) {
-    upd = `<span style="font:500 10.5px var(--mono);color:var(--amber);white-space:nowrap;margin-right:8px">${esc(S.updMsg)}</span>`;
-  } else if (S.upd && S.upd.available) {
-    const r = S.upd.remote || {};
-    upd = `<span data-act="upd-apply" title="${esc(r.sha || '')} · ${esc(r.subject || '')}" style="cursor:pointer;font:600 10.5px var(--mono);color:var(--amber);border:1px solid rgba(224,182,79,.4);border-radius:10px;padding:2px 9px;margin-right:8px">update → ${esc((r.sha || '').slice(0, 7))}</span>`;
-  }
-  return `<div class="tabbar">
-    ${tab('library', 'Library', '1')}
-    <span class="steps">
-      ${steps.map(([k, label, num, why], i) => (i ? '<span class="arrow">→</span>' : '') + tab(k, label, num, !stepAllowed(k), stepAllowed(k) ? '' : why)).join('')}
-    </span>
-    ${S.screen === 'cards' ? tab('cards', 'History', '5') : ''}
-    <div style="flex:1"></div>${upd}${lens}
-    ${tab('sources', 'Setup', '6')}
+function matHead() {
+  const vmeta = S.views.find(v => v.name === S.view) || {};
+  const tab = (k, lbl, off, why) => `<span class="${S.screen === k ? 'on' : ''}" data-act="mat-tab" data-k="${k}" title="${esc(why || '')}" style="${off ? 'opacity:.45' : ''}">${lbl}</span>`;
+  return `<div class="chead">
+    <h1>${S.view ? esc(S.view) : 'Materialize'}</h1>
+    ${S.view ? `<span class="devchip">${esc(vmeta.device || '?')}</span><span class="stochip">${esc(vmeta.storage || '?')}</span>` : `<span class="sum">${S.views.length ? 'pick a recipe on the left' : 'no recipes yet — press + on the left'}</span>`}
+    <div class="seg">${tab('recipe', 'Select')}${tab('run', 'Write', !runAllowed(), runAllowed() ? '' : 'the plan has to fit, with no errors')}${tab('cards', 'History')}</div>
+    <span class="spacer"></span>
+    ${S.view && S.screen === 'recipe' && !S.recipeForm && !S.newRecipe ? `<span class="btn" data-act="recipe-edit" title="change what this recipe is for — device, storage, target, layout, racks, and the rest">Edit</span>` : ''}
   </div>`;
-}
-
-function statusbar() {
-  const ann = S.summary ? `annotations: ${n(S.summary.packs_annotated)} packs known` : '';
-  // "which build am I actually running" must be answerable without an update
-  // pending — the tab-bar chip only exists when a newer build is known.
-  const u = S.upd;
-  const build = u ? `build ${u.commit || u.version || '?'}` : '';
-  return `<div class="statusbar"><span>1–5 screens</span><span>L cycle lens</span><span>⌘K search</span>
-    <div style="flex:1"></div>${build ? `<span title="${esc(u.note || (u.available ? 'a newer build is published' : 'up to date'))}">${esc(build)}</span>` : ''}<span>${ann}</span></div>`;
 }
 
 /* ---------- library ---------- */
@@ -654,7 +896,7 @@ function artBox(cls, name, image, none) {
 // knows one (vendor-dirs archives, annotated locations), else the location.
 const packGroup = p => p.vendor || p.location;
 
-const sampleMode = () => !!(S.fInst || S.fKey || S.fBpm || S.fCat);
+const sampleMode = () => S.samplesOn || !!(S.fInst || S.fKey || S.fBpm || S.fCat);
 
 // Instruments offered in the filter bar, grouped the way a producer thinks.
 // These are canonical ids from the annotations lexicon; a vendor that never
@@ -669,52 +911,22 @@ const INSTRUMENTS = [
   ['voice / fx', ['vocal', 'fx', 'foley']],
 ];
 
-function filterBar() {
-  const opts = INSTRUMENTS.map(([group, ids]) =>
-    `<optgroup label="${group}">${ids.map(i => `<option value="${i}" ${S.fInst === i ? 'selected' : ''}>${i}</option>`).join('')}</optgroup>`).join('');
-  const cats = ['one-shots', 'loops', 'multisamples', 'fx'];
-  const inp = (id, ph, val, w) =>
-    `<input id="${id}" class="filt" placeholder="${ph}" value="${esc(val)}" style="width:${w}">`;
-  const active = sampleMode();
-  return `
-    <div class="filters">
-      <span class="flabel">Find</span>
-      <select id="f-inst" class="filt" style="width:150px">
-        <option value="">any instrument</option>${opts}
-      </select>
-      <select id="f-cat" class="filt" style="width:130px">
-        <option value="">any category</option>
-        ${cats.map(c => `<option value="${c}" ${S.fCat === c ? 'selected' : ''}>${c}</option>`).join('')}
-      </select>
-      ${inp('f-key', 'key (Am, C#1)', S.fKey, '120px')}
-      ${inp('f-bpm', 'bpm (120-130)', S.fBpm, '120px')}
-      ${active ? `<span class="restore-btn" data-act="clear-filters">clear</span>` : ''}
-      <div style="flex:1"></div>
-      <span style="font:400 10.5px var(--mono);color:var(--fg-faint)">
-        ${active ? 'showing individual samples across every pack' : 'filter to search inside packs'}
-      </span>
-    </div>`;
-}
 
 function renderSamples() {
   const d = S.samples;
   const chips = (d?.instruments || []).slice(0, 12).map(f =>
     `<span class="chip ${S.fInst === f.id ? 'active' : ''}" data-act="f-inst" data-v="${esc(f.id)}">${esc(f.id)} <span style="color:var(--fg-faint)">${n(f.count)}</span></span>`).join('');
   const head = `
-    <div class="screen-head">
+    <div class="chead">
       <h1>Samples</h1>
       <span class="sum">${S.samplesBusy ? 'searching…' : d ? `${n(d.total)} match${d.total === 1 ? '' : 'es'}${d.total > d.shown ? ` · showing ${n(d.shown)}` : ''}` : ''}</span>
-      <div style="flex:1"></div>
-      <div class="search">⌕ <input id="search" placeholder="Search names…" value="${esc(S.search)}"><span class="kbd">⌘K</span></div>
-      <div style="position:relative">
-        <div class="lens-btn ${S.lens ? 'on' : ''}" data-act="toggle-menu">
-          <span class="dot"></span><span class="label">Lens · ${S.lens ? esc(S.lens) : 'off'}</span><span class="caret">▾</span>
-        </div>
-      </div>
-    </div>
-    ${filterBar()}
-    ${chips ? `<div class="filters" style="padding-top:0;border:0">${chips}</div>` : ''}`;
-
+      ${filterPill()}
+      <span class="spacer"></span>
+      <div class="seg"><span data-act="samples-off">Packs</span><span class="on">Samples</span></div>
+    </div>`;
+  if (!S.fInst && !S.fKey && !S.fBpm && !S.fCat && !S.search) {
+    return head + `<div style="font:400 12px var(--sans);color:var(--fg-faint);padding:28px 20px;line-height:1.7">Pick an instrument, a category, a key or a BPM on the left — or type a name above.<br><span style="color:var(--fg-ghost)">Only what the vendor labelled is searchable; unlabelled samples never match rather than being guessed at.</span></div>`;
+  }
   if (S.samplesBusy && !d) return head + `<div style="font:400 11px var(--mono);color:var(--fg-faint);padding:20px">searching…</div>`;
   if (!d || !d.samples.length) {
     return head + `<div style="font:400 11.5px var(--mono);color:var(--fg-faint);padding:24px;line-height:1.7">
@@ -754,11 +966,6 @@ async function loadSamples() {
    vendor's job on the page we link to. The license value is a ceiling on
    claims: only royalty-free is ever LABELLED royalty-free. */
 
-const segToggle = () => `<div class="seg">
-  <span class="${S.discover ? '' : 'on'}" data-act="disc-off">Library</span>
-  <span class="${S.discover ? 'on' : ''}" data-act="disc-on">Discover</span>
-</div>`;
-
 const LICENSE_BADGE = { 'royalty-free': 'royalty-free', 'cc0': 'CC0', 'cc-by': 'CC BY', 'cc-by-nc': 'CC BY-NC', 'informal-free': 'free · informal' };
 const obtainable = (r) => ['vendor-free', 'vendor-paid', 'distributor'].includes(r.class) && r.url;
 
@@ -781,6 +988,30 @@ function discHints(r) {
     else hints.push(`${rel.type.replace(/-/g, ' ')} ${rel.pack} (owned)`);
   }
   return { hints, skip, upgrade };
+}
+
+// list view: the same registry identity, one row — price, license, what
+// the vendor lists, Get. Owned content ghosts, never hides.
+function discRow(r, ghost) {
+  const { hints, skip, upgrade } = discHints(r);
+  const free = r.class === 'vendor-free' || (r.class === 'distributor' && r.gate !== 'purchase');
+  const paid = r.class === 'vendor-paid' || (r.class === 'distributor' && r.gate === 'purchase');
+  const price = free ? '<span class="badge free">free</span>' : paid ? '<span class="badge paid">paid</span>' : r.discontinued ? '<span class="badge orphan">out of print</span>' : '';
+  const lic = LICENSE_BADGE[r.license] || '';
+  const via = r.class === 'distributor' && r.via ? ` · via ${esc(r.via)}` : '';
+  const hint = hints[0] ? `<span class="hint ${upgrade && !skip ? 'upgrade' : ''}" title="${esc(hints.join(' · '))}">${esc(hints[0])}</span>` : '';
+  const get = obtainable(r)
+    ? `<a class="get-link" href="${esc(r.url)}" target="_blank" title="${esc(r.gate && r.gate !== 'none' ? 'vendor page — asks for ' + r.gate : 'vendor page')}">Get ↗</a>`
+    : skip ? '<span class="num">in library</span>' : '';
+  return `<div class="lrow disc ${ghost || skip ? 'ghost' : ''}" title="${esc(r.description || '')}">
+    ${artBox('art', r.name, r.image, false)}
+    <div class="nm" style="flex-direction:column;align-items:flex-start;gap:1px"><span class="t" title="${esc(r.name)}">${esc(r.name)}</span>${hint}</div>
+    <span class="vd">${esc(r.vendor)}${via}</span>
+    <span>${price}</span>
+    <span class="num">${esc(lic)}</span>
+    <span class="num hide-narrow">${r.samples_listed ? `vendor lists ${n(r.samples_listed)}` : ''}</span>
+    <span style="text-align:right">${get}</span>
+  </div>`;
 }
 
 function discCard(r, ghost) {
@@ -809,32 +1040,34 @@ function discCard(r, ghost) {
 function renderDiscover() {
   const q = S.search.toLowerCase();
   const all = (S.disc || []).filter(r =>
-    !q || r.name.toLowerCase().includes(q) || r.vendor.toLowerCase().includes(q) || (r.tags || []).some(tg => tg.includes(q)));
+    (!S.discVendor || r.vendor === S.discVendor) &&
+    (!q || r.name.toLowerCase().includes(q) || r.vendor.toLowerCase().includes(q) || (r.tags || []).some(tg => tg.includes(q))));
   const acq = all.filter(obtainable);
   const rest = all.filter(r => !obtainable(r));
   // upgrades float, already-covered content sinks
   const rank = (r) => { const h = discHints(r); return h.upgrade && !h.skip ? 0 : h.skip ? 2 : 1; };
   acq.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
 
+  const vm = S.viewMode.discover || 'list';
   const head = `
-    <div class="screen-head">
-      <h1>Discover</h1>${segToggle()}
-      <span class="sum">${S.discBusy ? 'loading…' : `${acq.length} obtainable${rest.length ? ` · ${rest.length} recognized only` : ''}`}</span>
-      <div style="flex:1"></div>
-      <span class="chip ${S.obtainable ? 'active' : ''}" data-act="obtainable" title="acquirable packs only — flip it off to see the out-of-print tail">obtainable${S.obtainable ? ' ✓' : ''}</span>
-      <div class="search">⌕ <input id="search" placeholder="Search packs…" value="${esc(S.search)}"><span class="kbd">⌘K</span></div>
-      <span class="chip" data-act="go-recipe" title="pick or make a recipe — the way out of the library into the pipeline" style="color:var(--fg);border-color:var(--bord-hover)">materialize…</span>
-    </div>
-    <div class="disc-note" style="padding:8px 18px 0">Everything here is in the community registry because someone owns it. Cards are thin on purpose — previews live on the vendor's page, and that's where the link goes.</div>`;
-
+    <div class="chead">
+      <h1>Discover</h1>
+      <span class="sum">${S.discBusy ? 'loading…' : `${n(acq.length)} obtainable${rest.length ? ` · ${n(rest.length)} recognized only` : ''}`}</span>
+      ${S.discVendor ? `<span class="fchip" data-act="disc-vendor" data-v="${esc(S.discVendor)}">${esc(S.discVendor)}<span class="x">✕</span></span>` : ''}
+      <span class="spacer"></span>
+      <div class="seg"><span class="${vm === 'grid' ? 'on' : ''}" data-act="vm" data-v="grid">Grid</span><span class="${vm === 'list' ? 'on' : ''}" data-act="vm" data-v="list">List</span></div>
+    </div>`;
   if (S.discBusy && !S.disc) return head + `<div style="font:400 11px var(--mono);color:var(--fg-faint);padding:20px">loading…</div>`;
+  const list = (rows, ghost) => vm === 'list'
+    ? `<div class="lcols disc"><span></span><span>Pack</span><span>Vendor</span><span>Price</span><span>License</span><span class="hide-narrow">Listed</span><span></span></div>${rows.map(r => discRow(r, ghost)).join('')}`
+    : `<div class="grid">${rows.map(r => discCard(r, ghost)).join('')}</div>`;
   const grid = acq.length
-    ? `<div class="grid">${acq.map(r => discCard(r, false)).join('')}</div>`
-    : `<div style="font:400 11.5px var(--mono);color:var(--fg-faint);padding:24px 18px">nothing to discover — every annotated pack is already in your library.</div>`;
+    ? list(acq, false)
+    : `<div style="font:400 11.5px var(--mono);color:var(--fg-faint);padding:24px 20px">nothing to discover — every annotated pack is already in your library.</div>`;
   const tail = !S.obtainable && rest.length ? `
     <div class="disc-sect">RECOGNIZED, NOT SOURCED</div>
     <div class="disc-note">These existed — that's real information — but there's no legitimate source we'd point you at. Out-of-print reference material, not a storefront.</div>
-    <div class="grid">${rest.map(r => discCard(r, true)).join('')}</div>` : '';
+    ${list(rest, true)}` : '';
   return head + grid + tail;
 }
 
@@ -854,53 +1087,40 @@ function renderLibrary() {
     const em = rows.reduce((a, p) => a + (p.converted_bytes || 0), 0);
     sum = `${n(ef)} of ${n(tf)} files eligible · ${fmtB(em)} after transcode`;
   } else {
-    sum = `${rows.length} packs · ${n(rows.reduce((a, p) => a + p.files, 0))} files · ${fmtB(rows.reduce((a, p) => a + p.bytes, 0))}`;
+    sum = `${n(rows.reduce((a, p) => a + p.files, 0))} files · ${fmtB(rows.reduce((a, p) => a + p.bytes, 0))}`;
   }
 
-  const locs = [...new Set(S.packs.map(packGroup))].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
-  const ownedDevs = S.devices.filter(d => S.owned[d.name]);
-  const otherDevs = S.devices.filter(d => !S.owned[d.name]);
-  const devRow = (d) => `
-    <div class="row ${S.lens === d.name ? 'picked' : ''}" data-act="pick-lens" data-d="${esc(d.name)}">
-      <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:1px">
-        <span class="dname">${esc(d.name)}</span><span class="dsub">${esc(d.sub)}</span>
-      </div>
-      <span class="star ${S.owned[d.name] ? 'owned' : ''}" data-act="star" data-d="${esc(d.name)}" title="${S.owned[d.name] ? 'in my rig — click to unflag' : 'flag as mine'}">${S.owned[d.name] ? '★' : '☆'}</span>
+  const vm = S.viewMode.library || 'list';
+  const head = `
+    <div class="chead">
+      <h1>Library</h1><span class="sum">${n(rows.length)} packs</span>${S.lens ? `<span class="lsum">${sum}</span>` : `<span class="sum">${sum}</span>`}
+      ${filterPill()}
+      <span class="spacer"></span>
+      ${S.locFilter ? `<span class="btn" data-act="add-group" data-g="${esc(S.locFilter)}" title="add every ${esc(S.locFilter)} pack to a recipe as one rule">+ all ${n(rows.length)} to recipe</span>` : ''}
+      <div class="seg"><span class="on" data-act="samples-off">Packs</span><span data-act="samples-on" title="one row per sample, across every pack — the filters on the left find them">Samples</span></div>
+      <div class="seg"><span class="${vm === 'grid' ? 'on' : ''}" data-act="vm" data-v="grid">Grid</span><span class="${vm === 'list' ? 'on' : ''}" data-act="vm" data-v="list">List</span></div>
     </div>`;
+  if (!rows.length) return head + `<div style="font:400 12px var(--sans);color:var(--fg-faint);padding:28px 20px">${S.packs.length ? 'nothing matches' : 'no packs yet — add a source in Setup'}</div>`;
 
-  const menu = !S.lensMenu ? '' : `
-    <div class="menu-veil" data-act="close-menu"></div>
-    <div class="lens-menu">
-      <div class="row ${S.lens ? '' : 'picked'}" data-act="no-lens">
-        <span class="dname" style="flex:1">No lens</span>
-        <span style="font:400 10px var(--mono);color:var(--fg-faint)">whole library</span>
-      </div>
-      <div class="sect">MY DEVICES</div>
-      ${ownedDevs.map(devRow).join('') || '<div style="font:400 10px var(--mono);color:var(--fg-faint);padding:4px 9px">none flagged</div>'}
-      ${!S.onlyOwned && otherDevs.length ? `<div class="sect" style="border-top:1px solid var(--bord);margin-top:5px">OTHER DEVICES</div>${otherDevs.map(devRow).join('')}` : ''}
-      <div class="foot" data-act="only-owned">
-        <span class="ck ${S.onlyOwned ? 'on' : ''}">${S.onlyOwned ? '✓' : ''}</span>
-        <span style="font:500 11px var(--sans);color:var(--fg-dim)">Only show my devices</span>
-      </div>
-    </div>`;
+  if (vm === 'list') {
+    const lens = S.lens;
+    const lc = lens ? '' : 'nolens';
+    const cols = `<div class="lcols ${lc}"><span></span><span>Pack</span><span>Vendor</span><span class="hide-narrow">Files</span><span class="hide-narrow">Size</span>${lens ? `<span class="lens">${esc(lens)} files</span><span class="lens">${esc(lens)} size</span>` : ''}<span></span></div>`;
+    return head + cols + rows.map(p => {
+      const vendor = p.provider || p.vendor || p.location;
+      return `<div class="lrow ${lc}" data-blurb="${esc(p.description ? '' : (p.blurb || p.url || ''))}" title="${esc(p.description || '')}" data-act="open-pack" data-loc="${esc(p.location)}" data-dir="${esc(p.dir)}">
+        ${artBox('art', p.name, p.image, !p.slug)}
+        <div class="nm"><span class="t" title="${esc(p.dir)}">${esc(p.name)}</span>${badgeFor(p)}</div>
+        <span class="vd">${esc(vendor)}</span>
+        <span class="num hide-narrow">${n(p.files)}</span>
+        <span class="num hide-narrow">${fmtB(p.bytes)}</span>
+        ${lens ? `<span class="num lens">${n(p.eligible)}</span><span class="num lens">${fmtB(p.converted_bytes || 0)}</span>` : ''}
+        <span class="go">▸</span>
+      </div>`;
+    }).join('');
+  }
 
-  return `
-    <div class="screen-head">
-      <h1>Library</h1>${segToggle()}<span class="sum">${sum}</span>
-      <div style="flex:1"></div>
-      ${locs.map(l => `<span class="chip ${S.locFilter === l ? 'active' : ''}" data-act="loc" data-l="${esc(l)}" title="${S.locFilter === l ? 'click to clear' : 'only ' + esc(l)}">${esc(l)}${S.locFilter === l ? ' ✕' : ''}</span>`).join('')}
-      ${S.locFilter ? `<span class="chip active" data-act="add-group" data-g="${esc(S.locFilter)}" title="add every ${esc(S.locFilter)} pack to a recipe as one rule">+ add all ${n(rows.length)} to recipe</span>` : ''}
-      <div class="search">⌕ <input id="search" placeholder="Search packs…" value="${esc(S.search)}"><span class="kbd">⌘K</span></div>
-      <span class="chip" data-act="go-recipe" title="pick or make a recipe — the way out of the library into the pipeline" style="color:var(--fg);border-color:var(--bord-hover)">materialize…</span>
-      <div style="position:relative">
-        <div class="lens-btn ${S.lens ? 'on' : ''}" data-act="toggle-menu">
-          <span class="dot"></span><span class="label">Lens · ${S.lens ? esc(S.lens) : 'off'}</span><span class="caret">▾</span>
-        </div>
-        ${menu}
-      </div>
-    </div>
-    ${filterBar()}
-
+  return head + `
     <div class="grid">
       ${rows.map(p => {
         const art = artBox('art', p.name, p.image, !p.slug);
@@ -941,18 +1161,6 @@ function renderPackDetail() {
 
   let body = `<div style="font:400 11px var(--mono);color:var(--fg-faint);padding:20px">loading…</div>`;
   if (pd) {
-    const here = S.pdFolder ? S.pdFolder + '/' : '';
-    const up = S.pdFolder ? `
-      <div class="pd-folder" data-act="pd-up">
-        <span style="font:500 11.5px var(--mono);color:var(--fg-dim);flex:1">..</span>
-      </div>` : '';
-    const folders = `
-      <div style="font:500 10px var(--mono);color:var(--fg-faint);padding:2px 10px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc('/' + here)}">${esc(S.pdFolder ? (S.pdFolder.includes('/') ? '…/' : '/') + S.pdFolder.split('/').pop() + '/' : '/')}</div>
-      ${up}` + (pd.folders || []).map(f => `
-      <div class="pd-folder" data-act="pd-folder" data-f="${esc(S.pdFolder ? S.pdFolder + '/' + f.name : f.name)}">
-        <span style="font:500 11.5px var(--mono);color:var(--fg-dim);flex:1">${esc(f.name)}/</span>
-        <span style="font:400 10.5px var(--mono);color:var(--fg-faint)">${n(f.count)}</span>
-      </div>`).join('');
     const rows = (pd.files || []).map(fl => {
       const isPlaying = S.player && S.player.path === fl.path;
       const fmt = fl.format ? `${fl.format} ${fl.depth || '?'}/${fl.rate ? (fl.rate / 1000).toFixed(1) : '?'}k ${fl.channels === 1 ? 'mono' : fl.channels === 2 ? 'st' : (fl.channels || '') + 'ch'}` : '—';
@@ -971,7 +1179,6 @@ function renderPackDetail() {
     }).join('');
     const more = pd.total > pd.shown ? `<div style="font:400 10.5px var(--mono);color:var(--fg-faint);padding:8px 12px">… and ${n(pd.total - pd.shown)} more in this folder</div>` : '';
     body = `<div class="pd-grid">
-      <div style="border-right:1px solid var(--bord);padding:10px 8px;overflow:auto">${folders}</div>
       <div style="min-width:0;display:flex;flex-direction:column">
         <div class="pd-cols"><span></span><span>FILE</span><span>FORMAT</span><span>LENGTH</span><span>KEY · BPM</span><span>SIZE</span><span>${S.lens ? esc(S.lens.toUpperCase()) + ' LENS' : ''}</span></div>
         <div style="overflow:auto;flex:1">${rows}${more}</div>
@@ -995,17 +1202,16 @@ function renderPackDetail() {
 
   return `
     <div style="display:flex;flex-direction:column;min-height:100%">
-    <div style="display:flex;align-items:center;gap:10px;padding:10px 18px;border-bottom:1px solid var(--bord)">
-      <span class="crumb-btn" data-act="close-pack">← Library</span>
-      <span style="font:400 11px var(--mono);color:var(--fg-faint)">library / ${esc(po.provider || po.vendor || po.location)} / ${esc(po.name)}</span>
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 20px;border-bottom:1px solid var(--bord)">
+      <span style="font:400 11px var(--mono);color:var(--fg-faint)">library / ${esc(po.provider || po.vendor || po.location)} / ${esc(po.name)}${S.pdFolder ? ' / ' + esc(S.pdFolder) : ''}</span>
       <div style="flex:1"></div>${lensLine}
-      <span class="restore-btn" data-act="add-to" data-loc="${esc(po.location)}" data-glob="${esc(po.dir)}${S.pdFolder ? '/' + esc(S.pdFolder) : ''}/**" data-as="${esc(po.provider ? po.location.toUpperCase() + '/' + po.dir + (S.pdFolder ? '/' + S.pdFolder : '') : '')}" data-label="${esc(po.name)}${S.pdFolder ? ' / ' + esc(S.pdFolder) : ''}" title="add what you're looking at to a recipe">+ add to recipe</span>
+      <span class="btn primary" data-act="add-to" data-loc="${esc(po.location)}" data-glob="${esc(po.dir)}${S.pdFolder ? '/' + esc(S.pdFolder) : ''}/**" data-as="${esc(po.provider ? po.location.toUpperCase() + '/' + po.dir + (S.pdFolder ? '/' + S.pdFolder : '') : '')}" data-label="${esc(po.name)}${S.pdFolder ? ' / ' + esc(S.pdFolder) : ''}" title="add what you're looking at to a recipe">Add to recipe ▾</span>
     </div>
     <div class="pd-head">
       ${art}
       <div style="min-width:0;flex:1;display:flex;flex-direction:column;gap:6px">
         <div style="display:flex;align-items:center;gap:10px">
-          <span style="font:700 18px var(--sans)">${esc(po.name)}</span>${badgeFor(po)}
+          <span style="font:600 20px var(--sans)">${esc(po.name)}</span>${badgeFor(po)}
         </div>
         <div style="display:flex;align-items:center;gap:10px">
           <span style="font:400 11.5px var(--sans);color:var(--fg-dim)">${esc(po.provider || po.vendor || po.location)}</span>${urlChip}
@@ -1253,19 +1459,25 @@ function renderSources() {
     </div>`;
 
   return `
-    <div class="screen-head"><h1>Sources</h1>
-      <span class="sum">${S.locations.length} configured${S.suggestions.length ? ` · ${S.suggestions.length} suggested` : ''}</span>
-      <div style="flex:1"></div>
-      ${f || !S.locations.length ? '' : `<span class="restore-btn" data-act="scan-all" title="pull the newest classification rules and rescan every source — the whole catalog is this build's when the rows finish">rescan all</span>`}
-      ${f ? '' : '<span class="restore-btn" data-act="new-source">+ add source</span>'}
+    <div class="chead"><h1>Setup</h1>
+      <span class="sum">${S.locations.length} ${S.locations.length === 1 ? 'source' : 'sources'} · ${S.devices.length} ${S.devices.length === 1 ? 'device' : 'devices'} · ${S.storages.length} storage</span>
     </div>
-    <div style="padding:14px 18px;display:flex;flex-direction:column;gap:9px;max-width:900px">
+    <div style="padding:6px 20px 24px;display:flex;flex-direction:column;gap:9px;max-width:900px">
+      <div class="sec-h" id="sec-sources"><h2>Sources</h2><span class="sum">${S.locations.length}${S.suggestions.length ? ` · ${S.suggestions.length} found on this machine` : ''}</span>
+        <span class="spacer"></span>
+        ${f || !S.locations.length ? '' : `<span class="btn" data-act="scan-all" title="pull the newest classification rules and rescan every source — the whole catalog is this build's when the rows finish">Rescan all</span>`}
+        ${f ? '' : '<span class="btn primary" data-act="new-source">+ Add source</span>'}
+      </div>
+      <div class="sec-p">Folders the catalog reads. Scan again when you add packs; the rules are refreshed before every scan.</div>
       ${form}
       ${rows}
-      ${sugg ? `<div style="font:600 9px var(--sans);color:var(--fg-faint);letter-spacing:.1em;padding:10px 2px 2px">FOUND ON THIS MACHINE</div>${sugg}` : ''}
-      ${renderAnnotations()}
+      ${sugg ? `<div class="sec-h small">Found on this machine</div>${sugg}` : ''}
+      <div id="sec-devices"></div>
       ${renderDevices()}
+      <div id="sec-storage"></div>
       ${renderStorages()}
+      <div id="sec-rules"></div>
+      ${renderAnnotations()}
       ${S.toast ? `<div style="font:500 11px var(--mono);color:var(--warn)">${esc(S.toast)}</div>` : ''}
     </div>`;
 }
@@ -1289,7 +1501,8 @@ function renderAnnotations() {
   const ann = S.ann || {};
   const h = ann.head;
   return `
-    <div style="font:600 9px var(--sans);color:var(--fg-faint);letter-spacing:.1em;padding:10px 2px 2px">CLASSIFICATION RULES</div>
+    <div class="sec-h"><h2>Classification rules</h2></div>
+    <div class="sec-p">The shared registry's annotations — what every vendor's folder and file name means. Fetched at launch and before every scan.</div>
     <div style="display:flex;align-items:center;gap:12px;background:var(--bg-card);border:1px solid var(--bord-card);border-radius:6px;padding:9px 12px">
       <div style="min-width:0;flex:1;display:flex;flex-direction:column;gap:2px">
         ${h ? `<span style="font:400 10.5px var(--mono);color:var(--fg-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">annotations ${esc(h.sha)} · ${esc(h.date)} · ${esc(h.subject)}</span>`
@@ -1356,9 +1569,9 @@ function renderDevices() {
       </div>
       <div style="font:400 10px var(--sans);color:var(--fg-faint)">${d.editing ? 'Saving rewrites the whole .toml from this form — anything hand-added that the form does not show is dropped.' : 'Presets are starting points from published specs — check them against your manual. Everything here is editable, and the .toml is yours to hand-edit after.'}</div>
     </div>`;
-  return `<div style="font:600 9px var(--sans);color:var(--fg-faint);letter-spacing:.1em;padding:14px 2px 2px;display:flex;align-items:center;gap:10px">
-      DEVICES <div style="flex:1"></div>${d ? '' : '<span class="restore-btn" data-act="dev-new">+ add device</span>'}
-    </div>${form}${list}`;
+  return `<div class="sec-h"><h2>Devices</h2><span class="sum">${S.devices.length}</span><span class="spacer"></span>${d ? '' : '<span class="btn primary" data-act="dev-new">+ Add device</span>'}</div>
+    <div class="sec-p">What a card has to be for the device to read it — bit depth, rate, channels, filesystem, naming rules. A recipe writes for one of these.</div>
+    ${form}${list}`;
 }
 
 function renderStorages() {
@@ -1385,9 +1598,9 @@ function renderStorages() {
         <span class="mat-btn" style="margin:0;padding:6px 16px;font-size:11px" data-act="sto-save">create storage</span>
       </div>
     </div>`;
-  return `<div style="font:600 9px var(--sans);color:var(--fg-faint);letter-spacing:.1em;padding:14px 2px 2px;display:flex;align-items:center;gap:10px">
-      CARDS &amp; STORAGE <div style="flex:1"></div>${s ? '' : '<span class="restore-btn" data-act="sto-new">+ add storage</span>'}
-    </div>${form}${list}`;
+  return `<div class="sec-h"><h2>Cards &amp; storage</h2><span class="sum">${S.storages.length}</span><span class="spacer"></span>${s ? '' : '<span class="btn primary" data-act="sto-new">+ Add storage</span>'}</div>
+    <div class="sec-p">Where a recipe lands and how much fits — a card, a drive, a folder with a quota. Pre-flight checks the recipe against this before anything is written.</div>
+    ${form}${list}`;
 }
 
 /* ---------- recipe ---------- */
@@ -1566,18 +1779,12 @@ function renderRecipe() {
       ${!S.devices.length || !S.storages.length ? '<div style="font:400 10.5px var(--sans);color:var(--warn)">Add a device and a storage profile first — Setup (⌘5).</div>' : ''}
     </div>`;
   const head = `
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
-      <span style="font:600 14px var(--sans)">Recipe</span>
-      <select id="view-pick" style="font:500 11.5px var(--mono);color:var(--fg-dim);background:var(--bg-raise);border:1px solid var(--bord-raise);border-radius:4px;padding:3px 8px">${viewOpts}</select>
-      ${S.view && !S.recipeForm && !nr ? `<span class="restore-btn" data-act="recipe-edit" title="change what this recipe is for — device, storage, target, layout, racks, and the rest">edit</span>` : ''}
-      <div style="flex:1"></div>
-      ${S.recipeForm ? '' : `<span class="restore-btn" data-act="recipe-new">+ new recipe</span>`}
-    </div>
     ${S.recipeForm ? recipeForm(pf) : (S.view && !nr ? recipeSummary(pf, vmeta) : '')}
     <div style="font:400 11px var(--sans);color:var(--fg-faint);margin-bottom:2px">One row per vendor: check it to take everything they made, open ▸ to pick packs. Rules are written for you.${layoutHint(pf, vmeta)}</div>
     ${nrForm}`;
 
-  if (!pf || pf.error || !pf.rules) return `<div class="recipe-grid"><div class="recipe-left">${head}
+  if (!S.view) return matHead() + `<div style="font:400 12px var(--sans);color:var(--fg-faint);padding:28px 20px">${S.views.length ? 'Pick a recipe on the left.' : 'No recipes yet — press + on the left to make one.'}${nrForm ? '' : ''}</div>` + (nr ? `<div style="padding:0 20px">${nrForm}</div>` : '');
+  if (!pf || pf.error || !pf.rules) return matHead() + `<div class="recipe-grid"><div class="recipe-left">${head}
     <div style="font:400 11px var(--mono);color:${pf && pf.error ? 'var(--warn)' : 'var(--fg-faint)'};padding:24px 4px">${pf && pf.error ? 'plan failed: ' + esc(pf.error) : esc(pfProgressLabel())}</div></div>
     <div class="preflight"></div></div>`;
 
@@ -1682,7 +1889,7 @@ function renderRecipe() {
       <div class="search" style="flex:none;width:230px">⌕ <input id="rfilter" placeholder="Filter vendors and packs…" value="${esc(S.rFilter)}"></div>
       <span style="font:400 10.5px var(--mono);color:var(--fg-faint)">${n(M.groups.filter(g => g.state !== 'none').length)} of ${n(M.groups.length)} vendors in · ${n(nRules)} ${nRules === 1 ? 'rule' : 'rules'} written${M.cuts.size ? ` · ${n(M.cuts.size)} excluded` : ''}</span>
     </div>`;
-  return `<div class="recipe-grid">
+  return matHead() + `<div class="recipe-grid">
     <div class="recipe-left">${head}${tidyBar}${bar}<div class="rules">${rules}${extras}</div></div>
     <div class="preflight">${right}</div>
   </div>`;
@@ -1691,6 +1898,7 @@ function renderRecipe() {
 /* ---------- run ---------- */
 
 function renderRun() {
+  if (!S.view) return matHead();
   const r = S.run;
   const running = r.status === 'running', isDone = r.status === 'done', isErr = r.status === 'error';
   const pct = r.total ? (r.count / r.total * 100) : 0;
@@ -1710,7 +1918,7 @@ function renderRun() {
       ${skips.length > 8 ? `<div style="font:400 10.5px var(--mono);color:var(--fg-faint);padding-top:5px;border-top:1px solid var(--bord)">… and ${skips.length - 8} more</div>` : ''}
     </div>` : '';
 
-  return `<div class="run-wrap">
+  return matHead() + `<div class="run-wrap">
     <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:4px">
       <span style="font:600 14px var(--sans)">${r.verb === 'migrate' ? 'Migrate' : 'Materialize'}</span>
       <span style="font:500 11px var(--mono);color:var(--fg-faint)">${esc(r.view || S.view || '')} · lock is written only on success</span>
@@ -1743,7 +1951,7 @@ const elapsed = (t) => t ? Math.round((Date.now() - new Date(t).getTime()) / 100
 /* ---------- cards ---------- */
 
 function renderCards() {
-  if (!S.locks.length && !S.diffBusy && S.views.length) loadCards();
+  if (S.views.length && !S.diffBusy && S.locksFor !== (S.views[S.selCard] || {}).name) loadCards();
   const v = S.views[S.selCard] || {};
   const items = S.views.map((vw, i) => `
     <div class="card-item ${i === S.selCard ? 'sel' : ''}" data-act="pick-card" data-i="${i}">
@@ -1780,7 +1988,7 @@ function renderCards() {
       <span class="restore-btn" data-act="restore" data-f="${esc(l.file)}" title="copies the restore command">restore</span>
     </div>`).join('') || `<div style="font:400 11px var(--mono);color:var(--fg-faint);padding:16px 4px">no locks yet — this view has never been materialized</div>`;
 
-  return `<div class="cards-grid">
+  return matHead() + `<div class="cards-grid">
     <div class="cards-left">
       <div style="font:600 14px var(--sans);margin-bottom:12px;padding:0 4px">Cards</div>${items}
     </div>
@@ -2085,7 +2293,7 @@ function renderVerdict() {
 
 function renderPlan() {
   const pl = S.pl;
-  if (!S.view) return `<div class="run-wrap"><div style="font:400 12px var(--sans);color:var(--fg-faint)">Pick a recipe first — the plan is built from one.</div></div>`;
+  if (!S.view) return `<div class="chead"><h1>Fix</h1></div><div style="font:400 12px var(--sans);color:var(--fg-faint);padding:28px 20px">${S.views.length ? 'Pick a recipe on the left — the queue is what its rules could not place.' : 'No recipes yet — Fix reads the folders a recipe cannot place. Make one in Materialize first.'}</div>`;
   const need = !S.pf ? true : (pl.tab === 'queues' ? !pl.q : !pl.tree);
   if (need && !pl.busy && !S.pfBusy && !(S.pf && S.pf.error)) setTimeout(loadPlanReview, 0);
   const counts = (pl.q && pl.q.kinds) || {};
@@ -2094,16 +2302,13 @@ function renderPlan() {
     const c = k ? (plan[k] || 0) : ((plan.unsorted || 0) + (plan.uncategorized || 0) + (plan.general || 0));
     return `<span class="chip ${pl.kind === k ? 'on' : ''}" data-act="pl-kind" data-k="${k}" style="${pl.kind === k ? 'color:var(--fg);border-color:var(--bord-hover)' : ''}">${k ? KIND_LABEL[k] : 'all'} · ${n(c)}</span>`;
   }).join('');
-  const head = `<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
-      <span style="font:600 14px var(--sans)">Plan</span>
-      <span style="font:500 11px var(--mono);color:var(--fg-faint)">${esc(S.view)} · ${n(S.pf ? S.pf.files || 0 : 0)} files${S.pfBusy ? ' · ' + esc(pfProgressLabel()) : ''}</span>
-      <div style="flex:1"></div>
-      <div class="seg"><span class="${pl.tab === 'queues' ? 'on' : ''}" data-act="pl-tab" data-k="queues">Queues</span><span class="${pl.tab === 'tree' ? 'on' : ''}" data-act="pl-tab" data-k="tree">Tree</span></div>
-      ${pl.local ? `<span class="chip" data-act="pl-export" title="zip of annotations.local minus your local-only entries — drop it in the channel">local layer · ${n((pl.local.entries || []).length)} entries · export</span>` : ''}
-      ${S.pf && !S.pf.error && !S.pfBusy ? `<span class="chip" data-act="pl-dump" title="one text file: every folder waiting for a decision (acked ones marked), every file in it, and the why per facet — drop it in the channel">dump · what isn't matched and why</span>` : ''}
-    </div>
-    ${pl.tab === 'queues' ? `<div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">${kindChips}</div>` : ''}`;
-
+  const chead = `<div class="chead">
+      <h1>Fix</h1>
+      <span class="sum">${esc(S.view)} · ${n(S.pf ? S.pf.files || 0 : 0)} files${S.pfBusy ? ' · ' + esc(pfProgressLabel()) : ''}${pl.kind ? ' · ' + esc(KIND_LABEL[pl.kind]) : ''}</span>
+      <span class="spacer"></span>
+      <div class="seg"><span class="${pl.tab === 'queues' ? 'on' : ''}" data-act="pl-tab" data-k="queues">Folders</span><span class="${pl.tab === 'tree' ? 'on' : ''}" data-act="pl-tab" data-k="tree">Tree</span></div>
+      ${S.pf && !S.pf.error && !S.pfBusy ? `<span class="btn" data-act="pl-dump" title="one text file: every folder waiting for a decision (acked ones marked), every file in it, and the why per facet — drop it in the channel">Dump</span>` : ''}
+    </div>`;
   let list = '';
   if (pl.tab === 'queues') {
     const rows = (pl.q && pl.q.rows) || [];
@@ -2155,7 +2360,7 @@ function renderPlan() {
         <div style="font:400 10.5px var(--sans);color:var(--fg-faint)">${esc(pl.local.dir)}</div>
         ${renderReconcile()}` : ''}`;
   }
-  return `<div class="pl-wrap">${head ? `<div class="pl-list" data-scroll>${head}${list}</div>` : ''}<div class="pl-panel" data-scroll>${panel}</div></div>`;
+  return chead + `<div class="pl-wrap"><div class="pl-list" data-scroll>${list}</div><div class="pl-panel" data-scroll>${panel}</div></div>`;
 }
 
 /* ---------- events ---------- */
@@ -2167,9 +2372,39 @@ function wire() {
       if (act === 'tab') {
         const k = el.dataset.k;
         if (!stepAllowed(k)) { if (k === 'plan') { S.screen = 'recipe'; render(); } return; }
-        stopPlayback(); S.packOpen = null; S.pd = null; S.screen = k; if (S.screen === 'cards') { S.locks = []; } render();
+        stopPlayback(); S.packOpen = null; S.pd = null; S.screen = k; if (S.screen === 'cards') { S.locks = []; S.locksFor = null; } render();
       }
       if (act === 'go-recipe') { stopPlayback(); S.packOpen = null; S.pd = null; S.screen = 'recipe'; render(); }
+      if (act === 'mode') setMode(el.dataset.m);
+      if (act === 'col-toggle') { S.colOpen = !S.colOpen; persistUI(); render(); }
+      if (act === 'win-min') window.runtime && window.runtime.WindowMinimise();
+      if (act === 'win-max') window.runtime && window.runtime.WindowToggleMaximise();
+      if (act === 'win-close') window.runtime && window.runtime.Quit();
+      if (act === 'vm') { S.viewMode[curMode()] = el.dataset.v; persistUI(); render(); }
+      if (act === 'cat') { S.fCat = (S.fCat === el.dataset.v) ? '' : el.dataset.v; applyFilters(); }
+      if (act === 'samples-on') { S.samplesOn = true; if (S.fInst || S.fKey || S.fBpm || S.fCat || S.search) applyFilters(); else render(); }
+      if (act === 'samples-off') { S.samplesOn = false; S.fInst = S.fKey = S.fBpm = S.fCat = ''; S.samples = null; stopPlayback(); render(); }
+      if (act === 'clear-all-filters') { S.locFilter = ''; S.fInst = S.fKey = S.fBpm = S.fCat = ''; S.samplesOn = false; S.samples = null; stopPlayback(); render(); }
+      if (act === 'drop-filter') {
+        const k = el.dataset.k;
+        if (k === 'loc') S.locFilter = ''; if (k === 'cat') S.fCat = ''; if (k === 'inst') S.fInst = ''; if (k === 'key') S.fKey = ''; if (k === 'bpm') S.fBpm = '';
+        k === 'loc' && !sampleMode() ? render() : applyFilters();
+      }
+      if (act === 'inst-more') { S.instMore = !S.instMore; render(); }
+      if (act === 'disc-vendor') { S.discVendor = (S.discVendor === el.dataset.v) ? '' : el.dataset.v; render(); }
+      if (act === 'pick-view') {
+        const v = el.dataset.v;
+        if (S.screen === 'cards') { S.selCard = +el.dataset.i; S.view = v; loadCards(); return; }
+        if (v === S.view && S.screen !== 'run') return;
+        S.view = v; S.recipeForm = null; S.newRecipe = null; S.disabled = new Set(); S.pf = null; S.rOpen = new Set();
+        S.screen = 'recipe'; loadPreflight();
+      }
+      if (act === 'mat-tab') {
+        const k = el.dataset.k;
+        if (k === 'run' && !runAllowed()) return;
+        stopPlayback(); S.packOpen = null; S.pd = null; S.screen = k; if (k === 'cards') S.locks = []; S.locksFor = null; render();
+      }
+      if (act === 'setup-sec') { const t = document.getElementById('sec-' + el.dataset.id); if (t) t.scrollIntoView({ block: 'start', behavior: 'smooth' }); }
       if (act === 'back-plan') { S.screen = 'plan'; S.pf = null; S.pl.q = null; S.pl.tree = null; render(); }
       if (act === 'issue-toggle') { if (!String(window.getSelection())) el.classList.toggle('open'); } // a click that selected text is a copy, not a toggle
       if (act === 'clear-lens') { S.lens = null; loadPacks().then(render); }
@@ -2186,7 +2421,7 @@ function wire() {
         S.onlyOwned = !S.onlyOwned;
         localStorage.setItem('mtunes.onlyOwned', JSON.stringify(S.onlyOwned)); render();
       }
-      if (act === 'loc') { S.locFilter = (S.locFilter === el.dataset.l) ? '' : el.dataset.l; render(); }
+      if (act === 'loc') { S.locFilter = (S.locFilter === el.dataset.l) ? '' : el.dataset.l; sampleMode() ? applyFilters() : render(); }
       if (act === 'disc-on') { S.discover = true; stopPlayback(); S.packOpen = null; S.pd = null; if (!S.disc) loadDiscover(); else render(); }
       if (act === 'disc-off') { S.discover = false; render(); }
       if (act === 'obtainable') { S.obtainable = !S.obtainable; render(); }
@@ -2241,7 +2476,7 @@ function wire() {
         api('/api/storage', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) })
           .then(r => { if (r.error) { S.toast = r.error; render(); return; } S.stoForm = null; loadSources(); });
       }
-      if (act === 'recipe-new') { S.newRecipe = { device: (S.devices[0]||{}).name || '', storage: (S.storages[0]||{}).name || '' }; render(); }
+      if (act === 'recipe-new') { S.newRecipe = { device: (S.devices[0]||{}).name || '', storage: (S.storages[0]||{}).name || '' }; S.recipeForm = null; S.screen = 'recipe'; render(); }
       if (act === 'recipe-cancel') { S.newRecipe = null; render(); }
       if (act === 'recipe-create') {
         const g = id => document.getElementById(id).value;
@@ -2413,6 +2648,9 @@ function wire() {
   if (search) {
     search.addEventListener('input', () => {
       S.search = search.value;
+      const m = curMode();
+      if (m !== 'library' && m !== 'discover') { stopPlayback(); S.screen = 'library'; }
+      else if (S.packOpen) { stopPlayback(); S.packOpen = null; S.pd = null; }
       if (sampleMode()) { clearTimeout(searchTimer); searchTimer = setTimeout(loadSamples, 220); }
       renderPreservingSearch();
     });
@@ -2443,7 +2681,7 @@ function wire() {
   const pv = document.getElementById('pl-value');
   if (pv) pv.addEventListener('change', () => { readForm(); S.pl.radius = null; });
   const vp = document.getElementById('view-pick');
-  if (vp) vp.addEventListener('change', () => { S.view = vp.value; S.recipeForm = null; S.disabled = new Set(); S.pf = null; loadPreflight(); });
+  if (vp) vp.addEventListener('change', () => { S.view = vp.value; S.recipeForm = null; S.disabled = new Set(); S.pf = null; S.pl.q = null; S.pl.tree = null; S.pl.sel = null; S.pl.file = null; S.pl.form = null; loadPreflight(); });
   // Edit form toggles that show or hide fields: read what's typed, redraw.
   for (const id of ['rf-layout', 'rf-comp', 'rf-device', 'rf-anchor']) {
     const el = document.getElementById(id);
@@ -2463,6 +2701,7 @@ function applyFilters() {
   const active = document.activeElement?.id;
   const caret = document.activeElement?.selectionStart;
   if (!sampleMode()) { S.samples = null; render(); return; }
+  if (!S.fInst && !S.fKey && !S.fBpm && !S.fCat && !S.search) { S.samples = null; render(); return; } // Samples on, nothing asked yet
   loadSamples().then(() => {
     if (!active) return;
     const el = document.getElementById(active);
@@ -2483,8 +2722,10 @@ window.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && e.target.tagName === 'INPUT' && /^rf-/.test(e.target.id)) document.querySelector('[data-act="rf-save"]')?.click();
     return;
   }
-  const map = { 1: 'library', 2: 'recipe', 3: 'plan', 4: 'run', 5: 'cards', 6: 'sources' };
+  const map = { 1: 'library', 2: 'discover', 3: 'materialize', 4: 'fix', 5: 'setup' };
+  if (e.key === 'Escape' && S.lensMenu) { S.lensMenu = false; render(); return; }
   if (e.key === 'Escape' && S.packOpen) { stopPlayback(); S.packOpen = null; S.pd = null; render(); return; }
+  if ((e.metaKey || e.ctrlKey) && e.key === '\\') { e.preventDefault(); S.colOpen = !S.colOpen; persistUI(); render(); return; }
   if (S.packOpen && (e.key === 'ArrowDown' || e.key === 'ArrowUp') && S.pd?.files?.length) {
     e.preventDefault();
     const files = S.pd.files.filter(f => f.format);
@@ -2496,7 +2737,7 @@ window.addEventListener('keydown', (e) => {
     playFile(f.path, f.name, f.duration || 0);
     return;
   }
-  if (map[e.key] && stepAllowed(map[e.key])) { S.screen = map[e.key]; if (S.screen === 'cards') S.locks = []; render(); }
+  if (map[e.key] && !e.altKey && !e.shiftKey) { if (e.metaKey || e.ctrlKey) e.preventDefault(); setMode(map[e.key]); return; }
   if (e.key === 'l' || e.key === 'L') {
     const order = [null, ...S.devices.filter(d => S.owned[d.name]).map(d => d.name)];
     const i = order.indexOf(S.lens);
@@ -2504,8 +2745,8 @@ window.addEventListener('keydown', (e) => {
     loadPacks().then(render);
   }
   if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-    e.preventDefault(); S.screen = 'library'; render();
-    document.getElementById('search')?.focus();
+    e.preventDefault();
+    const el = document.getElementById('search'); if (el) { el.focus(); el.select(); }
   }
 });
 

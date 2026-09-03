@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"sort"
 	"strings"
 
@@ -26,6 +27,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
+	"github.com/wailsapp/wails/v2/pkg/options/windows"
 	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"github.com/sleepunit-agents/materialized-tunes/internal/ui"
@@ -95,16 +97,32 @@ func main() {
 		recipesMenu.AddText(name, nil, emit("open-view", name))
 	}
 
+	// Windows gets the frameless product window: the page draws the title
+	// bar (drag region, — ▢ ✕) and the rail carries the modes, so the
+	// native menu — whose only job on Windows was the Ctrl+1–4
+	// accelerators — would be a stray strip under nothing. macOS keeps its
+	// traffic lights (hidden-inset title bar) and the app/Edit menus the
+	// webview needs for copy/paste; Linux keeps the native frame — WebKitGTK
+	// frameless loses edge resizing. (redesign P1, 2026-09-03)
+	frameless := goruntime.GOOS == "windows"
+	var winMenu *menu.Menu
+	if !frameless {
+		winMenu = appMenu
+	}
 	err = wails.Run(&options.App{
 		Title:            "Materialized Tunes",
 		Width:            1440,
 		Height:           900,
 		MinWidth:         1100,
 		MinHeight:        700,
+		Frameless:        frameless,
 		BackgroundColour: &options.RGBA{R: 0x11, G: 0x13, B: 0x15, A: 255},
-		Menu:             appMenu,
-		OnStartup:        func(c context.Context) { ctx = c; desk.ctx = c },
-		Bind:             []interface{}{desk},
+		Menu:             winMenu,
+		Windows: &windows.Options{
+			DisableWindowIcon: true,
+		},
+		OnStartup: func(c context.Context) { ctx = c; desk.ctx = c },
+		Bind:      []interface{}{desk},
 		AssetServer: &assetserver.Options{
 			Assets:  ui.Assets(),
 			Handler: apiOnly(api), // anything not a static asset: /api/*
