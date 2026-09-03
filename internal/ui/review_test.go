@@ -156,6 +156,10 @@ func TestReviewSurface(t *testing.T) {
 	fo := call(http.MethodGet, "/api/plan/folder?view=v&location=src&folder=A/P1/Noise", "")
 	if fs := fo["files"].([]any); len(fs) != 2 {
 		t.Errorf("folder: %v", fo)
+	} else if f0 := fs[0].(map[string]any); f0["format"] != "wav" || f0["rate"] != 44100.0 || f0["size"] != 1000.0 {
+		// the Fix panel is the pack table over a folder: the rows carry
+		// the source format the player and the columns read
+		t.Errorf("folder row without the file's format: %v", f0)
 	}
 
 	// the correction: kind A on Kicks, seen before written

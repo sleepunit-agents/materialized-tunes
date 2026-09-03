@@ -6,7 +6,18 @@
 const $app = document.getElementById('app');
 const blurbCache = {};
 const audio = new Audio();
-audio.addEventListener('ended', () => { if (S.player) { S.player.playing = false; render(); } });
+// Auto-advance: the end of one sound is the start of the next in the list
+// on screen (redesign 6b, "plays through the folder hands-free"); the end
+// of the list just stops. Loop makes ended never fire — loop wins.
+audio.addEventListener('ended', () => {
+  if (!S.player) return;
+  if (S.autoAdv) {
+    const files = browseFiles();
+    const i = files.findIndex(f => f.path === S.player.path);
+    if (i >= 0 && i + 1 < files.length) { stepTo(files[i + 1]); return; }
+  }
+  S.player.playing = false; render();
+});
 audio.addEventListener('timeupdate', () => {
   const f = document.getElementById('wavefill');
   if (f && audio.duration) f.style.width = (audio.currentTime / audio.duration * 100) + '%';
@@ -44,6 +55,11 @@ const S = {
   fInst: '', fKey: '', fBpm: '', fCat: '',
   samples: null, samplesBusy: false,
   player: null,  // {path, name, dur, playing}
+  // the player's two switches (redesign 6b): loop the sound; step to the
+  // next one when it ends. Remembered — they are how you listen, not a
+  // per-folder choice.
+  loop: JSON.parse(localStorage.getItem('mtunes.loop') || 'false'),
+  autoAdv: JSON.parse(localStorage.getItem('mtunes.autoAdv') || 'false'),
   toast: '',
   upd: null, updBusy: false, updMsg: '',  // app self-update state
   booting: false, bootErr: [],           // launch: shell before catalog; what launch could not read
@@ -361,9 +377,28 @@ function playFile(path, name, dur, location) {
   const loc = location || S.packOpen?.location;
   if (!loc) return;
   audio.src = '/api/preview?' + new URLSearchParams({ location: loc, path });
+  audio.loop = !!S.loop;
   audio.play();
-  S.player = { path, name, dur, playing: true };
+  S.player = { path, name, dur, playing: true, location: loc };
   render();
+}
+
+// stepTo makes f the current sound. On Fix the row cursor follows it (the
+// why panel and the form read the cursor); everywhere, the player takes it.
+function stepTo(f) {
+  if (S.screen === 'plan' && f.row) {
+    if (S.pl.sel) S.pl.file = f.row;
+    else if (S.pl.file !== f.row) openTreeFile(f.row);
+  }
+  playFile(f.path, f.name, f.duration || 0, f.location);
+}
+
+// toggle the current sound; nothing playing → the first of the list on
+// screen. Space, and the player's own button.
+function togglePlay() {
+  if (S.player) { playFile(S.player.path, S.player.name, S.player.dur, S.player.location); return; }
+  const files = browseFiles();
+  if (files.length) stepTo(files[0]);
 }
 
 // locksFor is the recipe the locks on screen belong to. Before it existed,
@@ -527,7 +562,7 @@ function renderInner() {
   for (const i of $app.querySelectorAll('img.cover')) if (i.complete && i.naturalWidth) i.classList.add('ld');
   restoreScroll();
   focusRestore(focus);
-  document.querySelector('.pd-row.playing')?.scrollIntoView({ block: 'nearest' });
+  document.querySelector('.pd-row.playing, .pl-file.playing')?.scrollIntoView({ block: 'nearest' });
 }
 
 // groupRule builds the single [[include]] that covers every pack in a
@@ -947,7 +982,8 @@ function statusbar() {
   let upd = '';
   if (S.updBusy || S.updMsg) { const d = S.act.tasks.find(o => o.kind === 'update'); upd = `<span class="upd" style="display:inline-flex;align-items:center;gap:7px">${S.updBusy ? '<span class="spin"></span>' : ''}${esc(S.updMsg)}${d && d.total ? ` ${taskPct(d).toFixed(0)}%` : ''}${d ? pbar(taskPct(d)) : ''}</span>`; }
   else if (u && u.available) { const r = u.remote || {}; upd = `<span class="upd" data-act="upd-apply" title="${esc(r.sha || '')} · ${esc(r.subject || '')}">update → ${esc((r.sha || '').slice(0, 7))}</span>`; }
-  return `<div class="statusbar"><span>⌘1–5 modes</span><span>⌘\\ column</span><span>L cycle lens</span><span>⌘K search</span>
+  const keys = S.screen === 'plan' ? '<span>↑↓ next file</span><span>space play/pause</span><span>⇧↑↓ next folder</span><span>⏎ apply</span>' : (S.packOpen || (S.screen === 'library' && !S.discover && sampleMode())) ? '<span>↑↓ next file</span><span>space play/pause</span>' : '<span>⌘1–5 modes</span><span>⌘\\ column</span><span>L cycle lens</span>';
+  return `<div class="statusbar">${keys}<span>⌘K search</span>
     <span class="spacer"></span>${activity()}${upd}${build ? `<span title="${esc(u.note || (u.available ? 'a newer build is published' : 'up to date'))}">${esc(build)}</span>` : ''}<span>${ann}</span></div>`;
 }
 
@@ -1096,7 +1132,41 @@ function fileTable(files, { pack = false } = {}) {
 function browseFiles() {
   if (S.packOpen) return (S.pd?.files || []).filter(f => f.format).map(f => ({ ...f, location: S.packOpen.location }));
   if (S.screen === 'library' && !S.discover && sampleMode()) return (S.samples?.samples || []).filter(f => f.format);
+  if (S.screen === 'plan') return fixFiles();
   return [];
+}
+
+// fixFiles is the Fix screen's list in the pack table's shape: the open
+// folder's files (queues) or the files at this level of the tree. `row` is
+// the server's record, which the panel's cursor (pl.file) points at.
+function fixFiles() {
+  const pl = S.pl;
+  const src = pl.sel ? ((pl.files && pl.files.files) || []) : pl.tab === 'tree' ? ((pl.tree && pl.tree.files) || []) : [];
+  return src.filter(f => f.format).map(f => ({ ...f, path: f.source_path, duration: f.duration_s, row: f }));
+}
+
+// The listening order is the question's (redesign 6b): pitch for a
+// multisample (one instrument across the keyboard?), length for one-shots,
+// tempo for loops; name otherwise — and name breaks every tie.
+function listenOrder(category) {
+  return category === 'multisamples' ? 'pitch' : category === 'one-shots' ? 'length' : category === 'loops' ? 'BPM' : 'name';
+}
+function sortForListening(files, category) {
+  const order = listenOrder(category);
+  const by = order === 'pitch' ? f => pitchOf(f.key) : order === 'length' ? f => f.duration_s || 0 : order === 'BPM' ? f => f.bpm || 0 : null;
+  files.sort((a, b) => {
+    if (by) { const d = by(a) - by(b); if (d) return d; }
+    return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+  });
+}
+// pitchOf: "F#3" → 54, "Bb" → 10 (octave-less keys sort within one
+// octave, minor marks ignored), no key → last.
+function pitchOf(key) {
+  const m = /^([A-Ga-g])([#b♯♭]?)(-?\d)?/.exec(key || '');
+  if (!m) return 1e9;
+  const base = { c: 0, d: 2, e: 4, f: 5, g: 7, a: 9, b: 11 }[m[1].toLowerCase()];
+  const acc = m[2] === '#' || m[2] === '♯' ? 1 : m[2] === 'b' || m[2] === '♭' ? -1 : 0;
+  return (m[3] !== undefined ? (+m[3] + 1) * 12 : 0) + base + acc;
 }
 
 // The docked player: sticky at the foot of whichever list is playing.
@@ -1107,13 +1177,22 @@ function playerBar() {
     let h = 0; for (const c of pl.path) h = (h * 31 + c.charCodeAt(0) + i * 7) % 97;
     return `<span style="height:${4 + (h % 20)}px"></span>`;
   }).join('');
+  const files = browseFiles();
+  const i = files.findIndex(f => f.path === pl.path);
+  const cur = i >= 0 ? files[i] : null;
+  const sub = [fmtDur(pl.dur || (cur && cur.duration) || 0), cur && cur.key, cur && cur.format ? `${cur.depth || '?'}-bit ${cur.rate ? (cur.rate / 1000).toFixed(1) : '?'}k` : '', i >= 0 ? `${i + 1} of ${files.length}` : ''].filter(Boolean).join(' · ');
+  const hints = S.screen === 'plan' ? '↑↓ next · space pause · ⇧↑↓ next folder · ⏎ apply' : '↑↓ next · space pause';
   return `
     <div class="player">
       <span class="play-btn" data-act="toggle-play">${pl.playing ? '❚❚' : '▶'}</span>
-      <span style="font:500 11px var(--mono);color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:320px">${esc(pl.name)}</span>
+      <div style="display:flex;flex-direction:column;gap:1px;width:280px;min-width:0;flex:none">
+        <span style="font:500 11px var(--mono);color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(pl.path)}">${esc(pl.name)}</span>
+        <span style="font:400 10px var(--sans);color:var(--fg-faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(sub)}</span>
+      </div>
       <div class="wave">${bars}<div class="fill" id="wavefill"></div></div>
-      <span style="font:400 10.5px var(--mono);color:var(--fg-dim)">${fmtDur(pl.dur)}</span>
-      <span style="font:400 10px var(--sans);color:var(--fg-ghost)">↑↓ next · preview streams from source — nothing is written</span>
+      <span class="tog ${S.loop ? 'on' : ''}" data-act="tog-loop" title="play the sound again when it ends">Loop<i></i></span>
+      <span class="tog ${S.autoAdv ? 'on' : ''}" data-act="tog-auto" title="when it ends, play the next one in the list">Auto-advance<i></i></span>
+      <span style="font:400 10px var(--sans);color:var(--fg-ghost);white-space:nowrap;flex:none" title="the preview streams from the source — nothing is written">${hints}</span>
     </div>`;
 }
 
@@ -2230,7 +2309,7 @@ function planDecided(row) {
   pl.sel = null; pl.file = null; pl.form = null; pl.radius = null; pl.files = null;
   const rows = (pl.q && pl.q.rows) || [];
   const next = rows.slice(rows.indexOf(row) + 1).find(r => !pl.decided.has(rowKey(r)));
-  if (next && pl.tab === 'queues') openQueueRow(rows.indexOf(next), true); else render();
+  if (next && pl.tab === 'queues') openQueueRow(rows.indexOf(next), true, true); else render();
 }
 
 // The rebuild behind a decision or a withdrawal: the plan polled until it
@@ -2319,7 +2398,7 @@ function planGone(r) {
   return true;
 }
 
-async function openQueueRow(i, keepMsg) {
+async function openQueueRow(i, keepMsg, play) {
   const pl = S.pl;
   const row = pl.q.rows[i];
   pl.sel = row; pl.file = null; pl.files = null; pl.radius = null;
@@ -2334,6 +2413,10 @@ async function openQueueRow(i, keepMsg) {
   // an answer without a list (an error body, an older server) is drawn as
   // an empty folder with the reason, never handed to .map
   pl.files = r && Array.isArray(r.files) ? r : { files: [], error: (r && r.error) || 'folder answered without a file list' };
+  sortForListening(pl.files.files, row.category);
+  // a folder reached hands-free (the keyboard, the advance after a
+  // decision) starts sounding when Auto-advance is on
+  if (play && S.autoAdv) { const fs = fixFiles(); if (fs.length) { stepTo(fs[0]); return; } }
   render();
 }
 
@@ -2579,8 +2662,8 @@ function renderPlan() {
     const parts = pl.prefix ? pl.prefix.split('/') : [];
     const crumb = `<div class="crumb"><span data-act="pl-crumb" data-p="">${esc(S.view)}</span>${parts.map((p, i) => ` / <span data-act="pl-crumb" data-p="${esc(parts.slice(0, i + 1).join('/'))}">${esc(p)}</span>`).join('')}${t ? ` <span style="color:var(--fg-faint)">· ${n(t.total)} files</span>` : ''}</div>`;
     list = crumb + (t ? (t.dirs.map(d => `<div class="pl-dir" data-act="pl-dir" data-name="${esc(d.name)}"><span>${esc(d.name)}/</span><span style="color:var(--fg-faint)">${n(d.count)}</span></div>`).join('')
-      + t.files.map((f, i) => `<div class="pl-file ${pl.file === f ? 'on' : ''}" data-act="pl-file" data-i="${i}">
-          <span class="play-btn" data-act="pl-play" data-path="${esc(f.source_path)}" data-loc="${esc(f.location)}">${S.player && S.player.path === f.source_path && S.player.playing ? '❚❚' : '▶'}</span>
+      + t.files.map((f, i) => `<div class="pl-file ${pl.file === f ? 'on' : ''} ${S.player && S.player.path === f.source_path ? 'playing' : ''}" data-act="pl-file" data-i="${i}">
+          <span class="pb" data-act="pl-play" data-path="${esc(f.source_path)}" data-loc="${esc(f.location)}" data-n="${esc(f.name)}" data-d="${f.duration_s || 0}">${S.player && S.player.path === f.source_path && S.player.playing ? '❚❚' : '▶'}</span>
           <span class="nm" title="${esc(f.source_path)}">${esc(f.name)}</span>
           <span style="color:var(--fg-faint)">${esc(f.instrument || '—')}</span><span style="color:var(--fg-faint)">${esc(f.category || '—')}</span>
         </div>`).join('') + (t.total > t.dirs.reduce((a, d) => a + d.count, 0) + t.files.length ? `<div style="font:400 10.5px var(--mono);color:var(--fg-faint);padding:8px 4px">… more files at this level</div>` : ''))
@@ -2591,14 +2674,27 @@ function renderPlan() {
   if (pl.sel) {
     const r = pl.sel;
     const files = (pl.files && pl.files.files) || [];
-    panel = `<div style="font:600 12px var(--sans)">${esc(r.folder.split('/').pop())} <span style="font:400 10.5px var(--mono);color:var(--fg-faint)">· ${esc(r.pack_path)} · ${n(r.count)} files</span></div>
+    const rows = (pl.q && pl.q.rows) || [];
+    const at = rows.indexOf(r);
+    // the cursor file's own why, only where it says something the folder's
+    // did not — with ↑↓ moving the cursor, the same panel twice is noise
+    const facets = (o) => JSON.stringify([o.category || '', o.instrument || '', o.family || '', o.why || null]);
+    const fileWhy = pl.file && facets(pl.file) !== facets(r);
+    // the folder's files as the pack table shows them — play, name, what
+    // we think it is, key, length — in the order the question wants, the
+    // cursor row raised, the sounding row's button lit (redesign 6b)
+    panel = `<div style="display:flex;align-items:baseline;gap:8px"><span style="font:600 12px var(--sans)">${esc(r.folder.split('/').pop())}</span><span style="font:400 10.5px var(--mono);color:var(--fg-faint);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.pack_path)} · ${n(r.count)} files</span><span class="spacer"></span>${at >= 0 ? `<span style="font:500 10.5px var(--mono);color:var(--fg-dim);white-space:nowrap">${n(at + 1)} / ${n(pl.q.total_rows || rows.length)}</span>` : ''}</div>
       <div style="font:400 11px var(--sans);color:var(--fg-dim)">${esc(KIND_ASK[r.kind] || '')}</div>
       ${whyPanel({ category: r.category, instrument: r.instrument, family: r.family, why: r.why })}
-      <div class="pl-files" data-scroll>${files.map((f, i) => `<div class="pl-file ${pl.file === f ? 'on' : ''}" data-act="pl-qfile" data-i="${i}">
-          <span class="play-btn" data-act="pl-play" data-path="${esc(f.source_path)}" data-loc="${esc(f.location)}">${S.player && S.player.path === f.source_path && S.player.playing ? '❚❚' : '▶'}</span>
+      <div class="pl-listen"><span>LISTEN</span><span class="sub">sorted by ${esc(listenOrder(r.category))} · ↑↓ plays the next one · space pauses</span></div>
+      <div class="pl-files" data-scroll><div class="pl-fhead"><span></span><span>FILE</span><span>WE THINK</span><span>KEY</span><span style="text-align:right">LEN</span></div>${files.map((f, i) => {
+        const sounding = S.player && S.player.path === f.source_path;
+        return `<div class="pl-file ${pl.file === f ? 'on' : ''} ${sounding ? 'playing' : ''}" data-act="pl-qfile" data-i="${i}">
+          <span class="pb">${sounding && S.player.playing ? '❚❚' : f.format ? '▶' : '·'}</span>
           <span class="nm" title="${esc(f.source_path)}">${esc(f.name)}</span><span class="fm">${esc(f.instrument || '—')} · ${esc(f.category || '—')}</span>
-        </div>`).join('') || `<div style="padding:8px;font:400 10.5px var(--mono);color:var(--fg-faint)">${pl.files ? esc(pl.files.error || 'no files') : spinner('loading…')}</div>`}</div>
-      ${pl.file ? whyPanel(pl.file) : ''}
+          <span class="k">${esc(f.key || '')}${f.bpm ? `${f.key ? ' ' : ''}${f.bpm}` : ''}</span><span class="ln">${f.duration_s ? fmtDur(f.duration_s) : ''}</span>
+        </div>`; }).join('') || `<div style="padding:8px;font:400 10.5px var(--mono);color:var(--fg-faint)">${pl.files ? esc(pl.files.error || 'no files') : spinner('loading…')}</div>`}</div>
+      ${fileWhy ? whyPanel(pl.file) : ''}
       ${renderPlanForm()}`;
   } else if (pl.file) {
     const f = pl.file;
@@ -2615,7 +2711,7 @@ function renderPlan() {
         <div style="font:400 10.5px var(--sans);color:var(--fg-faint)">${esc(pl.local.dir)}</div>
         ${renderReconcile()}` : ''}`;
   }
-  return chead + `<div class="pl-wrap"><div class="pl-list"><div class="pl-rows" data-scroll>${list}</div>${band}</div><div class="pl-panel" data-scroll>${panel}</div></div>`;
+  return chead + `<div class="pl-wrap"><div class="pl-list"><div class="pl-rows" data-scroll>${list}</div>${band}</div><div class="pl-panel" data-scroll>${panel}</div></div>` + playerBar();
 }
 
 /* ---------- events ---------- */
@@ -2814,7 +2910,9 @@ function wire() {
         loadPdFolder().then(render);
       }
       if (act === 'play') { playFile(el.dataset.p, el.dataset.n, +el.dataset.d, el.dataset.loc || undefined); }
-      if (act === 'toggle-play') { if (S.player) playFile(S.player.path, S.player.name, S.player.dur); }
+      if (act === 'toggle-play') { togglePlay(); }
+      if (act === 'tog-loop') { S.loop = !S.loop; audio.loop = S.loop; localStorage.setItem('mtunes.loop', JSON.stringify(S.loop)); render(); }
+      if (act === 'tog-auto') { S.autoAdv = !S.autoAdv; localStorage.setItem('mtunes.autoAdv', JSON.stringify(S.autoAdv)); render(); }
       if (act === 'grp') {
         const g = (S.rModel?.groups || []).find(x => x.key === el.dataset.g);
         if (g) recipeEdit(g.state === 'all' ? uncheckGroup(g) : checkGroup(g),
@@ -2844,9 +2942,10 @@ function wire() {
       if (act === 'pl-tab') { S.pl.tab = el.dataset.k; S.pl.sel = null; S.pl.file = null; S.pl.form = null; S.pl.q = null; S.pl.tree = null; render(); }
       if (act === 'pl-kind') { S.pl.kind = el.dataset.k; S.pl.q = null; S.pl.sel = null; S.pl.form = null; render(); }
       if (act === 'pl-row') { openQueueRow(+el.dataset.i); }
-      if (act === 'pl-qfile') { e.stopPropagation(); const f = ((S.pl.files && S.pl.files.files) || [])[+el.dataset.i]; if (f) { S.pl.file = f; render(); } }
+      // a row is a sound: click plays it (again: pauses), as in the pack table
+      if (act === 'pl-qfile') { e.stopPropagation(); const f = ((S.pl.files && S.pl.files.files) || [])[+el.dataset.i]; if (f) { S.pl.file = f; if (f.format) playFile(f.source_path, f.name, f.duration_s || 0, f.location); else render(); } }
       if (act === 'pl-file') { const f = ((S.pl.tree && S.pl.tree.files) || [])[+el.dataset.i]; if (f) openTreeFile(f); }
-      if (act === 'pl-play') { e.stopPropagation(); playFile(el.dataset.path, el.dataset.path.split('/').pop(), 0, el.dataset.loc); }
+      if (act === 'pl-play') { e.stopPropagation(); playFile(el.dataset.path, el.dataset.n || el.dataset.path.split('/').pop(), +el.dataset.d || 0, el.dataset.loc); }
       if (act === 'pl-dir') { S.pl.prefix = S.pl.prefix ? S.pl.prefix + '/' + el.dataset.name : el.dataset.name; S.pl.tree = null; S.pl.file = null; S.pl.form = null; render(); }
       if (act === 'pl-crumb') { S.pl.prefix = el.dataset.p; S.pl.tree = null; S.pl.file = null; S.pl.form = null; render(); }
       if (act === 'pl-facet') { readForm(); S.pl.form.facet = el.dataset.k; S.pl.form.value = ''; S.pl.radius = null; if (el.dataset.k === 'alias' && S.pl.file && S.pl.file.why && S.pl.file.why.instrument) S.pl.form.word = S.pl.file.why.instrument.word || ''; if (el.dataset.k === 'alias') S.pl.form.path = (S.pl.file && S.pl.file.pack_path) || (S.pl.sel && S.pl.sel.pack_path) || S.pl.form.path; render(); }
@@ -2990,15 +3089,40 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && S.packOpen) { stopPlayback(); S.packOpen = null; S.pd = null; render(); return; }
   if (e.key === 'Escape' && S.player) { stopPlayback(); render(); return; }
   if ((e.metaKey || e.ctrlKey) && e.key === '\\') { e.preventDefault(); S.colOpen = !S.colOpen; persistUI(); render(); return; }
+  // ⇧↑↓ on Fix: the next / previous folder in the queue (redesign 6b)
+  if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && e.shiftKey && S.screen === 'plan' && S.pl.tab === 'queues') {
+    const rows = (S.pl.q && S.pl.q.rows) || [];
+    if (!rows.length) return;
+    e.preventDefault();
+    const i = rows.indexOf(S.pl.sel);
+    const j = i < 0 ? 0 : e.key === 'ArrowDown' ? Math.min(i + 1, rows.length - 1) : Math.max(i - 1, 0);
+    if (j !== i) openQueueRow(j, false, true);
+    return;
+  }
   if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
     const files = browseFiles();
     if (!files.length) return;
     e.preventDefault();
+    // the cursor is the sounding file; on Fix, a row picked without
+    // playing (not previewable) counts too
     let i = S.player ? files.findIndex(f => f.path === S.player.path) : -1;
-    const j = e.key === 'ArrowDown' ? Math.min(i + 1, files.length - 1) : Math.max(i - 1, 0);
+    if (i < 0 && S.screen === 'plan' && S.pl.file) i = files.findIndex(f => f.row === S.pl.file);
+    const j = i < 0 ? 0 : e.key === 'ArrowDown' ? Math.min(i + 1, files.length - 1) : Math.max(i - 1, 0);
     if (j === i) return; // at the edge of the list — keep playing
-    const f = files[j];
-    playFile(f.path, f.name, f.duration || 0, f.location);
+    stepTo(files[j]);
+    return;
+  }
+  if (e.key === ' ' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    if (!S.player && !browseFiles().length) return;
+    e.preventDefault();
+    togglePlay();
+    return;
+  }
+  // ⏎ on Fix with a form open = apply (the button's own path: preview
+  // first when the radius is not known yet)
+  if (e.key === 'Enter' && S.screen === 'plan' && S.pl.form && !e.metaKey && !e.ctrlKey) {
+    const b = document.querySelector('[data-act="pl-apply"]');
+    if (b) { e.preventDefault(); b.click(); }
     return;
   }
   if (map[e.key] && !e.altKey && !e.shiftKey) { if (e.metaKey || e.ctrlKey) e.preventDefault(); setMode(map[e.key]); return; }

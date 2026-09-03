@@ -7,6 +7,43 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.51 — 2026-09-03 (Fix listens like the pack page)
+
+Jonathan: "the sample preview on fix/plan isn't what was in the mockup.
+we want it to be like the other places we have it so up and down moves
+between sounds and so on." The Fix panel's file list was its own thing —
+a play button per row, no keys, no player bar — while the pack page and
+the Samples list already shared one table and one player (↑↓ to
+audition, the sounding row highlighted). Now Fix is the third place the
+same file table lives (redesign `6b`, docs/redesign-2026-09-03). The
+folder endpoint's rows carry what the pack table's do — source format,
+depth, rate, size, key, BPM, duration — read from the catalog and the
+harvest meta beside the placement (`format` absent = not previewable: a
+companion document, or audio the scan could not read). The panel's
+LISTEN table shows play · file · what we think · key · length, **in the
+order the question wants**: by pitch for a multisample folder (is it one
+instrument across the keyboard?), by length for one-shots, by BPM for
+loops, by name otherwise — name breaks every tie. A row is a sound:
+click plays it, click again pauses; **↑↓ moves the cursor and plays the
+next one**; **space** pauses and resumes (nothing sounding → the first
+of the list); **⇧↑↓** jumps to the next / previous folder in the queue;
+**⏎** applies the open form (the button's own path — preview first when
+the radius is not known). The player is docked under both columns as on
+the pack page, showing key, format and "3 of 7", with two remembered
+switches: **Loop**, and **Auto-advance** — when the sound ends the next
+one plays, through the folder hands-free, and a folder reached by ⇧↑↓
+or by the advance after a decision starts sounding on its own. Space
+and the switches work on the pack page and the Samples list too; the
+status bar names the keys that apply to the screen. The cursor file's
+own why panel now appears only where it differs from the folder's — with
+↑↓ moving the cursor, the same panel twice was noise. Verified in
+headless Chromium over a throwaway library: a seven-note folder listed
+C2 · F#2 · A2 · D3 · G3 · C4 · E4 regardless of filename order, a
+one-shot folder shortest first; ↓↓↑ walked and played; space paused and
+resumed; auto-advance stepped from the first sound to the second on
+`ended`; ⇧↓ opened the next folder and (auto-advance on) played its
+first file; ⏎ applied a picked value.
+
 ## v0.9.50 — 2026-09-03 (the migrate button follows the lock)
 
 Jonathan: "I go in and I fix a few, the number that will get moved goes

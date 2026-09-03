@@ -330,14 +330,25 @@
   .pl-row .n { font: 600 11px var(--mono); color: var(--fg); text-align: right; }
   .pl-tag { font: 600 9.5px var(--mono); letter-spacing: .04em; text-transform: uppercase; padding: 2px 6px; border-radius: 3px; background: var(--bg-raise); color: var(--fg-dim); white-space: nowrap; }
   .pl-tag.unsorted { color: var(--err); } .pl-tag.uncategorized { color: var(--amber); } .pl-tag.general { color: var(--teal); } .pl-tag.done { color: var(--green); }
-  .pl-file { display: grid; grid-template-columns: 22px minmax(0, 1fr) 90px 80px; gap: 8px; align-items: center; padding: 3px 4px; border-bottom: 1px solid #16191c; font: 400 10.5px var(--mono); color: var(--fg-num); cursor: pointer; }
+  /* a file row on Fix (the tree's files, the open folder's LISTEN table):
+     the pack table's row in the panel's width — the cursor row raised,
+     the sounding row's button lit teal (redesign 6b) */
+  .pl-file { display: grid; grid-template-columns: 22px minmax(0, 1fr) 90px 80px; gap: 8px; align-items: center; padding: 3px 6px; border-bottom: 1px solid #16191c; font: 400 10.5px var(--mono); color: var(--fg-num); cursor: pointer; }
   .pl-file:hover, .pl-file.on { background: var(--bg-card); }
-  .pl-file .nm { overflow-wrap: anywhere; }
+  .pl-file.playing { background: var(--bg-sel); }
+  .pl-file .nm { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pl-file .pb { width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--bord-raise); color: var(--fg-faint); display: flex; align-items: center; justify-content: center; font: 700 7px var(--sans); user-select: none; flex: none; }
+  .pl-file.playing .pb { background: var(--teal); border-color: var(--teal); color: #0b1516; }
+  .pl-file .k, .pl-file .ln { color: var(--fg-dim); font-weight: 500; white-space: nowrap; }
+  .pl-file .ln { text-align: right; }
+  .pl-listen { display: flex; align-items: baseline; gap: 10px; margin-bottom: -6px; }
+  .pl-listen > span:first-child { font: 600 10px var(--sans); letter-spacing: .09em; color: var(--fg-faint); }
+  .pl-listen .sub { font: 400 10.5px var(--sans); color: var(--fg-faint); }
+  .pl-fhead { display: grid; grid-template-columns: 22px minmax(0, 1fr) minmax(0, .55fr) 56px 52px; gap: 8px; padding: 4px 6px; font: 600 9.5px var(--sans); letter-spacing: .09em; color: var(--fg-faint); border-bottom: 1px solid var(--bord-card); position: sticky; top: 0; background: var(--bg-panel); z-index: 1; }
   /* the panel's file box: full names, never clipped — the box scrolls sideways instead */
-  .pl-files { max-height: min(420px, 44vh); overflow: auto; border: 1px solid var(--bord); border-radius: 5px; }
-  .pl-files .pl-file { display: flex; gap: 8px; width: max-content; min-width: 100%; box-sizing: border-box; }
-  .pl-files .pl-file .nm { white-space: nowrap; overflow: visible; }
-  .pl-files .pl-file .fm { color: var(--fg-faint); white-space: nowrap; }
+  .pl-files { flex: none; max-height: min(420px, 44vh); overflow: auto; border: 1px solid var(--bord); border-radius: 5px; }
+  .pl-files .pl-file { grid-template-columns: 22px minmax(0, 1fr) minmax(0, .55fr) 56px 52px; padding: 4px 6px; }
+  .pl-files .pl-file .fm { color: var(--fg-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .why { font: 400 10.5px var(--mono); color: var(--fg-dim); display: flex; flex-direction: column; gap: 3px; background: var(--bg-deep); border: 1px solid var(--bord); border-radius: 5px; padding: 8px 10px; }
   .why b { color: var(--fg); font-weight: 600; }
   .why .t { color: var(--fg-faint); }
@@ -434,6 +445,13 @@
   .pd-row.playing { background: var(--bg-sel); }
   .player { position: sticky; bottom: 0; display: flex; align-items: center; gap: 14px; padding: 9px 18px; background: var(--bg-deep); border-top: 1px solid var(--bord-card); }
   .play-btn { width: 28px; height: 28px; border-radius: 50%; background: var(--teal); color: #0b1516; display: flex; align-items: center; justify-content: center; font: 700 10px var(--sans); cursor: pointer; flex: none; user-select: none; }
+  /* the player's switches: Loop, Auto-advance */
+  .player .tog { display: inline-flex; align-items: center; gap: 7px; font: 500 11px var(--sans); color: var(--fg-dim); cursor: pointer; user-select: none; white-space: nowrap; flex: none; }
+  .player .tog i { width: 26px; height: 14px; border-radius: 7px; background: var(--bord-raise); position: relative; transition: background .12s; }
+  .player .tog i::after { content: ''; position: absolute; left: 2px; top: 2px; width: 10px; height: 10px; border-radius: 50%; background: var(--fg-dim); transition: left .12s, background .12s; }
+  .player .tog.on { color: var(--fg); }
+  .player .tog.on i { background: var(--teal); }
+  .player .tog.on i::after { left: 14px; background: #0b1516; }
   .wave { position: relative; flex: 1; display: flex; align-items: center; gap: 1.5px; height: 26px; overflow: hidden; }
   .wave span { width: 2px; background: var(--teal); opacity: .45; border-radius: 1px; flex: none; }
   .wave .fill { position: absolute; top: 0; bottom: 0; left: 0; width: 0; background: rgba(61,196,207,.16); border-right: 1px solid var(--teal); }

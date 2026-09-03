@@ -53,12 +53,34 @@ type fileRow struct {
 	Instrument string       `json:"instrument,omitempty"`
 	Family     string       `json:"family,omitempty"`
 	Why        *harvest.Why `json:"why,omitempty"`
+	// What the pack table shows for the same file (the source's format and
+	// the harvested key/BPM): the Fix panel lists a folder with the same
+	// columns and plays it with the same keys — one file table, wherever
+	// the file is met (redesign 6b). Format absent = not previewable (a
+	// companion document, or audio the scan could not read).
+	Format   string `json:"format,omitempty"`
+	Channels int    `json:"channels,omitempty"`
+	Rate     int    `json:"rate,omitempty"`
+	Depth    int    `json:"depth,omitempty"`
+	Size     int64  `json:"size,omitempty"`
+	Key      string `json:"key,omitempty"`
+	BPM      int    `json:"bpm,omitempty"`
 }
 
 func (s *Server) fileRow(e plan.Entry) fileRow {
 	m := s.inputs.Meta(e.Location)[e.SourcePath]
-	return fileRow{Name: path.Base(e.SourcePath), Location: e.Location, SourcePath: e.SourcePath, OutPath: e.OutPath,
-		PackPath: e.PackPath, Kind: e.Kind, DurationS: e.DurationS, Category: m.Category, Instrument: m.Instrument, Family: m.Family, Why: m.Why}
+	r := fileRow{Name: path.Base(e.SourcePath), Location: e.Location, SourcePath: e.SourcePath, OutPath: e.OutPath,
+		PackPath: e.PackPath, Kind: e.Kind, DurationS: e.DurationS, Category: m.Category, Instrument: m.Instrument, Family: m.Family, Why: m.Why,
+		Size: e.SourceSize, Key: m.Key, BPM: m.BPM}
+	if cat, err := s.inputs.Catalog(e.Location); err == nil {
+		if ce, ok := cat[e.SourcePath]; ok && ce.Audio != nil {
+			r.Format, r.Channels, r.Rate, r.Depth = ce.Audio.Format, ce.Audio.Channels, ce.Audio.SampleRate, ce.Audio.BitDepth
+			if r.DurationS == 0 {
+				r.DurationS = ce.Audio.DurationS
+			}
+		}
+	}
+	return r
 }
 
 // queues groups the plan's placement failures by source folder, biggest
