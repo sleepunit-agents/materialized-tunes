@@ -7,6 +7,24 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.42 — 2026-09-02 (the correction form's note box no longer looks like a verdict)
+
+Jonathan, on the Octatrack's `Origin Sound/Music Loops/Melody`: "your
+thing says this is a lie and these are chops, but they're not." The
+resolver reads that folder as loops · synth / lead / pad — the thing
+saying "chops" was the **placeholder text** in the correction form's
+*note* field, `all 143 are chops; the folder name lies`, an example
+lifted from the Dr Sample pin. Placeholder text sits in the box in the
+same grey the queue uses for its whys, on a screen whose entire job is to
+tell you what the app decided and why. An example verdict there reads as
+the verdict.
+
+The placeholder is now `what your copy shows (optional)`; the example
+moved to the field's tooltip, where it is framed as one. No behaviour
+change.
+
+---
+
 ## v0.9.41 — 2026-09-02 (the desktop app hands files over through a save dialog)
 
 Jonathan: "dump opened a browser window to

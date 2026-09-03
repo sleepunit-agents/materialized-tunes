@@ -2046,7 +2046,7 @@ function renderPlanForm() {
     <label>covers</label>
     <input type="text" id="pl-path" value="${esc(f.path)}" title="the folder, or a glob within the pack (WAV/Textures/Chop *.wav)">
     <label>note — the evidence</label>
-    <input type="text" id="pl-note" value="${esc(f.note)}" placeholder="all 143 are chops; the folder name lies">
+    <input type="text" id="pl-note" value="${esc(f.note)}" placeholder="what your copy shows (optional)" title="one line of evidence for whoever reads the export later — e.g. 'keyed, no tempo: single chords' or 'sixteen numbered slices, the folder name lies'">
     <div style="display:flex;align-items:center;gap:6px;font:400 11px var(--sans);color:var(--fg-dim)"><input type="checkbox" id="pl-local" ${f.local ? 'checked' : ''}> my opinion only — keep it out of the export</div>
     ${rad}
     <div class="pl-btns">
