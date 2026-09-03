@@ -18,6 +18,17 @@ audio.addEventListener('ended', () => {
   }
   S.player.playing = false; render();
 });
+// The element's own failure — no decoder for this file, the stream broke —
+// arrives as an event, not a rejection: the player says so and the log
+// gets a line. Code 1 (aborted) is the previous sound being superseded,
+// the same non-event as play()'s AbortError below.
+audio.addEventListener('error', () => {
+  const me = audio.error;
+  if (!S.player || (me && me.code === 1)) return;
+  const why = me ? ({ 2: 'network error', 3: 'could not decode', 4: 'format not supported' }[me.code] || `code ${me.code}`) : 'unknown error';
+  S.player.playing = false; S.player.err = why; render();
+  report(`the preview of ${S.player.name}`, new Error(why + (me && me.message ? ': ' + me.message : '')));
+});
 audio.addEventListener('timeupdate', () => {
   const f = document.getElementById('wavefill');
   if (f && audio.duration) f.style.width = (audio.currentTime / audio.duration * 100) + '%';
@@ -78,26 +89,69 @@ const fmtB = (b) => {
 };
 const n = (x) => (x ?? 0).toLocaleString('en-US');
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const api = (p, opt) => fetch(p, opt).then(r => r.json().catch(() => { throw new Error(`${p.split('?')[0]} answered ${r.status} with no JSON`); }),
-  e => { throw new Error(`${p.split('?')[0]}: ${e.message || e}`); });
+const api = (p, opt) => {
+  const path = p.split('?')[0], verb = (opt && opt.method) || 'GET', t0 = performance.now();
+  return fetch(p, opt).then(r => {
+    mark(`${verb} ${p.length > 140 ? p.slice(0, 140) + '…' : p} → ${r.status} ${Math.round(performance.now() - t0)}ms`);
+    return r.json().catch(() => { throw new Error(`${path} answered ${r.status} with no JSON`); });
+  }, e => { mark(`${verb} ${path} ✗ ${e.message || e}`); throw new Error(`${path}: ${e.message || e}`); });
+};
+
+// trace is the last forty things the page did — every API call, every
+// sound started, every screen change, every step key — so a report says
+// what led up to a break, not just where it landed.
+const trace = [];
+function mark(s) {
+  trace.push(`${new Date().toISOString().slice(11, 23)} ${s}`);
+  if (trace.length > 40) trace.shift();
+}
+
+// report ships one page-side failure to the server, which writes it to the
+// process log (log.go, CLIENT lines). The desktop build has no console:
+// until this, a break on the page was a red panel and nothing on disk, and
+// the log Jonathan sent could not have had it (2026-09-03). Never throws —
+// a broken report must not become a second one.
+function report(where, err, isFatal) {
+  const body = { where, message: String((err && err.message) || err), stack: (err && err.stack) || '', fatal: !!isFatal,
+    screen: S.screen, player: S.player ? S.player.path : '', trace: trace.slice() };
+  try {
+    fetch('/api/log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), keepalive: true }).catch(() => {});
+  } catch (e) { /* nothing left to tell */ }
+}
 
 // A blank window is the one failure the app must never show. Anything that
 // throws on the way to (or inside) a render lands on screen instead — what
 // failed, where the log is — and the page keeps whatever it had drawn.
+// The panel can be dismissed (the page usually still works) or the page
+// reloaded from a button that does it: the old copy said "press F5", which
+// does nothing in the desktop shell — the webview eats browser keys — so
+// it was telling the user to do something that could not help.
 function fatal(where, err) {
   const msg = (err && (err.stack || err.message)) || String(err);
   console.error(where, err);
+  report(where, err, true);
   let el = document.getElementById('fatal');
   if (!el) {
     el = document.createElement('div'); el.id = 'fatal';
     el.style.cssText = 'position:fixed;left:12px;right:12px;bottom:34px;z-index:99;background:#2a1512;border:1px solid var(--err);border-radius:6px;padding:10px 14px;font:400 11.5px var(--mono);color:#f2b8b0;white-space:pre-wrap;max-height:40vh;overflow:auto';
+    el.addEventListener('click', (e) => {
+      const act = e.target && e.target.dataset && e.target.dataset.act;
+      if (act === 'fatal-close') el.remove();
+      if (act === 'fatal-reload') location.reload();
+    });
     document.body.appendChild(el);
   }
+  const btn = 'cursor:pointer;border:1px solid currentColor;border-radius:4px;padding:1px 8px;flex:none';
   const log = S.summary && S.summary.log ? `\nlog: ${S.summary.log}` : '';
-  el.textContent = `something broke in ${where} — reload (F5) after fixing, and send the log\n${msg}${log}`;
+  el.innerHTML = `<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><b style="flex:1">something broke in ${esc(where)}</b><span data-act="fatal-reload" style="${btn}">reload the page</span><span data-act="fatal-close" style="${btn}">dismiss</span></div>${esc(msg)}${esc(log)}\nthis is in the log already — send it if the app looks wrong after dismissing`;
 }
 window.addEventListener('error', (e) => fatal('script', e.error || e.message));
-window.addEventListener('unhandledrejection', (e) => fatal('a request', e.reason));
+// api() prefixes its errors with the path; anything else that rejects
+// without a catch is the page's own, not a request's.
+window.addEventListener('unhandledrejection', (e) => {
+  const r = e.reason, m = String((r && r.message) || r);
+  fatal(/^\/api\//.test(m) ? `the request ${m.split(/[: ]/)[0]}` : 'the page', r);
+});
 
 async function boot() {
   // Wails injects window.runtime; the browser build never has it
@@ -373,16 +427,35 @@ function stopPlayback() {
 function playFile(path, name, dur, location) {
   if (S.player && S.player.path === path) {
     if (S.player.playing) { audio.pause(); S.player.playing = false; }
-    else { audio.play(); S.player.playing = true; }
+    else { S.player.err = ''; safePlay(); S.player.playing = true; }
     render(); return;
   }
   const loc = location || S.packOpen?.location;
   if (!loc) return;
+  mark(`play ${path}`);
   audio.src = '/api/preview?' + new URLSearchParams({ location: loc, path });
   audio.loop = !!S.loop;
-  audio.play();
   S.player = { path, name, dur, playing: true, location: loc };
+  safePlay();
   render();
+}
+
+// play() hands back a promise, and the browser rejects it when the next
+// src arrives before this one started — ↓ pressed faster than the preview
+// streams from the source, auto-advance landing on a click. That
+// AbortError ("The play() request was interrupted by a new load request")
+// is the old sound being superseded, not a failure: nothing to show.
+// Unhandled, it reached the global rejection handler and put the red
+// panel up over a working page (2026-09-03, Fix). Anything else — the
+// element refused, no decoder — makes the player say so and logs a line.
+function safePlay() {
+  const p = audio.play();
+  if (!p || !p.catch) return;
+  p.catch(e => {
+    if (e && e.name === 'AbortError') return;
+    if (S.player) { S.player.playing = false; S.player.err = (e && e.message) || String(e); render(); }
+    report(`playing ${S.player ? S.player.name : 'a sound'}`, e);
+  });
 }
 
 // stepTo makes f the current sound. On Fix the row cursor follows it (the
@@ -469,7 +542,9 @@ async function startMigrate() {
 
 /* ---------- render ---------- */
 
+let markedScreen = '';
 function render() {
+  if (S.screen !== markedScreen) { markedScreen = S.screen; mark(`screen ${S.screen}`); }
   try { renderInner(); } catch (e) { fatal(`rendering the ${S.screen} screen`, e); }
 }
 
@@ -1190,7 +1265,7 @@ function playerBar() {
   const files = browseFiles();
   const i = files.findIndex(f => f.path === pl.path);
   const cur = i >= 0 ? files[i] : null;
-  const sub = [fmtDur(pl.dur || (cur && cur.duration) || 0), cur && cur.key, cur && cur.format ? `${cur.depth || '?'}-bit ${cur.rate ? (cur.rate / 1000).toFixed(1) : '?'}k` : '', i >= 0 ? `${i + 1} of ${files.length}` : ''].filter(Boolean).join(' · ');
+  const sub = [pl.err && `couldn't play: ${pl.err}`, fmtDur(pl.dur || (cur && cur.duration) || 0), cur && cur.key, cur && cur.format ? `${cur.depth || '?'}-bit ${cur.rate ? (cur.rate / 1000).toFixed(1) : '?'}k` : '', i >= 0 ? `${i + 1} of ${files.length}` : ''].filter(Boolean).join(' · ');
   const hints = S.screen === 'plan' ? '↑↓ next · space pause · ⇧↑↓ next folder · ⏎ apply' : '↑↓ next · space pause';
   return `
     <div class="player">
@@ -3093,6 +3168,7 @@ window.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && e.target.tagName === 'INPUT' && /^rf-/.test(e.target.id)) document.querySelector('[data-act="rf-save"]')?.click();
     return;
   }
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === ' ') mark(`key ${e.shiftKey ? '⇧' : ''}${e.key === ' ' ? 'space' : e.key}`);
   const map = { 1: 'library', 2: 'discover', 3: 'materialize', 4: 'fix', 5: 'setup' };
   if (e.key === 'Escape' && S.lensMenu) { S.lensMenu = false; render(); return; }
   if (e.key === 'Escape' && S.packOpen) { stopPlayback(); S.packOpen = null; S.pd = null; render(); return; }

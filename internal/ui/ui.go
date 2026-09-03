@@ -151,6 +151,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/storages", s.storages)
 	mux.HandleFunc("/api/volumes", s.volumes)
 	mux.HandleFunc("/api/dirs", s.dirs)
+	mux.HandleFunc("/api/log", s.clientLog)
 	return logged(mux)
 }
 

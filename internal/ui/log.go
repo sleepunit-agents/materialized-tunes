@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"time"
 
@@ -140,4 +141,52 @@ func logged(h http.Handler) http.Handler {
 		}()
 		h.ServeHTTP(sw, r)
 	})
+}
+
+// clientLog is POST /api/log: the page's own failures — a throw in a
+// render, a promise nobody caught, a sound the element could not play —
+// land in the same file as the server's, as CLIENT lines. Until this the
+// desktop build's only record of a page-side break was the red panel on
+// screen: the log Jonathan sent had nothing in it because nothing on the
+// page could write to it ("The play() request was interrupted by a new
+// load request", Fix, 2026-09-03). The body carries the page's trace —
+// the last forty things it did — so the line says what led up to it.
+func (s *Server) clientLog(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonErr(w, http.StatusMethodNotAllowed, fmt.Errorf("POST only"))
+		return
+	}
+	var in struct {
+		Where   string   `json:"where"`
+		Message string   `json:"message"`
+		Stack   string   `json:"stack"`
+		Fatal   bool     `json:"fatal"`
+		Screen  string   `json:"screen"`
+		Player  string   `json:"player"`
+		Trace   []string `json:"trace"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 256<<10)).Decode(&in); err != nil {
+		jsonErr(w, http.StatusBadRequest, err)
+		return
+	}
+	kind := "error"
+	if in.Fatal {
+		kind = "FATAL"
+	}
+	var b bytes.Buffer
+	fmt.Fprintf(&b, "CLIENT %s in %s: %s", kind, in.Where, strings.TrimSpace(in.Message))
+	if in.Screen != "" || in.Player != "" {
+		fmt.Fprintf(&b, " (screen %s, playing %q)", in.Screen, in.Player)
+	}
+	if st := strings.TrimSpace(in.Stack); st != "" && st != strings.TrimSpace(in.Message) {
+		fmt.Fprintf(&b, "\n  stack: %s", strings.ReplaceAll(st, "\n", "\n         "))
+	}
+	if len(in.Trace) > 0 {
+		b.WriteString("\n  trace (oldest first):")
+		for _, t := range in.Trace {
+			fmt.Fprintf(&b, "\n    %s", t)
+		}
+	}
+	log.Print(b.String())
+	jsonOut(w, map[string]bool{"ok": true})
 }

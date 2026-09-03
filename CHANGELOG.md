@@ -7,6 +7,48 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.54 — 2026-09-03 (the page's errors reach the log; the panel stops lying)
+
+Jonathan, on Fix: "getting *something broke in a request — reload (F5)
+after fixing, and send the log / The play() request was interrupted by a
+new load request* on occasion now using plan/fix … whatever has happened
+has pissed the whole app off enough that it's exploded." Two things were
+wrong and neither was the thing the panel named.
+
+The error is the browser's, and it is not an error. `audio.play()` hands
+back a promise, and the element rejects it with that exact AbortError
+when the next `src` arrives before the previous sound started — ↓ pressed
+faster than the preview streams from the source (a network location
+copies the file first), or auto-advance landing while a row is clicked.
+Nothing caught the promise, so it reached the page's last-resort
+rejection handler, which called it "a request" and put the red panel up.
+`safePlay` now owns that promise: an AbortError is the old sound being
+superseded and is ignored; anything else — no decoder, the element
+refused — makes the docked player say *couldn't play: …* and logs a
+line. The element's own `error` event (a stream that breaks mid-file)
+gets the same treatment.
+
+"Exploded" was the panel itself. It could not be dismissed, it sat over
+the docked player and the bottom 40% of the window, and it stayed for
+the rest of the session — one benign rejection and the app looked
+broken until it was restarted. And "reload (F5)" was untrue in the
+desktop build: the webview eats browser keys, so F5 does nothing. The
+panel now has a *dismiss* button (the page usually still works) and a
+*reload the page* button that actually reloads it.
+
+The bigger gap: the log Jonathan sent could not have had this in it. The
+desktop exe has no console, and the page had no way to write to
+`mtunes.log` — a page-side break was a red panel and nothing on disk.
+Every `fatal()` and every player failure now POSTs to `/api/log`, which
+writes a `CLIENT` line with where it happened, what screen was up, what
+was playing, the stack, and the page's trace: the last forty things it
+did (every API call with status and time, every sound started, every
+step key, every screen change). The next "it broke" is a `grep CLIENT`
+away, with the keystrokes that led to it. Verified in headless Chromium
+over the throwaway workspace: eight sounds stepped in one tick — zero
+unhandled rejections, no panel; a forced fatal shows the two buttons and
+no "F5", dismisses, and its line (stack + trace) is in the log.
+
 ## v0.9.53 — 2026-09-03 (the filter column reads the lexicon)
 
 The v0.9.52 fix left one list behind: the Instrument section of the
