@@ -1495,6 +1495,9 @@ one action vocabulary:
   file in it, the majority answer with its why, and each file's own answer
   where it differs. `GET /api/plan/dump?view=` (text; `&format=json` for
   tools), the *dump* chip on the Plan screen, `mtunes plan dump <view>`.
+  In the desktop app the chip (and the local-layer *export* beside it)
+  saves through a native dialog — the webview has no download path
+  *(v0.9.41)*; the browser build downloads the endpoint's response.
   The queues are a picker for the person deciding one folder at a time;
   the dump is for whoever maintains the lexicon, reading every silence in
   one sitting. Not a normal user's control — it will move behind a

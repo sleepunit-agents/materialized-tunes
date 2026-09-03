@@ -76,6 +76,14 @@ type runState struct {
 }
 
 func Handler(ws *workspace.Workspace) http.Handler {
+	return New(ws).Handler()
+}
+
+// New wires the server without the mux: the desktop shell holds the
+// *Server so native surfaces (a save dialog) can ask it for the same bytes
+// the endpoints serve. Launch work — annotations sync, re-harvest,
+// auto-scan — starts here, once.
+func New(ws *workspace.Workspace) *Server {
 	s := &Server{ws: ws, scans: map[string]*scanState{}, plans: map[string]*planArtifact{}}
 	selfupdate.CleanupOld() // sweep the exe a past self-update renamed aside
 	// Freshen annotations as soon as the app opens — the rules card should
@@ -91,6 +99,11 @@ func Handler(ws *workspace.Workspace) http.Handler {
 		}
 	})
 	go guard("auto-scan", s.autoScan)
+	return s
+}
+
+// Handler is the HTTP surface over the server: static assets and /api/*.
+func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	static, _ := fs.Sub(assets, "assets")
 	mux.Handle("/", http.FileServer(http.FS(static)))

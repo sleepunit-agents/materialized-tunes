@@ -7,6 +7,27 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.41 — 2026-09-02 (the desktop app hands files over through a save dialog)
+
+Jonathan: "dump opened a browser window to
+http://wails.localhost/api/plan/dump?view=Samples which obviously no
+work." The two "hand me a file" chips on the Plan screen — *dump* and the
+local-layer *export* — were `window.open` on an endpoint answering
+`Content-Disposition: attachment`. A browser turns that into a download.
+The Wails webview has no download path of its own: it hands a new window
+to the OS browser, and `wails.localhost` is an origin that only exists
+inside the app.
+
+**The desktop shell binds a `Desktop` object** (`window.go.main.Desktop`)
+with `SaveDump(view)` and `SaveLocalExport()`: Go builds the same bytes
+the endpoints serve (`ui.Server.DumpText`, `ui.Server.LocalExport` —
+factored out of the handlers), opens a native save dialog defaulting to
+`~/Downloads` and the file name the endpoint would have used, writes the
+file, and the Plan screen says where it went. Cancel is silent. The
+browser build still gets the download; the endpoints are unchanged.
+`ui.New(ws)` + `Server.Handler()` replace the one-shot `ui.Handler` so
+the shell can hold the server.
+
 ## v0.9.40 — 2026-09-02 (dump: what isn't matched and why, all of it)
 
 Jonathan: "we should add a dump button or something on the plan page …

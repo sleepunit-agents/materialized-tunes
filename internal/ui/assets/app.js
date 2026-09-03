@@ -1118,6 +1118,21 @@ async function togglePack(e) {
 
 // Applies an edit and re-reads the recipe: the group model is derived from
 // pre-flight, so there is nothing to keep in sync by hand.
+// saveFile hands a file to the person. In the browser build the endpoint's
+// Content-Disposition: attachment is the download; in the desktop app the
+// webview has no download path (window.open lands in the OS browser with a
+// wails.localhost URL that means nothing there), so the bound Go side
+// writes the same bytes through a native save dialog.
+function saveFile(url, method, args) {
+  const desk = window.go && window.go.main && window.go.main.Desktop;
+  if (!desk || !desk[method]) { window.open(url, '_blank'); return; }
+  const pl = S.pl;
+  desk[method](...args).then(path => {
+    pl.msg = path ? `saved ${path}` : '';
+    render();
+  }).catch(err => { pl.msg = 'save failed: ' + (err && err.message ? err.message : err); render(); });
+}
+
 function recipeEdit(promise, toast) {
   S.pfBusy = true; render();
   Promise.resolve(promise).then(ok => {
@@ -2343,8 +2358,8 @@ function wire() {
       if (act === 'pl-apply') { if (S.pl.radius) planCorrect(false); else planCorrect(true).then(() => { if (S.pl.radius && !S.pl.msg) planCorrect(false); }); }
       if (act === 'pl-ack') { planAck(); }
       if (act === 'pl-report') { planReport(); }
-      if (act === 'pl-export') { window.open('/api/local/export', '_blank'); }
-      if (act === 'pl-dump') { window.open('/api/plan/dump?' + new URLSearchParams({ view: S.view }), '_blank'); }
+      if (act === 'pl-export') { saveFile('/api/local/export', 'SaveLocalExport', []); }
+      if (act === 'pl-dump') { saveFile('/api/plan/dump?' + new URLSearchParams({ view: S.view }), 'SaveDump', [S.view]); }
       if (act === 'pl-reconcile') { planReconcile(); }
       if (act === 'pl-drop') { const v = S.pl.rec.verdicts[+el.dataset.i]; planDrop([{ file: v.file, vendor: v.vendor, pack: v.pack, kind: v.kind, entry: v.entry }]); }
       if (act === 'pl-withdraw') { planWithdraw(S.pl.rec.verdicts[+el.dataset.i]); }

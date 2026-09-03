@@ -63,7 +63,9 @@ func main() {
 	}
 	ui.OpenLog(ws.Root, false)
 
-	api := ui.Handler(ws)
+	srv := ui.New(ws)
+	api := srv.Handler()
+	desk := &Desktop{srv: srv}
 
 	// Native menus: standard app/edit menus (Edit is what gives the webview
 	// working copy/paste on macOS), Go — the main screens with ⌘1–4 — and
@@ -101,7 +103,8 @@ func main() {
 		MinHeight:        700,
 		BackgroundColour: &options.RGBA{R: 0x11, G: 0x13, B: 0x15, A: 255},
 		Menu:             appMenu,
-		OnStartup:        func(c context.Context) { ctx = c },
+		OnStartup:        func(c context.Context) { ctx = c; desk.ctx = c },
+		Bind:             []interface{}{desk},
 		AssetServer: &assetserver.Options{
 			Assets:  ui.Assets(),
 			Handler: apiOnly(api), // anything not a static asset: /api/*
@@ -120,6 +123,67 @@ func main() {
 		os.Exit(1)
 	}
 	log.Printf("exit: window closed")
+}
+
+// Desktop is what the page reaches through window.go.main.Desktop — the
+// surfaces a webview cannot provide itself. A browser downloads a
+// Content-Disposition: attachment response; the Wails webview has no
+// download path, and window.open on wails.localhost lands in the OS
+// browser where the origin means nothing (Jonathan, "dump opened a
+// browser window … which obviously no work", v0.9.41). So the two "hand
+// me a file" chips ask Go for the bytes and a native save dialog.
+type Desktop struct {
+	srv *ui.Server
+	ctx context.Context
+}
+
+// SaveDump writes the plan dump for view where the user points the save
+// dialog; returns the path, or "" when they cancelled.
+func (d *Desktop) SaveDump(view string) (string, error) {
+	name, text, err := d.srv.DumpText(view)
+	if err != nil {
+		return "", err
+	}
+	return d.save("Save plan dump", name, "Text (*.txt)", "*.txt", text)
+}
+
+// SaveLocalExport writes the annotations.local zip the same way.
+func (d *Desktop) SaveLocalExport() (string, error) {
+	name, b, err := d.srv.LocalExport()
+	if err != nil {
+		return "", err
+	}
+	return d.save("Save local layer", name, "Zip (*.zip)", "*.zip", b)
+}
+
+func (d *Desktop) save(title, name, filterName, pattern string, b []byte) (string, error) {
+	if d.ctx == nil {
+		return "", fmt.Errorf("window not ready")
+	}
+	dir, _ := os.UserHomeDir()
+	if dl := filepath.Join(dir, "Downloads"); dir != "" {
+		if st, err := os.Stat(dl); err == nil && st.IsDir() {
+			dir = dl
+		}
+	}
+	path, err := wruntime.SaveFileDialog(d.ctx, wruntime.SaveDialogOptions{
+		Title:                title,
+		DefaultDirectory:     dir,
+		DefaultFilename:      name,
+		CanCreateDirectories: true,
+		Filters:              []wruntime.FileFilter{{DisplayName: filterName, Pattern: pattern}},
+	})
+	if err != nil {
+		return "", err
+	}
+	if path == "" {
+		return "", nil
+	}
+	if err := os.WriteFile(path, b, 0o644); err != nil {
+		return "", err
+	}
+	log.Printf("saved %s (%d bytes)", path, len(b))
+	return path, nil
 }
 
 func viewNames(ws *workspace.Workspace) []string {

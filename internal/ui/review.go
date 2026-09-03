@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -168,26 +169,57 @@ func (s *Server) queues(w http.ResponseWriter, r *http.Request) {
 // a picker; this is for whoever maintains the lexicon, reading every
 // silence in one sitting instead of being handed folders one at a time.
 func (s *Server) dump(w http.ResponseWriter, r *http.Request) {
-	a, err := s.artifactFor(r.URL.Query().Get("view"))
+	if r.URL.Query().Get("format") == "json" {
+		a, err := s.artifactFor(r.URL.Query().Get("view"))
+		if err != nil {
+			jsonErr(w, 409, err)
+			return
+		}
+		jsonOut(w, s.buildDump(a))
+		return
+	}
+	name, text, err := s.DumpText(r.URL.Query().Get("view"))
 	if err != nil {
 		jsonErr(w, 409, err)
 		return
 	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename=%q`, name))
+	w.Write(text)
+}
+
+func (s *Server) buildDump(a *planArtifact) *plan.Dump {
 	d := plan.BuildDump(a.Plan, s.inputs.Meta, correct.Acks(s.ws))
 	d.View, d.Built, d.App, d.Annotations = a.View, a.Built, version.Version, s.provenance().AnnotationsSHA
-	if r.URL.Query().Get("format") == "json" {
-		jsonOut(w, d)
-		return
+	return d
+}
+
+// DumpText is the dump as the endpoint serves it, with the file name it
+// would carry — the desktop shell saves it through a native dialog because
+// a webview has no download path of its own (a window.open on
+// wails.localhost lands in the OS browser, where the origin means nothing).
+func (s *Server) DumpText(view string) (name string, text []byte, err error) {
+	a, err := s.artifactFor(view)
+	if err != nil {
+		return "", nil, err
 	}
-	name := strings.Map(func(c rune) rune {
+	d := s.buildDump(a)
+	safe := strings.Map(func(c rune) rune {
 		if c == '"' || c == '/' || c == '\\' {
 			return '-'
 		}
 		return c
 	}, a.View)
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="plan-dump-%s-%s.txt"`, name, a.Built.Local().Format("20060102-1504")))
-	d.WriteText(w)
+	var b bytes.Buffer
+	d.WriteText(&b)
+	return fmt.Sprintf("plan-dump-%s-%s.txt", safe, a.Built.Local().Format("20060102-1504")), b.Bytes(), nil
+}
+
+// LocalExport is the annotations.local zip the export chip hands over,
+// with its file name — same reason as DumpText.
+func (s *Server) LocalExport() (name string, b []byte, err error) {
+	b, err = correct.Export(s.ws)
+	return "annotations.local.zip", b, err
 }
 
 // folder lists one source folder's files as the plan places them.
@@ -391,13 +423,13 @@ func (s *Server) local(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) localExport(w http.ResponseWriter, _ *http.Request) {
-	b, err := correct.Export(s.ws)
+	name, b, err := s.LocalExport()
 	if err != nil {
 		jsonErr(w, 500, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", `attachment; filename="annotations.local.zip"`)
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename=%q`, name))
 	w.Write(b)
 }
 
