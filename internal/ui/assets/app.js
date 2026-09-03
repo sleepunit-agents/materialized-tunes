@@ -385,19 +385,29 @@ let lastLogged = -1;
 async function pollRun() {
   try {
     const r = await api('/api/run');
-    const prev = S.run.status;
+    const was = S.run;
     S.run = r;
+    // A run that started and finished between two polls (a migrate of a
+    // few dozen renames is faster than the 2.5 s idle poll) goes done →
+    // done: the status alone never shows it landed, the start time does.
+    const fresh = r.started !== was.started;
     if (r.status === 'running' && r.count !== lastLogged && r.count > 0) {
       if (lastLogged < 0 || r.count - lastLogged >= 2000 || r.count === r.total) {
         S.runLog.push(`[${r.verb || 'materialize'}] ${n(r.count)} / ${n(r.total)} files`);
         lastLogged = r.count;
       }
     }
-    if (r.status === 'done' && prev !== 'done') {
+    if (r.status === 'done' && (was.status !== 'done' || fresh)) {
       S.runLog.push(`[done] ${n(r.written)} written (${n(r.resumed)} resumed) · ${ (r.skipped||[]).length } skipped`);
       if (r.lock) S.runLog.push(`[lock] ${r.lock.split('/').pop()} written`);
+      // the lock moved: the verdict's exits (the migrate hint above all)
+      // are read against it, so re-ask — the server answers from the
+      // cached plan with the hint re-read, no rebuild, and the Fix queue
+      // is untouched. "I hit move 18, it happens, I go back... it still
+      // says that" (Jonathan, v0.9.50).
+      if (S.view && (!r.view || r.view === S.view) && !S.pfBusy) loadPreflight();
     }
-    if (r.status === 'error' && prev !== 'error') S.runLog.push(`[error] ${r.error}`);
+    if (r.status === 'error' && (was.status !== 'error' || fresh)) S.runLog.push(`[error] ${r.error}`);
     S.runLog = S.runLog.slice(-8);
     if (S.screen === 'run' || r.status === 'running') render();
   } catch (e) { /* server gone; keep quiet */ }
@@ -2661,7 +2671,7 @@ function wire() {
         stopPlayback(); S.packOpen = null; S.pd = null; S.screen = k; if (k === 'cards') S.locks = []; S.locksFor = null; render();
       }
       if (act === 'setup-sec') { const t = document.getElementById('sec-' + el.dataset.id); if (t) t.scrollIntoView({ block: 'start', behavior: 'smooth' }); }
-      if (act === 'back-plan') { S.screen = 'plan'; S.pf = null; S.pl.q = null; S.pl.tree = null; render(); }
+      if (act === 'back-plan') { S.screen = 'plan'; if (S.pf && !S.pfBusy) loadPreflight(); else render(); } // the verdict re-reads the lock; the queue and your place stay
       if (act === 'issue-toggle') { if (!String(window.getSelection())) el.classList.toggle('open'); } // a click that selected text is a copy, not a toggle
       if (act === 'clear-lens') { S.lens = null; loadPacks().then(render); }
       if (act === 'toggle-menu') { S.lensMenu = !S.lensMenu; render(); }

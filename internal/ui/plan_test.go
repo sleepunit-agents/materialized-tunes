@@ -12,6 +12,8 @@ import (
 
 	"github.com/sleepunit-agents/materialized-tunes/internal/audio"
 	"github.com/sleepunit-agents/materialized-tunes/internal/catalog"
+	"github.com/sleepunit-agents/materialized-tunes/internal/lock"
+	"github.com/sleepunit-agents/materialized-tunes/internal/plan"
 	"github.com/sleepunit-agents/materialized-tunes/internal/workspace"
 )
 
@@ -105,5 +107,85 @@ glob="**/hat.wav"
 	after := settle(`{"view":"v","disabled":[]}`)
 	if after["files"].(float64) != 4 || after["built"] == first["built"] {
 		t.Errorf("stale inputs must rebuild: %v", after)
+	}
+}
+
+// The migrate hint follows the lock, not the plan's key: a materialize or
+// a migrate rewrites the lock without touching anything the plan reads,
+// so the cached artifact must re-read it — "MOVE 18 FILES" stayed on the
+// button after the 18 had moved (Jonathan, v0.9.50).
+func TestPlanMigrateHintFollowsLock(t *testing.T) {
+	dir := t.TempDir()
+	ws, err := workspace.Init(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws.Config.Locations = []workspace.LocationConfig{{Name: "src", Type: "local", Root: dir, Layout: "vendor-dirs"}}
+	ws.SaveConfig()
+	mk := func(path, sha string) catalog.Entry {
+		return catalog.Entry{Path: path, SHA256: sha, Size: 1000, ScannedAt: time.Now(),
+			Audio: &audio.Meta{Format: "wav", Channels: 1, SampleRate: 44100, BitDepth: 16, Frames: 4410, DurationS: 0.1}}
+	}
+	cat := map[string]catalog.Entry{}
+	for _, e := range []catalog.Entry{mk("A/P1/kick.wav", "1"), mk("A/P1/snare.wav", "2")} {
+		cat[e.Path] = e
+	}
+	if err := catalog.Write(ws.CatalogPath("src"), cat); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(dir, "views", "v.toml"), []byte("name=\"v\"\ndevice=\"octatrack\"\nstorage=\"octatrack-cf\"\n[[include]]\nlocation=\"src\"\nglob=\"A/**\"\n"), 0o644)
+	ws, _ = workspace.Load(dir)
+	s := &Server{ws: ws, plans: map[string]*planArtifact{}}
+
+	settle := func() map[string]any {
+		for i := 0; i < 200; i++ {
+			w := httptest.NewRecorder()
+			s.planEndpoint(w, httptest.NewRequest(http.MethodPost, "/api/plan", strings.NewReader(`{"view":"v","disabled":[]}`)))
+			var out map[string]any
+			if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+				t.Fatalf("bad json: %s", w.Body.String())
+			}
+			if out["status"] != "running" {
+				return out
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		t.Fatal("plan never settled")
+		return nil
+	}
+	first := settle()
+	if first["status"] != "done" || first["migrate"] != nil {
+		t.Fatalf("never materialized: no migrate hint expected: %v", first)
+	}
+	p := s.plans["v"].Plan
+	writeLock := func(outPath func(e plan.Entry) string) {
+		l := &lock.Lock{View: "v", Created: time.Now()}
+		for _, e := range p.Entries {
+			if !e.Copy {
+				t.Fatalf("test expects copy entries; %s would transcode", e.SourcePath)
+			}
+			l.Entries = append(l.Entries, lock.Entry{
+				Source:    lock.Source{Location: e.Location, Path: e.SourcePath, SHA256: e.SHA256},
+				Transform: lock.Transform{Copy: true},
+				Output:    lock.Output{Path: outPath(e), Bytes: 1000},
+			})
+		}
+		if _, err := lock.Write(ws.Root, l); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// the last materialize put everything under Old/: the recipe would move it
+	writeLock(func(e plan.Entry) string { return "Old/" + filepath.Base(e.OutPath) })
+	moved := settle()
+	mg, _ := moved["migrate"].(map[string]any)
+	if moved["built"] != first["built"] || mg == nil || mg["moves"].(float64) != 2 {
+		t.Fatalf("a new lock must show on the cached plan without a rebuild: %v", moved)
+	}
+	// the migrate ran: the newest lock sits where the recipe puts it
+	time.Sleep(1100 * time.Millisecond) // lock names are second-resolution
+	writeLock(func(e plan.Entry) string { return e.OutPath })
+	after := settle()
+	if after["built"] != first["built"] || after["migrate"] != nil {
+		t.Fatalf("after the move the hint must leave, still without a rebuild: %v", after)
 	}
 }

@@ -4,7 +4,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"os"
 	"sort"
 	"time"
 
@@ -43,6 +45,66 @@ type planArtifact struct {
 	Built    time.Time
 	Plan     *plan.Plan // nil when nothing was enabled
 	Verdict  map[string]any
+	// The migrate hint is not part of the verdict: it compares the plan
+	// with the newest lock, and the lock is not in the key — a materialize
+	// or a migrate rewrites it without touching what the plan reads. It
+	// is re-read whenever the lock underneath has changed (lockStamp), so
+	// "MOVE 18 FILES" leaves the button once the 18 have moved.
+	LockStamp string
+	Migrate   map[string]int // nil when nothing would move
+}
+
+// lockStamp identifies the newest lock for a view — its path, size and
+// mtime — or "" when it has never been materialized. A new lock is a new
+// path, so a run always changes it.
+func lockStamp(root, viewName string) string {
+	lp, err := lock.Resolve(root, viewName)
+	if err != nil {
+		return ""
+	}
+	info, err := os.Stat(lp)
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%s|%d|%d", lp, info.Size(), info.ModTime().UnixNano())
+}
+
+// migrateHint compares the plan with the newest lock: when the locked
+// files would just move, the UI offers the rename path instead of
+// duplicate-and-delete. nil when there is no lock or nothing would move.
+func migrateHint(root string, viewName string, p *plan.Plan) map[string]int {
+	if p == nil {
+		return nil
+	}
+	lp, err := lock.Resolve(root, viewName)
+	if err != nil {
+		return nil
+	}
+	l, err := lock.Read(lp)
+	if err != nil {
+		return nil
+	}
+	if mg := lock.PlanMigration(l, p); mg.Work() > 0 {
+		return map[string]int{"moves": len(mg.Moves), "companions": len(mg.Companions)}
+	}
+	return nil
+}
+
+// verdict is the artifact's answer to POST /api/plan, with the migrate
+// hint re-read if the lock moved since it was last looked at. Caller
+// holds s.mu.
+func (s *Server) verdict(a *planArtifact) map[string]any {
+	if st := lockStamp(s.ws.Root, a.View); st != a.LockStamp {
+		a.LockStamp, a.Migrate = st, migrateHint(s.ws.Root, a.View, a.Plan)
+	}
+	out := map[string]any{"status": "done", "built": a.Built}
+	for k, val := range a.Verdict {
+		out[k] = val
+	}
+	if a.Migrate != nil {
+		out["migrate"] = a.Migrate
+	}
+	return out
 }
 
 // freshInputs returns the shared inputs, replacing them when the files
@@ -90,10 +152,7 @@ func (s *Server) planEndpoint(w http.ResponseWriter, r *http.Request) {
 	in := s.freshInputs()
 	key := planKey(v, disabled, in.Stamp())
 	if a := s.plans[req.View]; a != nil && a.Key == key {
-		out := map[string]any{"status": "done", "built": a.Built}
-		for k, val := range a.Verdict {
-			out[k] = val
-		}
+		out := s.verdict(a)
 		s.mu.Unlock()
 		jsonOut(w, out)
 		return
@@ -204,15 +263,6 @@ func (s *Server) buildArtifact(v *view.View, disabled []int, key string, in *pla
 	out := map[string]any{"view": v.Name, "device": v.Device, "storage": v.Storage, "layout": v.Layout,
 		"layouts": view.LayoutPresets, "rules": rules, "excludes": excludes}
 	if p != nil {
-		// migrate hint: when the newest lock's files would just move, the
-		// UI offers the rename path instead of duplicate-and-delete
-		if lp, err := lock.Resolve(s.ws.Root, v.Name); err == nil {
-			if l, err := lock.Read(lp); err == nil {
-				if mg := lock.PlanMigration(l, p); mg.Work() > 0 {
-					out["migrate"] = map[string]int{"moves": len(mg.Moves), "companions": len(mg.Companions)}
-				}
-			}
-		}
 		out["files"] = len(p.Entries)
 		verdict := *p
 		verdict.Entries = nil // the Plan step wants the verdict, not 84k rows; the artifact keeps them
@@ -223,7 +273,8 @@ func (s *Server) buildArtifact(v *view.View, disabled []int, key string, in *pla
 		}
 		out["plan"] = &verdict
 	}
-	return &planArtifact{Key: key, Stamp: in.Stamp(), View: v.Name, Disabled: disabled, Built: time.Now(), Plan: p, Verdict: out}, nil
+	return &planArtifact{Key: key, Stamp: in.Stamp(), View: v.Name, Disabled: disabled, Built: time.Now(), Plan: p, Verdict: out,
+		LockStamp: lockStamp(s.ws.Root, v.Name), Migrate: migrateHint(s.ws.Root, v.Name, p)}, nil
 }
 
 // cachedPlan is the current artifact for a view with every rule enabled,

@@ -7,6 +7,29 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.50 — 2026-09-03 (the migrate button follows the lock)
+
+Jonathan: "I go in and I fix a few, the number that will get moved goes
+up, I hit move 18 to yada yada, it hops me to the materialize page, it
+happens, I go back... it still says that." The migrate hint — "MOVE 18
+FILES INTO THE NEW LAYOUT" — compares the plan with the newest lock, but
+it was baked into the plan artifact at build time, and the lock is not
+in the artifact's key: a materialize or a migrate rewrites the lock
+without touching anything the plan reads (catalogs, meta cache, the
+annotation layers), so the cached plan kept answering with the hint it
+was built with. "back to the plan — it re-reads the lock" said so and
+did not. Now the artifact carries the hint beside the verdict, stamped
+by the lock it was read from (path, size, mtime — a run is always a new
+path), and `POST /api/plan` re-reads it when the lock moved: no
+rebuild, the same `built`, the hint gone once the files have moved
+(`TestPlanMigrateHintFollowsLock`). On the client, the run poll re-asks
+for the verdict when a run lands, so the Fix mode button and "back to
+the plan" both show the fresh one — and "back to the plan" no longer
+throws the queue away to get there; your place stays. Landing was
+itself missed for fast runs: a migrate of a few dozen renames finishes
+inside one 2.5 s idle poll, so the status went done → done and the
+transition never showed; the poll now keys on the run's start time.
+
 ## v0.9.49 — 2026-09-03 (deciding without losing your place)
 
 Jonathan, on the Fix tab: "if I select something, listen, and pick what
