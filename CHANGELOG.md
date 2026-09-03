@@ -7,6 +7,27 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.53 — 2026-09-03 (the filter column reads the lexicon)
+
+The v0.9.52 fix left one list behind: the Instrument section of the
+Filters column on the browse side was a hand-written copy in the app,
+grouped "the way a producer thinks" (acoustic, voice / fx) and missing
+every word the lexicon had gained since it was typed — fill, top, udu,
+clav, synth-vox, acid, timbale, the whole brass and woodwind sets.
+Jonathan: "lets feed it for sure." Now `/api/lexicon` loads with the rest
+of the boot calls and one function (`lexiconGroups`) gives both the
+filter column and the Fix picker the same reading order: families A→Z,
+instruments A→Z within each, the family's catch-all pinned last, ids as
+labels. The column heads each family with a faint label; the counted
+list a live search shows is unchanged. Because the full vocabulary is
+long (69 ids over 11 families), Instrument is now the column's last
+section and Key · BPM sits above it, so the two short inputs stay in
+reach and the long list scrolls under them. A workspace whose
+annotations have not been pulled yet says so in the section instead of
+showing a stale list. Verified in headless Chromium over the real
+lexicon: 80 rows, no capital letter, clicking `kick` still filters to
+the 756 kicks in the throwaway workspace.
+
 ## v0.9.52 — 2026-09-03 (the instrument picker reads A→Z)
 
 Jonathan: "Synth Vox is the only one with capitals, we should unfuck

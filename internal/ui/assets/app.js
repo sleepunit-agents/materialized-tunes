@@ -32,6 +32,7 @@ const S = {
   viewMode: Object.assign({ library: 'list', discover: 'list' }, JSON.parse(localStorage.getItem('mtunes.viewMode') || '{}')),
   samplesOn: false, instMore: false, discVendor: '',
   summary: null, devices: [], packs: [], views: [],
+  lex: null,                       // /api/lexicon — the instrument vocabulary the filter column and the Fix picker offer
   lens: null,                      // device name or null
   owned: JSON.parse(localStorage.getItem('mtunes.owned') || '{}'),
   lensMenu: false, onlyOwned: JSON.parse(localStorage.getItem('mtunes.onlyOwned') || 'false'),
@@ -124,7 +125,7 @@ async function boot() {
   }
   S.booting = true; S.bootStarted = Date.now(); render(); // the shell, now — the library fills in when the catalog answers
   pollProgress(); // the catalog decode is the launch wait: show it as it happens
-  const calls = ['/api/summary', '/api/devices', '/api/views', '/api/storages'];
+  const calls = ['/api/summary', '/api/devices', '/api/views', '/api/storages', '/api/lexicon'];
   const got = await Promise.allSettled(calls.map(c => api(c)));
   S.bootErr = [];
   const val = (i) => {
@@ -133,7 +134,8 @@ async function boot() {
     if (g.value && g.value.error) { S.bootErr.push(`${calls[i]}: ${g.value.error}`); return null; }
     return g.value;
   };
-  const summary = val(0), devices = val(1), views = val(2), stos = val(3);
+  const summary = val(0), devices = val(1), views = val(2), stos = val(3), lex = val(4);
+  S.lex = lex && Array.isArray(lex.instruments) ? lex : null;
   S.summary = summary; S.devices = Array.isArray(devices) ? devices : []; S.views = Array.isArray(views) ? views : []; S.storages = Array.isArray(stos) ? stos : [];
   for (const pr of (summary && summary.problems) || []) S.bootErr.push(pr);
   if (!S.view && S.views.length) S.view = S.views[0].name;
@@ -862,18 +864,21 @@ function libraryColumn() {
     irows = counted.slice(0, S.instMore ? 200 : 14).map(f => `<div class="fr ${S.fInst === f.id ? 'on' : ''}" data-act="f-inst" data-v="${esc(f.id)}"><span class="nm">${esc(f.id)}</span><span class="n">${n(f.count)}</span></div>`).join('');
     if (counted.length > 14) irows += `<div class="fr" data-act="inst-more"><span class="nm" style="color:var(--fg-faint)">${S.instMore ? 'fewer' : `${counted.length - 14} more…`}</span></div>`;
   } else {
-    const all = INSTRUMENTS.flatMap(([, ids]) => ids);
-    const shown = S.instMore ? all : all.slice(0, 14);
-    irows = shown.map(i => `<div class="fr ${S.fInst === i ? 'on' : ''}" data-act="f-inst" data-v="${esc(i)}"><span class="nm">${esc(i)}</span></div>`).join('')
-      + `<div class="fr" data-act="inst-more"><span class="nm" style="color:var(--fg-faint)">${S.instMore ? 'fewer' : `${all.length - 14} more…`}</span></div>`;
+    // the lexicon, family by family (A→Z, catch-all last — lexiconGroups);
+    // a faint family label heads each group. The list is long, so it is
+    // the column's last section and scrolls under the short ones.
+    const groups = lexiconGroups(S.lex);
+    irows = groups.map(([fam, ids]) => `<div class="sub">${esc(fam)}</div>` + ids.map(i =>
+      `<div class="fr ${S.fInst === i ? 'on' : ''}" data-act="f-inst" data-v="${esc(i)}"><span class="nm">${esc(i)}</span></div>`).join('')).join('')
+      || '<div class="fr"><span class="nm" style="color:var(--fg-faint)">no lexicon yet — scan a location to pull it</span></div>';
   }
   return `<div class="col">${colHead('Filters', act.length ? `<span class="a" data-act="clear-all-filters">clear</span>` : '')}<div class="cb">
     ${lensBox()}
     <div class="sec">Vendor</div>${vrows || '<div class="fr"><span class="nm" style="color:var(--fg-faint)">no packs yet</span></div>'}
     <div class="sec">Category</div>${crows}${unsorted}
-    <div class="sec">Instrument</div>${irows}
     <div class="sec">Key · BPM</div>
     <div class="ci"><input id="f-key" placeholder="Am, C#1" value="${esc(S.fKey)}"><input id="f-bpm" placeholder="120-130" value="${esc(S.fBpm)}"></div>
+    <div class="sec">Instrument</div>${irows}
   </div></div>`;
 }
 
@@ -1054,18 +1059,23 @@ const packGroup = p => p.vendor || p.location;
 
 const sampleMode = () => S.samplesOn || !!(S.fInst || S.fKey || S.fBpm || S.fCat);
 
-// Instruments offered in the filter bar, grouped the way a producer thinks.
-// These are canonical ids from the annotations lexicon; a vendor that never
-// labelled a sound simply has none of it here.
-const INSTRUMENTS = [
-  ['drums', ['kick', 'snare', 'clap', 'hat', 'cymbal', 'tom', 'rim', 'break', 'drums']],
-  ['percussion', ['shaker', 'tambourine', 'conga', 'cowbell', 'clave', 'percussion']],
-  ['bass', ['sub', 'reese', 'bass']],
-  ['keys', ['piano', 'organ', 'keys', 'mallet', 'bell']],
-  ['synth', ['lead', 'pad', 'pluck', 'stab', 'arp', 'synth']],
-  ['acoustic', ['guitar', 'strings', 'brass', 'woodwind']],
-  ['voice / fx', ['vocal', 'fx', 'foley']],
-];
+// The instrument vocabulary as a person reads it: families A→Z and, within
+// each, instruments A→Z with the family's catch-all (the id that IS the
+// family) pinned last. Fed from /api/lexicon, so a word added to
+// instruments.toml shows up here on the next launch — the filter column
+// used to carry its own hand-written copy, and it drifted (no fill, top,
+// udu, clav, synth-vox…). The lexicon's own order is match precedence —
+// riser above bass so "Flute Riser" reads as a riser — not a reading
+// order. Ids are the labels everywhere: `display` is the FOLDER name the
+// layout renders ("Synth Vox", "Upright Bass"), not a label.
+// Returns [[family, [id, …]], …]; [] without a lexicon.
+function lexiconGroups(lex) {
+  if (!lex || !Array.isArray(lex.instruments)) return [];
+  const fams = {};
+  for (const i of lex.instruments) (fams[i.family || '?'] ||= []).push(i.id);
+  const order = fam => (a, b) => (a === fam) - (b === fam) || a.localeCompare(b);
+  return Object.keys(fams).sort().map(fam => [fam, fams[fam].sort(order(fam))]);
+}
 
 
 function renderSamples() {
@@ -2280,7 +2290,7 @@ async function loadPlanReview() {
   try {
     if (!S.pf) await loadPreflight();
     if (!S.pf || S.pf.error) return;
-    if (!pl.lex) pl.lex = await api('/api/lexicon');
+    if (!pl.lex) pl.lex = S.lex || await api('/api/lexicon');
     pl.local = await api('/api/local');
     await refreshPlanReview();
   } finally { pl.busy = false; render(); }
@@ -2530,19 +2540,11 @@ function renderReconcile() {
   return head + rows;
 }
 
-// The picker lists families A→Z and, within each, instruments A→Z with the
-// family's catch-all (the id that IS the family) pinned last. The lexicon's
-// own order is match precedence — riser above bass so "Flute Riser" reads
-// as a riser — and a person choosing from a list doesn't want that order.
-// Labels are ids, as everywhere else in the app: `display` is the FOLDER
-// name the layout renders ("Synth Vox", "Upright Bass"), not a label.
+// The picker is lexiconGroups as <optgroup>s — the same order the filter
+// column reads in, the catch-all tagged.
 function instrumentOptions(lex, current) {
-  if (!lex) return '';
-  const fams = {};
-  for (const i of lex.instruments || []) (fams[i.family || '?'] ||= []).push(i);
-  const order = fam => (a, b) => (a.id === fam) - (b.id === fam) || a.id.localeCompare(b.id);
-  return Object.keys(fams).sort().map(fam => `<optgroup label="${esc(fam)}">${fams[fam].sort(order(fam)).map(i =>
-    `<option value="${esc(i.id)}" ${i.id === current ? 'selected' : ''}>${esc(i.id)}${i.id === fam ? ' (family catch-all)' : ''}</option>`).join('')}</optgroup>`).join('');
+  return lexiconGroups(lex).map(([fam, ids]) => `<optgroup label="${esc(fam)}">${ids.map(id =>
+    `<option value="${esc(id)}" ${id === current ? 'selected' : ''}>${esc(id)}${id === fam ? ' (family catch-all)' : ''}</option>`).join('')}</optgroup>`).join('');
 }
 
 function renderPlanForm() {
