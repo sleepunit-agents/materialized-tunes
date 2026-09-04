@@ -2514,6 +2514,17 @@ function openTreeFile(f) {
   render();
 }
 
+// Setting the covers path from code has to move the DOM too. Every render
+// re-reads the form the DOM shows (so a poll landing mid-note cannot eat
+// what was typed), which means a state-only write is read straight back
+// out of the stale input on the very next render.
+function setFormPath(path) {
+  if (!S.pl.form) return;
+  S.pl.form.path = path;
+  const inp = document.getElementById('pl-path');
+  if (inp) inp.value = path;
+}
+
 function readForm() {
   const f = S.pl.form; if (!f) return null;
   const g = (id) => document.getElementById(id);
@@ -2622,6 +2633,27 @@ function instrumentOptions(lex, current) {
     `<option value="${esc(id)}" ${id === current ? 'selected' : ''}>${esc(id)}${id === fam ? ' (family catch-all)' : ''}</option>`).join('')}</optgroup>`).join('');
 }
 
+// The covers field is the granularity control (SPEC §19.3): folder is the
+// default, a file is allowed, and the longest matching [[dir]] path wins,
+// so a file entry outranks its own folder's. Selecting a file used to
+// leave the form still covering the folder — the narrowing was a typing
+// job. These chips are the wire between the row you are hearing and the
+// path the correction writes. Not shown for a word-means correction: that
+// one is pack-wide by construction.
+function scopeChips(f) {
+  const pl = S.pl, file = pl.file;
+  if (f.facet === 'alias' || !file || !file.source_path) return '';
+  const folder = (pl.sel && pl.sel.folder) || file.source_path.split('/').slice(0, -1).join('/');
+  if (!folder) return '';
+  const cur = String(f.path || '').trim().replace(/\\/g, '/').replace(/\/+$/, '');
+  const count = pl.sel && pl.sel.count;
+  const chip = (path, label) => `<span class="pl-btn ${cur === path ? 'on' : ''}" data-act="pl-scope" data-p="${esc(path)}">${label}</span>`;
+  return `<div class="pl-btns" style="margin-bottom:2px">
+      ${chip(folder, `the folder${count ? ` — ${n(count)} files` : ''}`)}
+      ${chip(file.source_path, 'just this file')}
+    </div>`;
+}
+
 function renderPlanForm() {
   const pl = S.pl, f = pl.form, lex = pl.lex;
   if (!f) return '';
@@ -2660,6 +2692,7 @@ function renderPlanForm() {
     ${word}
     ${mode}
     <label>covers</label>
+    ${scopeChips(f)}
     <input type="text" id="pl-path" value="${esc(f.path)}" title="the folder, or a glob within the pack (WAV/Textures/Chop *.wav)">
     <label>note — the evidence</label>
     <input type="text" id="pl-note" value="${esc(f.note)}" placeholder="what your copy shows (optional)" title="one line of evidence for whoever reads the export later — e.g. 'keyed, no tempo: single chords' or 'sixteen numbered slices, the folder name lies'">
@@ -3032,7 +3065,8 @@ function wire() {
       if (act === 'pl-play') { e.stopPropagation(); playFile(el.dataset.path, el.dataset.n || el.dataset.path.split('/').pop(), +el.dataset.d || 0, el.dataset.loc); }
       if (act === 'pl-dir') { S.pl.prefix = S.pl.prefix ? S.pl.prefix + '/' + el.dataset.name : el.dataset.name; S.pl.tree = null; S.pl.file = null; S.pl.form = null; render(); }
       if (act === 'pl-crumb') { S.pl.prefix = el.dataset.p; S.pl.tree = null; S.pl.file = null; S.pl.form = null; render(); }
-      if (act === 'pl-facet') { readForm(); S.pl.form.facet = el.dataset.k; S.pl.form.value = ''; S.pl.radius = null; if (el.dataset.k === 'alias' && S.pl.file && S.pl.file.why && S.pl.file.why.instrument) S.pl.form.word = S.pl.file.why.instrument.word || ''; if (el.dataset.k === 'alias') S.pl.form.path = (S.pl.file && S.pl.file.pack_path) || (S.pl.sel && S.pl.sel.pack_path) || S.pl.form.path; render(); }
+      if (act === 'pl-scope') { readForm(); setFormPath(el.dataset.p); S.pl.radius = null; S.pl.msg = ''; render(); }
+      if (act === 'pl-facet') { readForm(); S.pl.form.facet = el.dataset.k; S.pl.form.value = ''; S.pl.radius = null; if (el.dataset.k === 'alias' && S.pl.file && S.pl.file.why && S.pl.file.why.instrument) S.pl.form.word = S.pl.file.why.instrument.word || ''; if (el.dataset.k === 'alias') setFormPath((S.pl.file && S.pl.file.pack_path) || (S.pl.sel && S.pl.sel.pack_path) || S.pl.form.path); render(); }
       if (act === 'pl-mode') { readForm(); S.pl.form.mode = el.dataset.k; S.pl.radius = null; render(); }
       if (act === 'pl-value') { readForm(); S.pl.form.value = el.dataset.v; S.pl.radius = null; render(); }
       if (act === 'pl-preview') { planCorrect(true); }

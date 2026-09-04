@@ -1568,7 +1568,12 @@ discouraged. All three are `[[dir]]` entries — the schema already takes
 globs. (The harvester matched `[[dir]]` paths against the folder only
 until v0.9.44, so file globs and single files were silent no-ops before
 it; a path that does not match the folder is now tried against the full
-in-pack path.)
+in-pack path.) The 99%-right folder is answered twice rather than
+compromised on: the folder answer, then a correction on the one file it
+is wrong for, which outranks it on path length. *(v0.9.55: the **covers**
+row carries **the folder** / **just this file** chips whenever a file is
+selected — the narrowing used to mean retyping the filename by hand. A
+typed glob lights neither; a word-means correction shows none.)*
 
 *Shipped 2026-09-01 (v0.9.18):* the **Plan** step (tab 3). Queues
 (`GET /api/plan/queues`) group the artifact's failures by source folder

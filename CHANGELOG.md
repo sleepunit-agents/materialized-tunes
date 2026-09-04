@@ -7,6 +7,44 @@ change, because *why* a constraint exists is as durable as the constraint.
 Newest first. Versions are milestones, not releases — there is one binary
 and it is whatever `main` builds.
 
+## v0.9.55 — 2026-09-03 (the covers field gets the row you are hearing)
+
+Jonathan, on Fix: "what do I do when a folder shows up and 99% of it is
+right but I just want to fill in like, one thing that's missing or wrong."
+
+Both answers were already in the form and neither was reachable without
+typing. *Missing* is the pin/default toggle — a **default** speaks last
+and only fills a file where nothing else did, so the 99% that already
+knew what they were keep their answer (§19.5). *Wrong* is the **covers**
+field: put one file's path in it and the correction covers that file,
+and because `[[dir]]` entries are resolved longest-path-first (§19.3),
+the file entry outranks its own folder's pin. Answer the folder, then
+correct the one file; the folder answer is not touched.
+
+The gap was the wire between them. Clicking a row in Fix selects the
+file and plays it, but the form went on covering the folder — narrowing
+meant retyping the filename by hand into a text box, from memory, with
+the sound still playing. **covers** now carries two chips whenever a file
+is selected: *the folder — N files* and *just this file*, either of which
+writes the path. A hand-typed glob (`WAV/Textures/Chop *.wav`) lights
+neither and is untouched — the chips are shortcuts, not a mode. A
+word-means correction shows none: that one is pack-wide by construction.
+
+Writing the path from code had to move the input, not just the state.
+Every render re-reads the form the DOM shows so a poll landing mid-note
+cannot eat what was typed (v0.9.49), which means a state-only write is
+read straight back out of the stale input on the next render. `setFormPath`
+sets both. The *word means* facet switch had the same bug — it has set
+the path to the pack since v0.9.18 and the render read the old one back —
+and is fixed by the same call.
+
+Test: `TestCorrectOneFileUnderAnsweredFolder` — pin a folder to loops,
+then correct one file inside it to one-shots; the radius previews as
+exactly 1 covered / 1 moved, the neighbour keeps the folder answer, and
+both entries sit in the local layer.
+
+---
+
 ## v0.9.54 — 2026-09-03 (the page's errors reach the log; the panel stops lying)
 
 Jonathan, on Fix: "getting *something broke in a request — reload (F5)

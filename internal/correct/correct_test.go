@@ -279,3 +279,62 @@ func TestReconcile(t *testing.T) {
 		t.Errorf("layer must be empty: %+v", rest)
 	}
 }
+
+// The 99%-right folder: answer it, then correct the one file that the
+// answer is wrong for. Both are [[dir]] entries and the longer path wins
+// (SPEC §19.3), so the file entry outranks its own folder's pin without
+// the folder answer being touched. The narrower correction previews as
+// exactly one file — the blast radius is the check that you scoped it.
+func TestCorrectOneFileUnderAnsweredFolder(t *testing.T) {
+	ws, lc, cat := fixture(t)
+	vendors, _ := annotations.Load(ws.AnnotationRoots()...)
+	const fills = "Samples From Mars/Drumtrax From Mars/WAV/Fills"
+
+	// the folder answer: these are loops
+	if _, err := Apply(ws, lc, cat, harvest.LoadMeta(ws, "src"), vendors,
+		Correction{Location: "src", Path: fills, Facet: "category", Value: "loops"},
+		Provenance{AppVersion: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	vendors, _ = annotations.Load(ws.AnnotationRoots()...)
+	current := harvest.LoadMeta(ws, "src")
+	if current[fills+"/Fill 07.wav"].Category != "loops" {
+		t.Fatalf("the folder answer should have reached every file: %+v", current[fills+"/Fill 07.wav"])
+	}
+
+	// the one file it is wrong for
+	c := Correction{Location: "src", Path: fills + "/Fill 07.wav", Facet: "category", Value: "one-shots",
+		Note: "sixteen numbered slices, the folder name lies"}
+	r, err := Preview(ws, lc, cat, current, vendors, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Covered != 1 || r.Changed != 1 || r.Moved != 1 || r.Filled != 0 {
+		t.Errorf("one-file radius: covered/changed/moved/filled = %d/%d/%d/%d, want 1/1/1/0", r.Covered, r.Changed, r.Moved, r.Filled)
+	}
+	if r.Target.InPack != "WAV/Fills/Fill 07.wav" {
+		t.Errorf("in-pack path: %q", r.Target.InPack)
+	}
+	if len(r.Changes) != 1 || r.Changes[0].From != "loops · —" || r.Changes[0].To != "one-shots · —" {
+		t.Errorf("changes: %+v", r.Changes)
+	}
+
+	if _, err := Apply(ws, lc, cat, current, vendors, c, Provenance{AppVersion: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	after := harvest.LoadMeta(ws, "src")
+	if got := after[fills+"/Fill 07.wav"].Category; got != "one-shots" {
+		t.Errorf("the corrected file: %q, want one-shots", got)
+	}
+	if got := after[fills+"/Kick Loop 07.wav"].Category; got != "loops" {
+		t.Errorf("its neighbour must keep the folder answer: %q, want loops", got)
+	}
+	// both entries live in the local layer; the folder's was not rewritten
+	data, err := os.ReadFile(filepath.Join(ws.LocalAnnotations(), "vendors", "samples-from-mars", "packs", "drumtrax-from-mars.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `path = "WAV/Fills"`) || !strings.Contains(string(data), `path = "WAV/Fills/Fill 07.wav"`) {
+		t.Errorf("local layer should carry both entries:\n%s", data)
+	}
+}
